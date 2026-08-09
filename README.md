@@ -38,6 +38,15 @@ for v1 and is architecturally fenced — see *Non-goals* below.
 - **Not a source of advice.** Aleph reports; it does not recommend, reassure or
   interpret. Market answers are deterministic renderings with a block number
   attached.
+- **Not a profiling service.** Borrower-keyed aggregation across markets is
+  permitted — a lender can ask what markets a borrower has run and see them — but
+  the output is deterministic rendering only. Aleph presents the facts; it does
+  not characterise them. It will show six markets and their histories; it will not
+  say that a borrower "tends to" or "has a pattern of" anything, will not score,
+  rank, compare or infer intent, and will not answer whether a borrower is
+  trustworthy. Every fact in such an answer is public and on-chain, but the
+  compilation is an artefact Wildcat produced on request, and the line between
+  showing and characterising is where the risk lives.
 - **Not an oracle for unreleased code.** The corpus tracks release tags bound to
   verified mainnet deployments. If a behaviour exists only on `main`, the correct
   answer is that it isn't released.
@@ -45,6 +54,18 @@ for v1 and is architecturally fenced — see *Non-goals* below.
   space. See *Design commitments*.
 - **Not a general chatbot.** Out-of-corpus questions get a refusal and a pointer to
   a human, not a best guess.
+
+## It speaks in Wildcat's voice, and isn't Wildcat speaking
+
+Aleph will read as authoritative — same name, same channel, answering in the first
+person about live facilities. It isn't a representation by Wildcat Labs or the
+Wildcat Foundation, doesn't create obligations, and doesn't supersede the Terms of
+Use or the market's own on-chain state. Where Aleph and the chain disagree, the
+chain is correct. Where Aleph and the ToU disagree, the ToU is correct.
+
+The gap between how authoritative it sounds and what it actually is cannot be
+closed by a disclaimer nobody reads — which is why the constraints below exist:
+cite everything, generate no numbers, decline rather than guess.
 
 ## Design commitments
 
@@ -107,9 +128,10 @@ talk to each other.
 ## Repository contents
 
 ```
-ingestion-manifest.md    what is indexed, at what ref, and what is excluded
-README.md                this file
-eval/                    golden question set and gate    [not yet started]
+aleph-ingestion-manifest.md   what is indexed, at what ref, and what is excluded
+sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
+README.md                     this file
+eval/                         golden question set and gate    [not yet started]
 ```
 
 Implementation to follow. The manifest and the eval set come first deliberately:
@@ -118,10 +140,52 @@ learn before ingestion is built than after.
 
 ## Status
 
-Pre-implementation. Open decisions are listed at the end of
-[`ingestion-manifest.md`](./ingestion-manifest.md); the two that block a build are
-the tag ↔ mainnet deployment binding, and whether cross-market aggregation by
-borrower is a supported query or a declined one.
+Pre-implementation. Scope is **mainnets only** — Ethereum and Plasma. Sepolia and
+other testnets are ignored entirely: not ingested, not queried, not answerable.
+
+Detailed decisions and accepted risks are at the end of
+[`aleph-ingestion-manifest.md`](./aleph-ingestion-manifest.md). The items below are
+the ones that need a human rather than a build step.
+
+## To address
+
+**Needs Dave**
+
+- Which subgraph release does SDK `3.1.17` expect? `v2.0.26` and `v2.0.30` are both
+  live on mainnet and Aleph must pin one in config, not choose at runtime.
+- Which subgraph commit produced release `v2.0.30`? `subgraph@main` is at `2.0.22`,
+  so the repo can't say.
+- Commit provenance for `MarketLensV2` and `CollateralLens`. Deployed, view-only,
+  and untraceable to source — which is the code that produces every number Aleph
+  will quote.
+- A dedicated gateway bearer for Aleph, separate from the frontend's, so revoking
+  one doesn't take down the other.
+
+**Needs a decision**
+
+- `wildcat-docs` has live `docs-tg-bot` and `llm-rewrite-clean` branches. The first
+  may be prior art for this project. The second changes what a Tier B citation
+  means — if the docs corpus has been LLM-rewritten, Aleph would be citing
+  generated text as canonical.
+- `wildcat-juris` is currently excluded from the corpus (claims intake for
+  defaulted markets, identified lenders). Confirm or override.
+- Is this repository public or private? The security sections are written to be
+  safe if public, and can be blunter if not.
+- Duty roster lives in deployment config, not here. Confirm.
+
+**Needs authoring, not deciding**
+
+- The golden question set. Roughly 100 questions: the ones you and Dave are tired
+  of answering, the ones the docs imply, and — most importantly — the ones Aleph
+  should refuse. No borrower transcripts required or wanted; the questions, not
+  the conversations.
+
+**Housekeeping**
+
+- Report the `@functi0nZer0` Telegram squat via @NoToScam. Not a Fragment
+  collectible, so it is actionable.
+- Publish the real team handles on docs.wildcat.finance so refusals can point at
+  an authoritative page rather than naming a person in-channel.
 
 ---
 
