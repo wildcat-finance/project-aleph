@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import struct
 import urllib.error
 import urllib.request
@@ -149,6 +150,38 @@ class OllamaEmbedder:
         except urllib.error.URLError as e:
             raise EmbeddingError(f"cannot reach Ollama at {self.host}: {e}")
 
+    def _tags(self) -> dict:
+        try:
+            with urllib.request.urlopen(
+                    f"{self.host}/api/tags", timeout=self.timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as e:
+            raise EmbeddingError(
+                f"{self.model}: HTTP {e.code} from {self.host}/api/tags")
+        except urllib.error.URLError as e:
+            raise EmbeddingError(f"cannot reach Ollama at {self.host}: {e}")
+
+    def _reported_digest(self, info: dict) -> str:
+        digest = str(info.get("digest") or "").removeprefix("sha256:")
+        if digest:
+            return digest
+        # Current Ollama releases omit digest from /api/show. Resolve the exact
+        # loaded tag through /api/tags instead of silently weakening identity.
+        aliases = {self.model}
+        if ":" not in self.model:
+            aliases.add(self.model + ":latest")
+        matches = [item for item in self._tags().get("models") or []
+                   if item.get("name") in aliases or item.get("model") in aliases]
+        if len(matches) != 1:
+            raise EmbeddingError(
+                f"{self.model}: /api/tags names {len(matches)} exact model "
+                "matches; cannot establish one artifact digest")
+        digest = str(matches[0].get("digest") or "").removeprefix("sha256:")
+        if not re.fullmatch(r"[0-9a-fA-F]{12,64}", digest):
+            raise EmbeddingError(
+                f"{self.model}: /api/tags returned an invalid artifact digest")
+        return digest
+
     def identity(self) -> Identity:
         if self._identity is None:
             info = self._show()
@@ -159,7 +192,7 @@ class OllamaEmbedder:
                 if k.endswith(".embedding_length"):
                     dims = int(v)
                     break
-            digest = (info.get("digest") or "")[:12]
+            digest = self._reported_digest(info)[:12]
             if self._expect_digest and not digest.startswith(
                     self._expect_digest[:12]):
                 raise EmbeddingError(

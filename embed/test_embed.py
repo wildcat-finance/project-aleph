@@ -158,6 +158,42 @@ def test_specs() -> None:
         check(f"rejected: {bad!r}", raised)
 
 
+def test_ollama_digest_fallback() -> None:
+    print("\nE3b — current Ollama identity remains artifact-pinned")
+
+    class CurrentOllama(em.OllamaEmbedder):
+        def _show(self):
+            return {"model_info": {"bert.embedding_length": 1024}}
+
+        def _tags(self):
+            return {"models": [{
+                "name": "bge-m3:latest", "model": "bge-m3:latest",
+                "digest": "790764642607" + "0" * 52,
+            }]}
+
+    identity = CurrentOllama(
+        "bge-m3", expect_digest="790764642607").identity()
+    check("a digest omitted by /api/show is resolved from the exact tag",
+          identity.digest == "790764642607" and identity.dimensions == 1024,
+          str(identity))
+
+    class Ambiguous(CurrentOllama):
+        def _tags(self):
+            row = {"digest": "790764642607" + "0" * 52}
+            return {"models": [
+                {**row, "name": "bge-m3", "model": "other"},
+                {**row, "name": "other", "model": "bge-m3:latest"},
+            ]}
+
+    refused = ""
+    try:
+        Ambiguous("bge-m3").identity()
+    except em.EmbeddingError as error:
+        refused = str(error)
+    check("multiple exact tag aliases fail rather than choosing one",
+          "2 exact model matches" in refused, refused)
+
+
 def test_index_build(tmp: pathlib.Path) -> None:
     print("\nE4 — an index keeps the tiers apart and records its provenance")
     corpus = fake_corpus(tmp)
@@ -357,6 +393,7 @@ def main() -> int:
     test_identity()
     test_stub()
     test_specs()
+    test_ollama_digest_fallback()
     for fn in (test_index_build, test_search, test_corpus_integrity):
         td = tempfile.mkdtemp()
         try:
