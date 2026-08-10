@@ -1,0 +1,38 @@
+# eval/labels.yaml — retrieval ground truth for the questions where being wrong
+# actually costs something. A question passes if ANY substring below appears in
+# any of the top-k retrieved chunks.
+#
+# Deliberately small. Thirty labelled questions catches regressions; a hundred
+# is a project. Add to it when a bad answer surprises you.
+
+a01: ["withdrawal batch", "claimable", "unclaimed withdrawals"]
+a05: ["withdrawal cycle", "batch duration", "expiry"]
+a07: ["interest", "batch", "scale factor"]
+a08: ["distributed evenly", "scaled tokens given to the batch", "desired behavior"]
+a12: ["expired", "priority", "unpaid"]
+a13: ["expired", "priority"]
+a17: ["unclaimed withdrawals", "liquidity", "reserve"]
+
+b01: ["lender deposits", "total supply", "outstanding supply"]
+b02: ["outstanding supply", "reserve ratio", "total supply"]
+b03: ["capacity", "maximum", "deposit"]
+b04: ["interest", "supply"]
+b06: ["interest rate", "annual interest", "APR"]
+b13: ["interest rate", "scale factor", "compound"]
+
+c01: ["delinquent", "collateral obligation", "liquidityRequired"]
+c03: ["grace period", "timeDelinquent", "grace tracker"]
+c05: ["penalty", "delinquen"]
+c07: ["timeDelinquent", "decrements", "grace period"]
+
+d02: ["market token", "transfer"]
+d04: ["scale factor", "rebase", "scaled"]
+
+e01: ["access", "credential", "role provider"]
+e02: ["access control", "role provider", "credential"]
+
+g01: ["delinquen", "lenders will inevitably lose funds", "undercollateralised"]
+g03: ["deposits", "interest", "lose funds"]
+g05: ["sanction", "escrow"]
+
+l03: ["expired", "priority", "batch"]

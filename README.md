@@ -119,7 +119,25 @@ a successful prompt injection is a rejected intent.
 ```
 
 Postgres with pgvector for the index, chat log and audit trail. Hybrid BM25 +
-embeddings — the corpus is small, and exotic retrieval buys nothing here. Bot
+embeddings — the corpus is small, and exotic retrieval buys nothing here.
+
+**Embedding model: `bge-m3`**, self-hosted via Ollama, 1024 dimensions, pinned by
+digest rather than tag. Chosen by measurement against `qwen3-embedding` at 0.6B
+and 8B, using 25 labelled questions from the golden set: recall@1 was 20/25
+against 18 and 17, and bge-m3 spread first place across more distinct chunks than
+either. The 8B model was no better than the 1.2GB one at seven times the resident
+memory, which is worth remembering the next time a larger model looks like the
+safe default.
+
+Two questions out of 25 is not statistical significance, and `qwen3-embedding:0.6b`
+was ahead at recall@5. The decisive factor was not a number: bge-m3 performs as
+documented, while the Qwen models only performed with their documented instruct
+prefix *removed* — a configuration that works today and breaks silently the next
+time the weights are repackaged. Full working in `eval/RUNBOOK.md`.
+
+The model is part of the corpus identity. Changing it changes every answer with no
+source-side diff to explain why, so it is pinned in `manifest.yaml` alongside the
+git refs and a change means a rebuild and an eval run, not a config edit. Bot
 process is stateless; long-polls `getUpdates` rather than exposing a webhook, so
 there is no inbound port and no public TLS surface. Privacy mode is on in groups:
 Aleph sees commands and mentions, not every message in rooms where counterparties
@@ -133,7 +151,10 @@ aleph-ingestion-manifest.md   why the manifest says what it says
 ingest/PIPELINE.md            how manifest.yaml becomes a queryable corpus
 sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
 README.md                     this file
-eval/golden-v0.yaml           baseline question set — straw man, not validated
+eval/golden-v1.yaml           question set, built from real support transcripts
+eval/RUNBOOK.md               choosing the embedding model, by measurement
+eval/embed_compare.py         retrieval comparison harness
+eval/labels.yaml              retrieval ground truth for the 25 that matter
 ```
 
 `manifest.yaml` is the source of truth; the prose document explains it. If the two
@@ -186,13 +207,18 @@ the ones that need a human rather than a build step.
 - `wildcat-juris` is currently excluded from the corpus (claims intake for
   defaulted markets, identified lenders). Confirm or override.
 - Duty roster lives in deployment config, not here. Confirm.
+- Decide the `triage` behaviour. Nine golden-set items are action requests ("bump
+  my withdrawal") or UI faults, where the value is collecting the four details a
+  human always asks for rather than answering. That is a distinct mode from
+  answering and refusing, and it isn't specified anywhere yet.
 
 **Needs authoring, not deciding**
 
-- The golden question set. `eval/golden-v0.yaml` is a baseline written from public
-  sources by someone who has never been asked any of them — react to it rather
-  than start from blank. What it can't supply is frequency, real phrasing, and the
-  questions people ask when a market is already delinquent.
+- Review `eval/golden-v1.yaml` — 125 questions clustered from ~2,940 real messages
+  across five channels. Frequency ratings are inferred from the transcripts and
+  want a sanity check from someone who was in the rooms.
+- Ten `corpus_gap` questions are real, recurring, and unanswerable from the docs.
+  That is documentation work no retrieval model can substitute for.
 
 **Housekeeping**
 
