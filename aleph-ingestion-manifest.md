@@ -115,7 +115,7 @@ the documentation does.
 `release/v2.5` is snapshotted at a commit and indexed separately. It answers only
 when the asker names v2.5 explicitly, always with an unaudited-and-undeployed
 preamble, and never satisfies a general question. "How do withdrawals work"
-answers from v2.1.
+answers from v2.0.
 
 ### Three things are excluded, for three different reasons
 
@@ -249,7 +249,7 @@ that invents its own `corpus_build_id` is how two chunks from one build end up
 claiming different origins.
 
 `protocol_version` is the load-bearing field: it filters retrieval to the version
-being asked about, and it is what stops v2.5 chunks bleeding into v2.1 answers.
+being asked about, and it is what stops v2.5 chunks bleeding into v2.0 answers.
 
 ---
 
@@ -303,8 +303,8 @@ five channels. `eval/labels.yaml` gives retrieval ground truth for the 25 where
 being wrong costs something.
 
 Three blocking metrics: **citation validity** (does the cited chunk exist in this
-build and support the claim), **version correctness** (does a v2.1 question get a
-v2.1 answer), and **calibrated abstention** (refusal rate on the
+build and support the claim), **version correctness** (does a v2.0 question get a
+v2.0 answer), and **calibrated abstention** (refusal rate on the
 known-unanswerable subset). The last decides whether Aleph saves time or costs
 it: a bot that refuses 20% of the time frees you up, and one that confabulates 5%
 of the time means every answer needs checking.

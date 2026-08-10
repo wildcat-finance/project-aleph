@@ -187,7 +187,8 @@ worth more than one nobody tested.
 ## Files
 
 ```
-ingest/chunkers/solidity.py       primary subject of review
+ingest/build.py                   newest, least exercised — start here
+ingest/chunkers/solidity.py       reviewed four times over
 ingest/chunkers/markdown.py       structural pass rewritten again in Round 2
 ingest/chunkers/test_solidity.py  142 assertions; add to it
 ingest/chunkers/test_markdown.py  113 assertions; add to it
