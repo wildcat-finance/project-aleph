@@ -128,17 +128,34 @@ talk to each other.
 ## Repository contents
 
 ```
-aleph-ingestion-manifest.md   what is indexed, at what ref, and what is excluded
+manifest.yaml                 machine-readable corpus definition — CI reads this
+aleph-ingestion-manifest.md   why the manifest says what it says
+ingest/PIPELINE.md            how manifest.yaml becomes a queryable corpus
 sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
 README.md                     this file
-eval/                         golden question set and gate    [not yet started]
+eval/golden-v0.yaml           baseline question set — straw man, not validated
 ```
+
+`manifest.yaml` is the source of truth; the prose document explains it. If the two
+disagree, the YAML wins and the prose is a bug.
 
 Implementation to follow. The manifest and the eval set come first deliberately:
 the question set determines what the corpus needs to contain, which is cheaper to
 learn before ingestion is built than after.
 
 ## Status
+
+**This repository is private; the bot it produces is public.** Those are different
+boundaries and only one of them is a control. Anything that reaches Aleph's context
+window is effectively published — a public bot can be asked what it knows, and will
+eventually be asked in a way that works. Repository privacy protects the working
+notes, the frank assessments and the roster; it protects nothing that gets loaded
+into the model at runtime.
+
+Two consequences. Aleph's own repository is never a source for Aleph — the spec
+documents are not in the allowlist and must not drift into it. And the deployed
+context should be assumed readable by anyone, so it carries public corpus and
+nothing else: no internal status, no names, no gaps we haven't announced.
 
 Pre-implementation. Scope is **mainnets only** — Ethereum and Plasma. Sepolia and
 other testnets are ignored entirely: not ingested, not queried, not answerable.
@@ -163,22 +180,19 @@ the ones that need a human rather than a build step.
 
 **Needs a decision**
 
-- `wildcat-docs` has live `docs-tg-bot` and `llm-rewrite-clean` branches. The first
-  may be prior art for this project. The second changes what a Tier B citation
-  means — if the docs corpus has been LLM-rewritten, Aleph would be citing
-  generated text as canonical.
+- Vocabulary alignment with `wildcat-notifications`. Aleph is pull to that bot's
+  push; both live in Telegram and must describe the same market state in the same
+  words. Whose phrasing wins where they differ?
 - `wildcat-juris` is currently excluded from the corpus (claims intake for
   defaulted markets, identified lenders). Confirm or override.
-- Is this repository public or private? The security sections are written to be
-  safe if public, and can be blunter if not.
 - Duty roster lives in deployment config, not here. Confirm.
 
 **Needs authoring, not deciding**
 
-- The golden question set. Roughly 100 questions: the ones you and Dave are tired
-  of answering, the ones the docs imply, and — most importantly — the ones Aleph
-  should refuse. No borrower transcripts required or wanted; the questions, not
-  the conversations.
+- The golden question set. `eval/golden-v0.yaml` is a baseline written from public
+  sources by someone who has never been asked any of them — react to it rather
+  than start from blank. What it can't supply is frequency, real phrasing, and the
+  questions people ask when a market is already delinquent.
 
 **Housekeeping**
 
