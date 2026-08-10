@@ -85,10 +85,10 @@ class FakeSink:
 def update(update_id: int, text: str, *, chat_id: int = 1,
            user_id: int = 7, chat_type: str = "private",
            message_id: int | None = None, thread_id: int | None = None,
-           reply_to_bot: bool = False) -> dict:
+           reply_to_bot: bool = False, is_bot: bool = False) -> dict:
     message = {
         "message_id": message_id or update_id + 100,
-        "from": {"id": user_id, "is_bot": False},
+        "from": {"id": user_id, "is_bot": is_bot},
         "chat": {"id": chat_id, "type": chat_type}, "text": text,
     }
     if thread_id is not None:
@@ -102,10 +102,12 @@ def update(update_id: int, text: str, *, chat_id: int = 1,
 
 
 def adapter(tmp: pathlib.Path, engine, api: FakeAPI,
-            sink=None, limit: int = 20) -> telegram.TelegramAdapter:
+            sink=None, limit: int = 20,
+            peer_bot_ids: tuple[int, ...] = ()) -> telegram.TelegramAdapter:
     result = telegram.TelegramAdapter(
         engine, api, telegram.OffsetStore(str(tmp / "offset.json")),
-        handoff_sink=sink, max_workers=3, user_limit=limit)
+        handoff_sink=sink, max_workers=3, user_limit=limit,
+        peer_bot_ids=peer_bot_ids)
     result.startup()
     return result
 
@@ -165,6 +167,28 @@ def run(tmp: pathlib.Path) -> None:
           len(group_api.sent) == 2
           and all(item["message_thread_id"] == 88
                   for item in group_api.sent[:1]))
+
+    peer_api = FakeAPI([
+        update(24, "/ask@AlephTestBot approved question", chat_id=-1,
+               chat_type="supergroup", user_id=500, is_bot=True),
+        update(25, "/ask@AlephTestBot unapproved question", chat_id=-1,
+               chat_type="supergroup", user_id=501, is_bot=True),
+        update(26, "ambient bot text", chat_id=-1, chat_type="supergroup",
+               user_id=500, is_bot=True),
+        update(27, "/ask untargeted", chat_id=-1, chat_type="supergroup",
+               user_id=500, is_bot=True),
+        update(28, "/confirm_handoff", chat_id=-1, chat_type="supergroup",
+               user_id=500, is_bot=True),
+    ])
+    peer_engine = CountingEngine(StaticEngine())
+    peer = adapter(tmp / "peer", peer_engine, peer_api,
+                   peer_bot_ids=(500,))
+    peer.process_updates(peer_api.updates)
+    check("only allowlisted bots can issue explicitly targeted questions",
+          peer_engine.questions == ["approved question"]
+          and len(peer_api.sent) == 1)
+    check("peer bots cannot use ambient, untargeted, or handoff paths",
+          peer.offset_store.load() == 29 and not peer.pending)
 
     print("\nTG3 — length, failures, rate limits, and offsets fail safely")
     long_text = ("paragraph line\n\n" * 700) + "stable-source-link"

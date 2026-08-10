@@ -203,6 +203,16 @@ def run(tmp: pathlib.Path) -> None:
           and "secret" not in path.read_text())
 
     print("\nO4 — composition and monitoring verify every runtime dependency")
+    check("peer bot allowlists are parsed, deduplicated, and default closed",
+          serve.peer_bot_ids("") == ()
+          and serve.peer_bot_ids("500, 501,500") == (500, 501))
+    refused = ""
+    try:
+        serve.peer_bot_ids("500,not-an-id")
+    except telegram.TelegramError as error:
+        refused = str(error)
+    check("malformed peer bot configuration fails closed",
+          "positive integers" in refused, refused)
     previous = {name: os.environ.get(name) for name in (
         "ALEPH_GATEWAY_TOKEN", "ALEPH_TELEGRAM_TOKEN", "ALEPH_AUDIT_HMAC_KEY")}
     os.environ.update({"ALEPH_GATEWAY_TOKEN": "gateway-fixture",

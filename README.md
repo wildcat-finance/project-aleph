@@ -241,6 +241,8 @@ The implementation provides:
 - message-only `getUpdates` polling with an atomically persisted offset;
 - private questions plus reliable group commands and replies, while ambient
   room text is ignored and plain mentions remain subject to Telegram delivery;
+- a default-closed peer-bot allowlist whose only capability is an explicitly
+  targeted `/ask@AlephBot` command;
 - message parsing, reply threading, length-aware formatting, and stable citation
   links;
 - an allowlisted handoff draft and preview followed by a separate explicit

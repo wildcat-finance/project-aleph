@@ -40,8 +40,17 @@ groups. Do not disable privacy or grant administrator access merely to make a
 plain mention work.
 
 Ambient group text, commands addressed to another bot, channel posts, service
-updates, non-text messages, and messages from bots are ignored. Polling requests
-only the `message` update type.
+updates, and non-text messages are ignored. Polling requests only the `message`
+update type.
+
+Bot-authored messages are ignored by default. A bot whose numeric Telegram ID is
+listed in the comma-separated `ALEPH_PEER_BOT_IDS` environment variable may send
+only `/ask@AlephBot <question>` in a shared group. Peer bots cannot use ambient
+text, replies, untargeted commands, or any handoff command. Aleph refuses to
+start if its own ID appears in the allowlist. Keep the allowlist empty unless an
+operator has identified a specific peer and enabled Telegram's
+[Bot-to-Bot Communication Mode](https://core.telegram.org/api/bots%2Fbot-to-bot)
+for one of the participating bots.
 
 Replies preserve the originating forum topic and use `reply_parameters`. Answer
 text is sent without a Telegram parse mode, so citations and punctuation cannot
@@ -85,6 +94,9 @@ The implementation follows the current Telegram Bot API contracts for
 [`ReplyParameters`](https://core.telegram.org/bots/api#replyparameters). Group
 delivery assumptions follow Telegram's
 [`Privacy Mode`](https://core.telegram.org/bots/features#privacy-mode) rules.
+The narrow peer-bot path follows Telegram's
+[`Bot-to-Bot Communication`](https://core.telegram.org/bots/features#bot-to-bot-communication)
+delivery and loop-prevention rules.
 
 `serve.py` supplies production composition, restart signaling, scrubbed audit
 logging, and environment-only secret delivery. `monitor.py` supplies dependency

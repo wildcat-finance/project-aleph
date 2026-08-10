@@ -25,6 +25,21 @@ class TelegramError(Exception):
     """Telegram transport or adapter policy cannot be satisfied."""
 
 
+def peer_bot_ids(value: str | None = None) -> tuple[int, ...]:
+    """Parse the default-closed peer-bot allowlist without exposing IDs."""
+    raw = os.environ.get("ALEPH_PEER_BOT_IDS", "") if value is None else value
+    if not raw.strip():
+        return ()
+    values = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item.isdecimal() or int(item) <= 0:
+            raise TelegramError(
+                "ALEPH_PEER_BOT_IDS must be comma-separated positive integers")
+        values.append(int(item))
+    return tuple(dict.fromkeys(values))
+
+
 class BotAPI(Protocol):
     def call(self, method: str, payload: dict | None = None): ...
 
@@ -76,6 +91,7 @@ class Incoming:
     text: str
     thread_id: int | None
     reply_to_bot: bool
+    peer_bot: bool
 
 
 @dataclass(frozen=True)
@@ -207,15 +223,20 @@ class TelegramAdapter:
     def __init__(self, engine, api: BotAPI, offset_store: OffsetStore,
                  handoff_sink: HandoffSink | None = None,
                  max_workers: int = 4, user_limit: int = 5,
-                 user_window_seconds: int = 60):
+                 user_window_seconds: int = 60,
+                 peer_bot_ids: tuple[int, ...] = ()):
         if not 1 <= max_workers <= 32:
             raise TelegramError("max_workers must be between 1 and 32")
+        if any(isinstance(peer_id, bool) or not isinstance(peer_id, int)
+               or peer_id <= 0 for peer_id in peer_bot_ids):
+            raise TelegramError("peer bot IDs must be positive integers")
         self.engine = engine
         self.api = api
         self.offset_store = offset_store
         self.handoff_sink = handoff_sink or DisabledHandoffSink()
         self.max_workers = max_workers
         self.limiter = RateLimiter(user_limit, user_window_seconds)
+        self.peer_bot_ids = frozenset(peer_bot_ids)
         self.identity: BotIdentity | None = None
         self.pending: dict[tuple[int, int], PendingHandoff] = {}
 
@@ -238,6 +259,8 @@ class TelegramAdapter:
         except (KeyError, TypeError, ValueError):
             raise TelegramError("Telegram bot identity has no valid ID")
         self.identity = BotIdentity(bot_id, username)
+        if bot_id in self.peer_bot_ids:
+            raise TelegramError("Aleph's own bot ID cannot be a peer bot")
         return self.identity
 
     def run_once(self, timeout: int = 30) -> int:
@@ -321,25 +344,37 @@ class TelegramAdapter:
         chat = message.get("chat") or {}
         text = message.get("text")
         if (not isinstance(text, str) or not text.strip()
-                or sender.get("is_bot") is True
                 or chat.get("type") not in ("private", "group", "supergroup")):
             return None
         try:
+            user_id = int(sender["id"])
+            peer_bot = sender.get("is_bot") is True
+            if peer_bot and user_id not in self.peer_bot_ids:
+                return None
             return Incoming(
                 update_id=int(update["update_id"]), chat_id=int(chat["id"]),
                 chat_type=chat["type"], message_id=int(message["message_id"]),
-                user_id=int(sender["id"]), text=text,
+                user_id=user_id, text=text,
                 thread_id=(int(message["message_thread_id"])
                            if "message_thread_id" in message else None),
                 reply_to_bot=(
                     (message.get("reply_to_message") or {}).get("from", {}).get(
-                        "id") == self.identity.id))
+                        "id") == self.identity.id),
+                peer_bot=peer_bot)
         except (KeyError, TypeError, ValueError):
             raise TelegramError("message identifiers are malformed")
 
     def _question(self, incoming: Incoming) -> str | None:
         text = incoming.text.strip()
         command = self._COMMAND.match(text)
+        if incoming.peer_bot:
+            if not command:
+                return None
+            name, target, body = command.groups()
+            if (name.lower() != "ask" or not target
+                    or target.lower() != self.identity.username.lower()):
+                return None
+            return (body or "").strip() or None
         if command:
             name, target, body = command.groups()
             if target and target.lower() != self.identity.username.lower():

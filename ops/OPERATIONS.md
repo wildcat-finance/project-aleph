@@ -110,6 +110,12 @@ Supply three independent secrets through root-owned environment files:
 - `ALEPH_AUDIT_HMAC_KEY`, at least 32 random bytes, for non-reversible question
   fingerprints.
 
+`ALEPH_PEER_BOT_IDS` is not a secret. Leave it unset by default. When an approved
+peer bot must ask Aleph questions, set it in `/etc/aleph/telegram.env` to that
+bot's numeric Telegram ID (or a comma-separated allowlist), verify Bot-to-Bot
+Communication Mode, and restart the query service. An allowlisted peer still has
+access only to explicitly targeted `/ask@AlephBot` commands.
+
 The audit log contains route and evidence provenance, not raw question text,
 answer text, user IDs, wallet/market/borrower addresses, or exception messages.
 Daily files are mode `0600`; `serve.py` removes days older than the configured

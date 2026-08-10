@@ -13,7 +13,8 @@ from activation import ActivationError, ActivationStore
 from embed.embedder import Identity, require_match, EmbeddingError
 from live import GatewayClient, LiveError
 from retrieval import Retriever, RetrievalError
-from telegram import OffsetStore, TelegramAdapter, TelegramError, TelegramHTTP
+from telegram import (OffsetStore, TelegramAdapter, TelegramError, TelegramHTTP,
+                      peer_bot_ids)
 
 
 class NullEngine:
@@ -44,12 +45,15 @@ def check(manifest: str, artifacts: str, pointer: str, prerelease: str,
         "ready_providers": health.ready_providers,
     }
     telegram_api = api or TelegramHTTP()
+    peers = peer_bot_ids()
     adapter = TelegramAdapter(
-        NullEngine(), telegram_api, OffsetStore("state/monitor-unused.json"))
+        NullEngine(), telegram_api, OffsetStore("state/monitor-unused.json"),
+        peer_bot_ids=peers)
     identity = adapter.startup()
     checks["telegram"] = {"ok": True, "bot_id": identity.id,
                            "username": identity.username,
-                           "privacy_mode": "enabled", "webhook": "absent"}
+                           "privacy_mode": "enabled", "webhook": "absent",
+                           "peer_bot_count": len(peers)}
     return {"ok": True,
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "checks": checks}
