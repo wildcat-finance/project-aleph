@@ -219,7 +219,7 @@ ones:
 | Schema validity | enforced |
 | Watched legal digests | measured and recorded; mismatch is not fatal |
 | Corpus diff review | release record is pending until a changed diff names its reviewer |
-| SDK address assertions | recorded as `null`; not implemented in the build |
+| SDK address assertions | `release.py --fetch-sdk` verifies the pinned npm artifact and sets the gate; otherwise `null` |
 | Retrieval/answer evaluation | recorded as `null`; not implemented in the build |
 | Atomic deployment swap | not implemented in this repository |
 

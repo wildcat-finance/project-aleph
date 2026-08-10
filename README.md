@@ -10,8 +10,8 @@ SDK address watcher. It does not yet contain a user-facing agent.
 
 The shortest honest status is:
 
-> **Aleph can publish and retrieve validated evidence. It must next implement
-> block-numbered live-state tools and deterministic numeric renderers.**
+> **Aleph has validated corpus retrieval and block-pinned live-state tools. It
+> must next route questions and assemble safe answers from those typed inputs.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -36,6 +36,8 @@ The checked-in code already provides:
 - exact cosine search with strict full index/query embedder identity checks;
 - typed mainnet/version/tier-scoped hybrid retrieval, isolated v2.5 handling,
   manifest-visible mandatory sources, and byte-verified citation resolution;
+- pinned SDK address verification, health-gated gateway reads at one observed
+  block, five narrow live operations, and deterministic numeric renderers;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -116,32 +118,33 @@ The implementation provides:
 not through the model-comparison splitter. Retrieval returns evidence only; it
 does not generate answer prose.
 
-### 3. Build live-state tools and deterministic renderers
+### 3. Live-state tools and deterministic renderers — implemented
 
-Anything that changes without a corpus promotion belongs here, not in the vector
-index and not in model-authored prose.
+`live.py` keeps changeable state outside the corpus and outside model-authored
+prose. It loads the exact SDK package pinned by version, npm SRI digest, and
+registry `gitHead`, then checks every asserted mainnet deployment key.
 
-Build next:
+The implementation provides:
 
 - SDK artifact loading and enforcement of every address under
   `addresses.assertions` in `manifest.yaml`;
-- contract resolution by SDK key, especially `MarketLensV2`, never by a reused
-  human-readable name;
-- a Wildcat Data Gateway client that names the pinned mainnet release explicitly;
-- a health and lag gate checked before every live answer;
-- block-number propagation from the query through the rendered response;
-- narrow typed operations for registry, market, account, withdrawal queue, and
-  borrower-to-markets facts; and
+- key-only contract resolution—`MarketLens` is refused while `MarketLensV2` is
+  asserted and available;
+- a Wildcat Data Gateway client that names `mainnet/v2.0.30` explicitly and has
+  no provider fallback;
+- a health, integrity, circuit, redundancy, and zero-lag check immediately
+  before every GraphQL request;
+- queries pinned to the checked indexed block, with exact `_meta` block
+  agreement required in the response;
+- typed registry, market, account, withdrawal-queue, and borrower-to-markets
+  operations; and
 - deterministic renderers for every numeric or market-state response.
 
-The model may eventually choose a typed operation. It must not generate, round,
-compare, or characterize the returned figures. Borrower aggregation may show
-public facts, but the tool schema must not contain scoring, ranking, reliability,
-or inferred-intent fields.
-
-**Complete when:** every live output is reproducible from a typed fixture, names
-its observed block and gateway release, declines while the gateway is unhealthy,
-and makes no model-authored financial claim.
+Token amounts and basis points are formatted with integer arithmetic. Every
+renderer appends the Ethereum block and gateway release. Borrower aggregation
+contains public market facts only—no score, rank, reliability, risk, or inferred
+intent. `release.py --fetch-sdk` binds a successful address check into
+`address_assertions_hold`; without it, that gate remains `null`.
 
 ### 4. Build the question router and answer engine
 
@@ -289,6 +292,7 @@ pip install pyyaml numpy
 python3 release.py \
   --manifest manifest.yaml \
   --solc ingest/solc-container \
+  --fetch-sdk \
   --artifacts artifacts
 ```
 
@@ -307,6 +311,7 @@ python3 ingest/test_build.py
 python3 embed/test_embed.py
 python3 test_release.py
 python3 test_retrieval.py
+python3 test_live.py
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
@@ -321,6 +326,8 @@ release.py                    manifest -> immutable corpus/index release
 test_release.py               release coherence and immutability checks
 retrieval.py                  scoped hybrid retrieval + citation resolver
 test_retrieval.py             scope, isolation, ranking and quote checks
+live.py                       SDK address gate, gateway reads and renderers
+test_live.py                  lag, block, address and numeric fixtures
 
 ingest/
   build.py                    manifest -> validated corpus build

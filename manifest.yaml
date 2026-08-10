@@ -325,6 +325,8 @@ addresses:
   # Authoritative source is the published SDK artefact, not any repository.
   source: "npm:@wildcatfi/wildcat-sdk"
   pinned_version: "3.1.17"
+  integrity: "sha512-WS8yE+vLF1BVvex0y2WJ5hRUlgs04LUUral1iRheuMIfW6pVLt9hQJDtcSKvGO5FwssNoQ2QXhR3FpUMFZu92w=="
+  git_head: "38e43ed6fb37f0f14efc87cfdc54df2264da4b5d"
   resolve_by: key                  # never by human-readable name
   assertions:
     # Build fails if these move. Three addresses have carried the name
