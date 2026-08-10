@@ -108,10 +108,11 @@ def prepare_keyring(sources: list[dict], manifest_dir: pathlib.Path,
         raise BuildError("a signer_key_file is declared but gpg is not "
                          "installed; signatures cannot be verified")
 
-    home = workdir / "keyring"
-    if home.exists():
-        shutil.rmtree(home)
-    home.mkdir(parents=True, exist_ok=True)
+    # GnuPG creates agent sockets beneath GNUPGHOME. Unix socket paths are
+    # short (typically 104–108 bytes), so an arbitrarily deep checkout can
+    # make verification fail before a key is imported. This keyring is truly
+    # ephemeral; keep its private home beneath the short system path instead.
+    home = pathlib.Path(tempfile.mkdtemp(prefix="aleph-gpg-", dir="/tmp"))
     home.chmod(0o700)
     env = {"GNUPGHOME": str(home)}
     report: dict = {}
@@ -121,12 +122,14 @@ def prepare_keyring(sources: list[dict], manifest_dir: pathlib.Path,
         if not path.is_absolute():
             path = manifest_dir / rel
         if not path.exists():
+            cleanup_keyring(env)
             raise BuildError(
                 f"{source['id']}: signer_key_file {path} does not exist. "
                 "The corpus definition ships the key it trusts; without it "
                 "there is nothing to verify against.")
         r = _run(["gpg", "--batch", "--quiet", "--import", str(path)], env=env)
         if r.returncode != 0:
+            cleanup_keyring(env)
             raise BuildError(f"{source['id']}: importing {path} failed: "
                              f"{r.stderr[:200]}")
         listing = _run(["gpg", "--list-keys", "--with-colons"], env=env).stdout
@@ -147,6 +150,7 @@ def prepare_keyring(sources: list[dict], manifest_dir: pathlib.Path,
         expected = ((source.get("ref") or {}).get("signer_fingerprint")
                     or "").replace(" ", "").upper()
         if expected and expected not in fingerprints:
+            cleanup_keyring(env)
             raise BuildError(
                 f"{source['id']}: {path} does not contain the pinned key\n"
                 f"  manifest pins  {expected}\n"
@@ -157,6 +161,15 @@ def prepare_keyring(sources: list[dict], manifest_dir: pathlib.Path,
         print(f"  [{source['id']}] keyring: imported {path.name} "
               f"({len(fingerprints)} key(s))")
     return env, report
+
+
+def cleanup_keyring(env: dict) -> None:
+    """Stop the private GPG agent and remove its ephemeral home."""
+    home = env.get("GNUPGHOME")
+    if not home:
+        return
+    _run(["gpgconf", "--kill", "all"], env=env)
+    shutil.rmtree(home, ignore_errors=True)
 
 
 def _validsig_fingerprint(raw: str) -> str | None:
@@ -687,18 +700,21 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
     gpg_env, keyring = prepare_keyring(
         sources, pathlib.Path(manifest_path).resolve().parent, workdir_p)
     repos, resolutions = {}, {}
-    for s in sources:
-        repo, res = acquire(s, workdir_p, local, allow_unverified, gpg_env)
-        repos[s["id"]], resolutions[s["id"]] = repo, res
-        sig = res["signature"]
-        mark = {"verified": ("signature verified, signer pinned"
-                             if res.get("signer_pinned")
-                             else "signature valid, SIGNER NOT PINNED"),
-                "unsigned": "NOT ATTESTED (tag carries no signature) — waived",
-                "no_public_key": "NOT ATTESTED (no public key) — waived",
-                "not_required": "unsigned by design"}.get(sig, sig)
-        print(f"  [{s['id']}] {res.get('tag') or res['commit'][:7]} "
-              f"-> {res['commit'][:7]}   {mark}")
+    try:
+        for s in sources:
+            repo, res = acquire(s, workdir_p, local, allow_unverified, gpg_env)
+            repos[s["id"]], resolutions[s["id"]] = repo, res
+            sig = res["signature"]
+            mark = {"verified": ("signature verified, signer pinned"
+                                 if res.get("signer_pinned")
+                                 else "signature valid, SIGNER NOT PINNED"),
+                    "unsigned": "NOT ATTESTED (tag carries no signature) — waived",
+                    "no_public_key": "NOT ATTESTED (no public key) — waived",
+                    "not_required": "unsigned by design"}.get(sig, sig)
+            print(f"  [{s['id']}] {res.get('tag') or res['commit'][:7]} "
+                  f"-> {res['commit'][:7]}   {mark}")
+    finally:
+        cleanup_keyring(gpg_env)
 
     tools = tool_versions(solc)
     build_id = compute_build_id(manifest_bytes, resolutions, tools)

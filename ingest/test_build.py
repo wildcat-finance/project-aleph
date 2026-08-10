@@ -278,6 +278,12 @@ def test_keyring(tmp: pathlib.Path) -> None:
         check("the build records which key file was trusted",
               rec["keyring"]["alpha"]["fingerprints"] == [fpr_release],
               str(rec.get("keyring")))
+        long_workdir = tmp / ("deeply-nested-build-workdir-" * 8)
+        rec = ab.build(
+            str(manifest), str(tmp / "k-long"), "solc", str(long_workdir),
+            {"alpha": str(repo)}, False, True, False, None)
+        check("signature verification is independent of checkout path length",
+              rec["gates"]["signature_verified"] is True, str(rec["gates"]))
 
         # A key that signs with a dedicated signing subkey — the ordinary
         # shape of a GitHub-registered key. GnuPG reports the subkey as the
