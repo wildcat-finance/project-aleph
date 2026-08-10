@@ -96,23 +96,33 @@ trailing data location. Fully qualified struct names survive as `Foo.Bar` —
 find a case where the same struct is imported by different paths in two
 compilation units and produces two different IDs for one function.
 
-## Round 1 is done, both chunkers
+## Rounds 1 and 2 are done, both chunkers
 
-Sol 5.6 reviewed both at `47634bc` and found six issues in each. All twelve are
-fixed with regressions — see the Round 1 sections of `ADVERSARIAL.md`.
+Sol 5.6 reviewed both at `47634bc` and found six issues in each; a second
+review at `7b901bd` found eleven more plus two about the tests. All fixed with
+regressions — the Round 2 section of `ADVERSARIAL.md` is the detailed record.
 
-Two patterns worth carrying into a second round. Most findings were the tool
-*reporting success while doing the wrong thing*, not crashing: a corpus that
-builds clean and cites the wrong bytes. And in both chunkers the worst finding
-was invisible because a test had been written in a way that could not fail — the
-Solidity citation check subtracted the natspec before searching for it, and the
-markdown suite asserted on heading text without ever checking ancestry against a
-fixture that had a short parent. **Look for checks that cannot fail before
-looking for code that does.**
+What survived a full round of fixing, and is therefore what a third round
+should assume still lurks: **fail-open defaults, and checks derived from the
+thing they check.** Round 2's Solidity headline was the embed rebuild parsing
+its own previous output to recover its input — a delimiter any natspec author
+could write. Its test headline was fatal-condition tests that re-enacted the
+production merge loop and asserted on the re-enactment. Both are the Round 1
+lesson wearing new clothes: look for checks that cannot fail before looking
+for code that does.
 
-The markdown parser was rewritten rather than patched: it is now a single
-structural pass over bytes rather than a regex per concern. That is new code
-with 42 assertions behind it, which is thinner cover than the Solidity side.
+Three places a third round should press. The anchor algorithm is *fitted* to
+the live renderer, 465/465 renderer artifacts included, not derived from a
+spec — GitBook can invalidate it silently, and `chunkers/verify_anchors.py`
+re-runs the whole fit on demand. The ABI cross-check
+compares name multisets, so a wrong parameter type with the right name passes.
+And the markdown scanner now knows most of CommonMark's block grammar but
+deliberately not all of it: multi-line inline code spans and list lazy
+continuation are documented gaps with no corpus instances behind them.
+
+The markdown structural pass was rewritten again — a state machine over
+fences, comments, HTML blocks and paragraphs. Newest code in the tree, 78
+assertions behind it.
 
 ## Known weak points, stated up front
 
@@ -124,8 +134,10 @@ with 42 assertions behind it, which is thinner cover than the Solidity side.
   network, no capabilities, read-only root, non-root user. Chosen for
   reproducibility more than isolation — the real trust boundary is the signed
   tag. Worth challenging if you think that reasoning is backwards.
-- Dedupe hashes `model_text`, so two functions with identical bodies but
-  different natspec are collapsed. Possibly wrong.
+- Dedupe hashes `model_text`, which contains natspec — identical bodies with
+  different documentation are kept apart, and identical bodies with identical
+  documentation are folded, now findable under either name via alias
+  breadcrumbs in the embedded text.
 - Assembly blocks are chunked inside their enclosing function with no special
   handling.
 
@@ -156,9 +168,10 @@ worth more than one nobody tested.
 
 ```
 ingest/chunkers/solidity.py       primary subject of review
-ingest/chunkers/markdown.py       rewritten after Round 1; least exercised
-ingest/chunkers/test_solidity.py  74 assertions; add to it
-ingest/chunkers/test_markdown.py  42 assertions; add to it
+ingest/chunkers/markdown.py       structural pass rewritten again in Round 2
+ingest/chunkers/test_solidity.py  100 assertions; add to it
+ingest/chunkers/test_markdown.py  81 assertions; add to it
+ingest/chunkers/verify_anchors.py the anchor fit, re-checkable against the live site
 ingest/schema.py                  the chunk shape both chunkers emit
 ingest/ADVERSARIAL.md             invariants and attack agenda — read first
 ingest/solc-container             pinned, network-less solc

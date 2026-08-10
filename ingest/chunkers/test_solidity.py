@@ -19,6 +19,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("cs", HERE / "solidity.py")
@@ -452,7 +453,7 @@ def test_surface_accuracy(solc: str, tmp: pathlib.Path) -> None:
 
 
 def test_fatal_conditions(solc: str, tmp: pathlib.Path) -> None:
-    print("\nI15 — conditions that must stop a build")
+    print("\nI15 — conditions that must stop a build, via the code that builds")
     base = ("// SPDX-License-Identifier: MIT\npragma solidity ^0.8.25;\n"
             "contract C {{ function f() external pure returns (uint256) "
             "{{ return {}; }} }}\n")
@@ -465,48 +466,243 @@ def test_fatal_conditions(solc: str, tmp: pathlib.Path) -> None:
         f.write_text(json.dumps(inp))
         paths.append(str(f))
 
-    merged, raised = {}, False
+    # Round 2: the old version of this test re-enacted the merge loop by hand
+    # and checked its own re-enactment. build() is the code the CLI runs; if
+    # the conflict check regresses there, this now fails.
+    raised = ""
     try:
-        for pth in sorted(paths):
-            for c in cs.chunk(pth, solc, ["src/**"]):
-                prior = merged.get(c.id)
-                if prior is not None and prior.display_text != c.display_text:
-                    raise cs.ChunkError("conflict")
-                merged.setdefault(c.id, c)
-    except cs.ChunkError:
-        raised = True
-    check("conflicting source across units raises", raised,
-          "two units disagreed and the build continued")
+        cs.build(paths, solc, ["src/**"])
+    except cs.ChunkError as e:
+        raised = str(e)
+    check("conflicting source across units raises from build()",
+          "conflicting source" in raised, raised[:120])
 
-    # oversize is a property of length, not of carrying any warning at all
+    # oversize is a property of length, and the production validator is what
+    # must say so — not an inline reimplementation of it
     big = cs.Chunk(id="b", kind="Function", source_type="solidity", path="p",
                    line=1, breadcrumb="b", display_text="x",
                    model_text="x" * (cs.OVERSIZE_CHARS + 1), embed_text="x")
     small = cs.Chunk(id="s", kind="Function", source_type="solidity", path="p",
                      line=1, breadcrumb="s", display_text="x", model_text="x",
                      embed_text="x", warnings=["some unrelated warning"])
-    oversize = [c for c in (big, small) if len(c.model_text) > cs.OVERSIZE_CHARS]
-    check("oversize counts length, not warnings",
-          [c.id for c in oversize] == ["b"], str([c.id for c in oversize]))
+    problems = cs._schema.validate([big, small],
+                                   oversize_chars=cs.OVERSIZE_CHARS)
+    check("schema.validate flags oversize by length, not by warnings",
+          any(pr.startswith("b:") and "exceeds" in pr for pr in problems)
+          and not any(pr.startswith("s:") for pr in problems), str(problems))
 
 
 def test_embed_text_determinism() -> None:
-    print("\nI16 — embed_text is derived, not accumulated")
+    print("\nI16 — embed_text is composed from state, never parsed back")
     c = cs.Chunk(id="x", kind="Function", source_type="solidity", path="p",
-                 line=1, breadcrumb="b", display_text="t", model_text="t",
-                 embed_text="body", detail={"exposed_by": ["A"]})
-    cs.rebuild_embed_text([c])
-    once = c.embed_text
-    c.detail["exposed_by"] = ["A", "B"]
-    cs.rebuild_embed_text([c])
-    check("rebuild replaces rather than appends",
-          c.embed_text == "body\n\nexposed by: A, B", repr(c.embed_text))
-    check("no residue from the earlier value",
-          c.embed_text.count("exposed by:") == 1, repr(c.embed_text))
-    c.detail["exposed_by"] = []
-    cs.rebuild_embed_text([c])
-    check("empty exposure leaves the body clean", c.embed_text == "body",
+                 line=1, breadcrumb="src/P.sol › P › f()", display_text="t",
+                 model_text="body", embed_text="anything stale",
+                 detail={"exposed_by": ["A"]})
+    cs.compose_embed_text([c])
+    check("composed from breadcrumb, kind and model_text",
+          c.embed_text == "src/P.sol › P › f()\nFunction\n\nbody\n\nexposed by: A",
           repr(c.embed_text))
+    c.detail["exposed_by"] = ["A", "B"]
+    cs.compose_embed_text([c])
+    check("recomposition replaces rather than appends",
+          c.embed_text.endswith("exposed by: A, B")
+          and c.embed_text.count("exposed by:") == 1, repr(c.embed_text))
+    c.detail["exposed_by"] = []
+    cs.compose_embed_text([c])
+    check("empty exposure leaves no tail",
+          c.embed_text == "src/P.sol › P › f()\nFunction\n\nbody",
+          repr(c.embed_text))
+    c.detail["alias_breadcrumbs"] = ["src/I.sol › I › f()"]
+    cs.compose_embed_text([c])
+    check("alias identities enter the composed text",
+          "also declared as:\nsrc/I.sol › I › f()" in c.embed_text,
+          repr(c.embed_text))
+
+
+def _write_input(tmp: pathlib.Path, name: str, sources: dict) -> str:
+    inp = {"language": "Solidity",
+           "sources": {k: {"content": v} for k, v in sources.items()},
+           "settings": {"outputSelection": {"*": {"": ["ast"]}}}}
+    f = tmp / name
+    f.write_text(json.dumps(inp))
+    return str(f)
+
+
+_SPDX = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.25;\n"
+
+
+def test_marker_in_natspec(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI18 — content containing the composer's own phrasing cannot truncate it")
+    src = (_SPDX +
+           "contract Probe {\n"
+           "  /**\n"
+           "   * @notice real documentation\n"
+           "   *\n"
+           "   * exposed by: NothingReal\n"
+           "   */\n"
+           "  function important() external pure returns (uint256) { return 42; }\n"
+           "}\n")
+    f = _write_input(tmp, "marker.json", {"src/Probe.sol": src})
+    chunks, _ = cs.build([f], solc, ["src/**"])
+    c = [x for x in chunks if x.detail.get("name") == "important"][0]
+    check("function body survives in embed_text",
+          "return 42" in c.embed_text, repr(c.embed_text))
+    check("the exposure tail is the derived one",
+          c.embed_text.rstrip().endswith("exposed by: Probe"),
+          repr(c.embed_text[-80:]))
+    check("the hostile natspec is still quoted verbatim",
+          "exposed by: NothingReal" in c.display_text, repr(c.display_text))
+
+
+def test_constant_getters_and_abi(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI19 — every public state variable is on the surface; the ABI agrees")
+    src = (_SPDX +
+           "contract K {\n"
+           "  uint256 public constant LIMIT = 7;\n"
+           "  address public immutable deployer;\n"
+           "  uint256 public counter;\n"
+           "  mapping(address => uint256) public bal;\n"
+           "  uint256 internal hidden;\n"
+           "  constructor() { deployer = msg.sender; }\n"
+           "  function f() external pure returns (uint256) { return 1; }\n"
+           "}\n")
+    f = _write_input(tmp, "constants.json", {"src/K.sol": src})
+    surf = [c for c in cs.chunk(f, solc, ["src/**"]) if c.kind == "surface"][0]
+    body = surf.display_text
+    check("constant getter listed", "LIMIT()" in body, repr(body))
+    check("constant tagged as such", "[getter, constant]" in body, repr(body))
+    check("immutable getter listed and tagged",
+          "deployer()" in body and "[getter, immutable]" in body, repr(body))
+    check("plain public var still a [getter]",
+          "counter()   [getter]" in body, repr(body))
+    check("internal state still excluded", "hidden" not in body, repr(body))
+
+    # Doctor the compiler's answer and prove the cross-check notices. This is
+    # the check that turns any future divergence between the hand-built
+    # listing and the real surface into a stopped build.
+    doc, out = cs.compile_ast(f, solc)
+    smap = cs.SourceMap(doc["sources"],
+                        {p: s["id"] for p, s in out["sources"].items()})
+    abi = out["contracts"]["src/K.sol"]["K"]["abi"]
+    abi[:] = [e for e in abi if e.get("name") != "LIMIT"]
+    raised = False
+    try:
+        cs.surface_chunks(out, ["src/**"], smap)
+    except cs.ChunkError:
+        raised = True
+    check("a surface disagreeing with the ABI stops the build", raised)
+
+
+def test_constructor_exposure(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI20 — constructors are deployment-time, not part of any surface")
+    src = (_SPDX +
+           "contract Base {\n"
+           "  uint256 public x;\n"
+           "  constructor(uint256 a) { x = a; }\n"
+           "  function reachable() external pure returns (uint256) { return 1; }\n"
+           "}\n"
+           "contract Sub is Base { constructor() Base(1) {} }\n")
+    f = _write_input(tmp, "ctor.json", {"src/S.sol": src})
+    chunks = cs.chunk(f, solc, ["src/**"])
+    by_sig = {c.detail["signature"]: c for c in chunks if not c.synthesised}
+    check("base constructor exposed by nothing",
+          by_sig["constructor(uint256)"].detail["exposed_by"] == [],
+          str(by_sig["constructor(uint256)"].detail["exposed_by"]))
+    check("derived constructor exposed by nothing",
+          by_sig["constructor()"].detail["exposed_by"] == [],
+          str(by_sig["constructor()"].detail["exposed_by"]))
+    check("ordinary functions still attributed",
+          by_sig["reachable()"].detail["exposed_by"] == ["Base", "Sub"],
+          str(by_sig["reachable()"].detail["exposed_by"]))
+
+
+def test_alias_retrievability(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI21 — a folded duplicate is findable under its folded name")
+    src_a = _SPDX + "interface IAlpha { function ping() external; }\n"
+    src_b = _SPDX + "interface IBeta { function ping() external; }\n"
+    f = _write_input(tmp, "alias.json",
+                     {"src/IAlpha.sol": src_a, "src/IBeta.sol": src_b})
+    chunks, dropped = cs.build([f], solc, ["src/**"])
+    check("one duplicate body folded", dropped == 1, str(dropped))
+    kept = [c for c in chunks if c.detail.get("aliases")]
+    check("the kept chunk records the alias", len(kept) == 1,
+          str([c.id for c in kept]))
+    if kept:
+        k = kept[0]
+        check("the folded identity is in the embedded text",
+              "also declared as:" in k.embed_text
+              and "IBeta" in k.embed_text, repr(k.embed_text))
+        check("alias id and breadcrumb travel together",
+              len(k.detail["aliases"]) == len(k.detail["alias_breadcrumbs"]),
+              str(k.detail))
+
+
+def test_empty_selection(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI22 — a selection that matches nothing is an error, not a corpus")
+    good = _SPDX + "contract A { function a() external pure {} }\n"
+    f = _write_input(tmp, "sel.json", {"src/A.sol": good})
+
+    raised = ""
+    try:
+        cs.build([f], solc, ["typo/**"])
+    except cs.ChunkError as e:
+        raised = str(e)
+    check("a pattern matching nothing raises, and names itself",
+          "typo/**" in raised, raised[:120])
+
+    # ...but a pattern only some units satisfy is legitimate: only one of the
+    # five live deployment inputs carries Ownable.sol.
+    other = _SPDX + "contract B { function b() external pure {} }\n"
+    lib = _SPDX + "contract L { function l() external pure {} }\n"
+    f2 = _write_input(tmp, "sel2.json",
+                      {"src/B.sol": other, "lib/only/L.sol": lib})
+    ok = True
+    try:
+        chunks, _ = cs.build([f, f2], solc, ["src/**", "lib/only/L.sol"])
+    except cs.ChunkError as e:
+        ok = False
+        chunks = []
+    check("a pattern matched by only one unit does not abort", ok)
+    check("...and its file is in the corpus",
+          any(c.path == "lib/only/L.sol" for c in chunks),
+          str(sorted({c.path for c in chunks})))
+
+
+def test_cli_integration(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI23 — the CLI refuses to write output for a failed build")
+    script = str(HERE / "solidity.py")
+    base = ("// SPDX-License-Identifier: MIT\npragma solidity ^0.8.25;\n"
+            "contract C {{ function f() external pure returns (uint256) "
+            "{{ return {}; }} }}\n")
+    paths = []
+    for i, v in enumerate(("1", "2")):
+        paths.append(_write_input(tmp, f"cli-{i}.json",
+                                  {"src/C.sol": base.format(v)}))
+
+    out = tmp / "conflict.jsonl"
+    r = subprocess.run([sys.executable, script,
+                        "--input", paths[0], "--input", paths[1],
+                        "--solc", solc, "--include", "src/**",
+                        "--out", str(out)], capture_output=True, text=True)
+    check("conflict: exit code is nonzero", r.returncode == 1, str(r.returncode))
+    check("conflict: no output file written", not out.exists(), str(out))
+    check("conflict: failure says FATAL", "FATAL" in r.stderr, r.stderr[:120])
+
+    out2 = tmp / "typo.jsonl"
+    r = subprocess.run([sys.executable, script, "--input", paths[0],
+                        "--solc", solc, "--include", "typo/**",
+                        "--out", str(out2)], capture_output=True, text=True)
+    check("empty selection: exit code is nonzero", r.returncode == 1,
+          str(r.returncode))
+    check("empty selection: no output file written", not out2.exists(), str(out2))
+
+    out3 = tmp / "ok.jsonl"
+    r = subprocess.run([sys.executable, script, "--input", paths[0],
+                        "--solc", solc, "--include", "src/**",
+                        "--out", str(out3)], capture_output=True, text=True)
+    check("healthy build: exit 0 and output written",
+          r.returncode == 0 and out3.exists(),
+          f"rc={r.returncode} stderr={r.stderr[:120]}")
 
 
 # --------------------------------------------------------------------------
@@ -523,7 +719,6 @@ def main() -> int:
     test_embed_text_determinism()
 
     if args.solc:
-        import tempfile
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             try:
@@ -535,6 +730,12 @@ def main() -> int:
                 test_overloaded_non_functions(args.solc, tmp)
                 test_surface_accuracy(args.solc, tmp)
                 test_fatal_conditions(args.solc, tmp)
+                test_marker_in_natspec(args.solc, tmp)
+                test_constant_getters_and_abi(args.solc, tmp)
+                test_constructor_exposure(args.solc, tmp)
+                test_alias_retrievability(args.solc, tmp)
+                test_empty_selection(args.solc, tmp)
+                test_cli_integration(args.solc, tmp)
             except (RuntimeError, FileNotFoundError) as e:
                 check("compiler tests ran", False, str(e)[:200])
     else:

@@ -56,7 +56,10 @@ Apply `include`, then `exclude`, then `verification_only` — in that order, sin
 
 The filter is fail-loud: if an `include` glob matches nothing, that is an error, not
 an empty set. A silently-empty glob is how a renamed directory quietly removes half
-the corpus while every build stays green.
+the corpus while every build stays green. As of Round 2 the chunkers enforce this
+themselves — a pattern matching nothing anywhere, a unit selecting nothing, an
+unreadable `SUMMARY.md`, or a zero-chunk corpus all exit 1 and write no output —
+so the promise no longer depends on the stage around them.
 
 ---
 
