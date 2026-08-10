@@ -160,13 +160,56 @@ def split_frontmatter(blob: bytes) -> tuple[dict, int]:
 # paragraphs and headings
 # --------------------------------------------------------------------------
 
-def _code_span_ranges(line: bytes) -> list[tuple[int, int]]:
-    return [(m.start(), m.end()) for m in CODE_SPAN.finditer(line)]
+TICK_RUN = re.compile(rb"`+")
+
+
+def _code_span_ranges(line: bytes, open_ticks: int = 0
+                      ) -> tuple[list[tuple[int, int]], int]:
+    """
+    Byte ranges of inline code on this line, and the length of any backtick run
+    still open at end of line.
+
+    CommonMark closes a code span on a backtick run of exactly the opening
+    length, and a span may cross soft line breaks. Round 2 matched spans within
+    a line only, so a span opened on one line and closed on another left its
+    middle lines looking like ordinary prose — enough for a `<!-- ... -->`
+    inside a multi-line code span to be treated as an invisible comment and
+    deleted from `model_text`, when the renderer shows it as visible text.
+    """
+    ranges: list[tuple[int, int]] = []
+    pos, n = 0, len(line)
+
+    if open_ticks:
+        for m in TICK_RUN.finditer(line):
+            if len(m.group(0)) == open_ticks:
+                ranges.append((0, m.end()))
+                pos = m.end()
+                open_ticks = 0
+                break
+        else:
+            return [(0, n)], open_ticks          # whole line is still code
+
+    while pos < n:
+        m = TICK_RUN.search(line, pos)
+        if m is None:
+            break
+        run = len(m.group(0))
+        close = None
+        for c in TICK_RUN.finditer(line, m.end()):
+            if len(c.group(0)) == run:
+                close = c
+                break
+        if close is None:
+            ranges.append((m.start(), n))        # opens and stays open
+            return ranges, run
+        ranges.append((m.start(), close.end()))
+        pos = close.end()
+    return ranges, 0
 
 
 def _scan_comments(line: bytes, offset: int, in_comment: bool,
                    comment_start: int, comments: list[tuple[int, int]],
-                   ) -> tuple[bytes, bool, int]:
+                   open_ticks: int = 0) -> tuple[bytes, bool, int, int]:
     """
     Find HTML comments on one line, appending completed (start, end) byte
     spans to `comments` and returning (structure_line, in_comment,
@@ -176,13 +219,14 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
     everything up to a comment's close, which deleted the `# ` and turned the
     heading into stray prose.
 
-    A `<!--` inside a single-line code span is literal text, per CommonMark
-    inline precedence, and is neither an opener nor stripped. A code span that
-    itself spans lines is not modelled; ADVERSARIAL.md carries that as a known
-    weak point.
+    A `<!--` inside a code span is literal text, per CommonMark inline
+    precedence, and is neither an opener nor stripped. `open_ticks` carries an
+    unclosed backtick run in from the previous line, so spans that cross soft
+    line breaks are respected too; it is returned for the next line.
     """
     buf = bytearray(line)
-    spans = _code_span_ranges(line) if not in_comment else []
+    spans, open_ticks = ((_code_span_ranges(line, open_ticks)) if not in_comment
+                         else ([], open_ticks))
     pos, n = 0, len(line)
     while True:
         if in_comment:
@@ -190,19 +234,20 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
             if end == -1:
                 for i in range(pos, n):
                     buf[i] = 0x20
-                return bytes(buf), True, comment_start
+                return bytes(buf), True, comment_start, open_ticks
             comments.append((comment_start, offset + end + 3))
             for i in range(pos, end + 3):
                 buf[i] = 0x20
             in_comment, comment_start = False, -1
             pos = end + 3
-            spans = _code_span_ranges(line)
+            spans, open_ticks = _code_span_ranges(line[pos:], 0)
+            spans = [(a + pos, b + pos) for a, b in spans]
         else:
             begin = line.find(b"<!--", pos)
             while begin != -1 and any(a <= begin < b for a, b in spans):
                 begin = line.find(b"<!--", begin + 1)
             if begin == -1:
-                return bytes(buf), False, -1
+                return bytes(buf), False, -1, open_ticks
             in_comment, comment_start = True, offset + begin
             for i in range(begin, begin + 4):    # the opener is comment too
                 buf[i] = 0x20
@@ -233,12 +278,20 @@ def scan_structure(blob: bytes, start: int):
     html_end = None            # regex closing an explicit raw-HTML block
     html_until_blank = False   # inside a type 6/7 block
     para: list[tuple[int, bytes]] = []
+    open_ticks = 0             # backtick run left open by the previous line
+    # A list item holds an open paragraph that unindented following lines
+    # continue lazily. Those continuations belong to the item, so a setext
+    # underline cannot attach to them: `- foo\nbar\n---` is a list and a
+    # thematic break, and Round 3 found it emitting an H2 called "bar" with a
+    # `#bar` fragment the rendered page does not have.
+    list_open = False
+    list_blank = False         # a blank line has been seen inside the list
 
     for offset, line in iter_lines(blob, start):
         # -- a multi-line comment consumes everything until it closes -------
         if in_comment:
-            _, in_comment, comment_start = _scan_comments(
-                line, offset, True, comment_start, comments)
+            _, in_comment, comment_start, open_ticks = _scan_comments(
+                line, offset, True, comment_start, comments, open_ticks)
             continue
 
         # -- fenced code: only the closing fence matters ---------------------
@@ -262,16 +315,19 @@ def scan_structure(blob: bytes, start: int):
                 html_until_blank = False
                 continue
             # comments inside the block are still invisible text
-            _, in_comment, comment_start = _scan_comments(
-                line, offset, False, comment_start, comments)
+            _, in_comment, comment_start, open_ticks = _scan_comments(
+                line, offset, False, comment_start, comments, open_ticks)
             continue
 
         # -- normal state -----------------------------------------------------
-        sline, in_comment, comment_start = _scan_comments(
-            line, offset, False, comment_start, comments)
+        sline, in_comment, comment_start, open_ticks = _scan_comments(
+            line, offset, False, comment_start, comments, open_ticks)
 
         if not sline.strip():
             para = []
+            open_ticks = 0          # a code span cannot cross a blank line
+            if list_open:
+                list_blank = True
             continue
 
         m = FENCE.match(sline)
@@ -280,7 +336,7 @@ def scan_structure(blob: bytes, start: int):
             # an opening backtick fence may not contain a backtick in its info
             if not (marker[:1] == b"`" and b"`" in rest):
                 fence_char, fence_len = marker[:1], len(marker)
-                para = []
+                para, list_open, open_ticks = [], False, 0
                 continue
 
         m = HTML1_OPEN.match(sline)
@@ -318,8 +374,11 @@ def scan_structure(blob: bytes, start: int):
 
         atx = ATX.match(sline)
         if atx:
+            # An ATX heading interrupts anything, including a list item's
+            # paragraph — it is never a lazy continuation.
             headings.append((offset, len(atx.group(1)), atx.group(2) or b""))
             para = []
+            list_open = False
             continue
 
         st = SETEXT.match(sline)
@@ -337,16 +396,25 @@ def scan_structure(blob: bytes, start: int):
             # scanner made it a heading of whatever non-paragraph line came
             # before, including `> quoted text`.
             para = []
+            list_open = False
             continue
 
         # a lone `===` with no paragraph above is just text, and falls through
 
-        if BLOCKQUOTE.match(sline) or LIST_ITEM.match(sline) \
-                or TEMPLATE_LINE.match(sline):
-            para = []
+        if LIST_ITEM.match(sline):
+            list_open, list_blank, para = True, False, []
             continue
-        if INDENTED_CODE.match(sline) and not para:
+        if BLOCKQUOTE.match(sline) or TEMPLATE_LINE.match(sline):
+            list_open, para = False, []
             continue
+        if INDENTED_CODE.match(sline):
+            # inside a list this is item content; outside one it is code
+            if list_open or not para:
+                continue
+        if list_open:
+            if not list_blank:
+                continue        # lazy continuation of the item's paragraph
+            list_open = False   # blank line then unindented text ends the list
 
         para.append((offset, sline))
 
@@ -577,13 +645,16 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                 trail.pop(deeper)
 
         body = blob[start:end].decode("utf-8", "replace")
+        model = strip_comments_by_span(blob, start, end, comments)
+        # A section whose visible content is empty — all HTML comment, say —
+        # quotes nothing while still taking an index slot and a citation.
+        if not model.strip():
+            continue
         if len(body.strip()) < min_chars:
             continue
 
         heading_path = [v for _, v in sorted(trail.items())]
         breadcrumb = " › ".join([rel] + ancestors + heading_path)
-
-        model = strip_comments_by_span(blob, start, end, comments)
 
         chunks.append(Chunk(
             id=uid,
@@ -605,6 +676,38 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                 "description": front.get("description"),
             },
         ))
+
+    # A document too small to clear the section filter is still a document.
+    # Round 3 listed a short headingless note in SUMMARY.md, watched it produce
+    # nothing at all, and watched coverage report it as placed anyway. The size
+    # filter exists to suppress noise chunks within a document, not to erase
+    # one — so when nothing survived, the whole body is the chunk.
+    if not chunks:
+        whole = blob[body_start:].decode("utf-8", "replace")
+        whole_model = strip_comments_by_span(blob, body_start, len(blob),
+                                             comments)
+        if whole_model.strip():
+            chunks.append(Chunk(
+                id=f"{rel}#document",
+                kind="section",
+                source_type="markdown",
+                path=rel,
+                line=line_number(blob, body_start),
+                breadcrumb=" › ".join([rel] + ancestors),
+                display_text=whole,
+                model_text=whole_model,
+                embed_text=f"{' › '.join([rel] + ancestors)}\n\n{whole_model}",
+                tier="B",
+                detail={
+                    "heading": "",
+                    "heading_level": 0,
+                    "heading_path": [],
+                    "nav_path": ancestors,
+                    "anchor": None,
+                    "description": front.get("description"),
+                    "whole_document": True,
+                },
+            ))
 
     # A document with headings is worth indexing even when no single section
     # clears the size filter — five navigation pages were dropped entirely.
@@ -648,6 +751,28 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
     )
 
 
+def _reject_symlink(path: pathlib.Path, base: pathlib.Path) -> None:
+    """
+    A symlinked Markdown file reads bytes the pinned ref does not describe.
+
+    `source_ref` pins the link's *target string*, not the content behind it, so
+    the same corpus build on another machine can produce different text under
+    the same citation. Round 3 pointed `terms.md` at a file outside the tree and
+    got a clean chunk with a byte-exact promise attached to it.
+    """
+    if path.is_symlink():
+        raise ChunkError(
+            f"{path} is a symlink. Its bytes are not pinned by the corpus ref, "
+            "so a citation to it is not reproducible. Replace it with the file "
+            "itself, or exclude it.")
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError:
+        raise ChunkError(
+            f"{path} resolves to {path.resolve()}, outside the corpus root "
+            f"{base.resolve()} — most likely through a symlinked directory.")
+
+
 def chunk_tree(root: str, excludes: list[str],
                summary: str | None = None) -> list[Chunk]:
     base = pathlib.Path(root)
@@ -659,6 +784,8 @@ def chunk_tree(root: str, excludes: list[str],
         sp = pathlib.Path(summary)
         if not sp.is_absolute():
             sp = base / summary
+        if sp.exists():
+            _reject_symlink(sp, base)
         if not sp.exists():
             # Requested navigation that cannot be read is a broken build, not
             # a degraded one. Round 2's version warned and carried on, so a
@@ -680,21 +807,32 @@ def chunk_tree(root: str, excludes: list[str],
                for g in excludes):
             skipped += 1
             continue
+        _reject_symlink(path, base)
         included.append(rel)
         out.extend(chunk_file(path, base, hierarchy=hierarchy))
     print(f"  skipped {skipped} excluded file(s)")
 
+    # Coverage is computed from documents that actually produced chunks, not
+    # from filenames discovered before chunking. The latter certified a file as
+    # placed in the navigation while emitting nothing for it.
+    emitted = {c.path for c in out}
+    dropped = [r for r in included if r not in emitted]
+    if dropped:
+        print(f"  DROPPED       : {len(dropped)} included file(s) produced no "
+              "chunks — no reader-visible content:")
+        for r in dropped[:10]:
+            print(f"      {r}")
+
     if hierarchy:
-        placed = [r for r in included if r in hierarchy]
-        unplaced = [r for r in included if r not in hierarchy]
-        have = set(included)
-        dangling = [t for t in hierarchy if t not in have]
+        placed = [r for r in included if r in hierarchy and r in emitted]
+        unplaced = [r for r in included if r not in hierarchy and r in emitted]
+        dangling = [t for t in hierarchy if t not in emitted]
         if not placed:
             raise ChunkError(
                 "the SUMMARY hierarchy placed zero of the included documents "
                 "— wrong summary for this tree, or wrong --root")
-        print(f"  hierarchy     : {len(placed)}/{len(included)} included "
-              f"document(s) placed")
+        print(f"  hierarchy     : {len(placed)}/{len(emitted)} emitted "
+              f"document(s) placed ({len(included)} included)")
         if unplaced:
             print(f"  unplaced      : {len(unplaced)} included file(s) not in "
                   "the SUMMARY nav — indexed without ancestry:")
@@ -702,7 +840,7 @@ def chunk_tree(root: str, excludes: list[str],
                 print(f"      {r}")
         if dangling:
             print(f"  dangling nav  : {len(dangling)} SUMMARY entr(ies) point "
-                  "at files that are excluded or missing:")
+                  "at files that are excluded, missing or emitted nothing:")
             for t in dangling[:5]:
                 print(f"      {t}")
 

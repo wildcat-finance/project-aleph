@@ -13,6 +13,9 @@ No compiler needed, so this always runs. Exit code is the failure count.
 from __future__ import annotations
 
 import importlib.util
+import io
+import contextlib
+import os
 import pathlib
 import subprocess
 import sys
@@ -278,11 +281,17 @@ def test_short_parent_headings() -> None:
           kid.detail["heading_path"] == ["Root", "Parent", "Child"],
           str(kid.detail["heading_path"]))
 
-    # a heading-only document still gets represented, via its index
+    # a heading-only document still gets represented — by its index, and (since
+    # Round 3) by the document itself, because a page too short to section is
+    # still a page and vanishing was the worse failure
     only = chunk_text("# Nav Page\n\n## A\n\n## B\n")
     check("heading-only document is not dropped", len(only) >= 1, str(len(only)))
-    check("what survives is the index",
-          all(c.kind == "index" for c in only), str([c.kind for c in only]))
+    check("its index is present",
+          any(c.kind == "index" for c in only), str([c.kind for c in only]))
+    whole = [c for c in only if c.detail.get("whole_document")]
+    check("and its text survives as one whole-document chunk",
+          len(whole) == 1 and "Nav Page" in whole[0].display_text,
+          str([c.id for c in only]))
 
     # a short heading must not leave the previous section's ancestry behind
     seq = chunk_text(f"# One\n\n{LONG}\n## Short\n\n# Two\n\n{LONG}")
@@ -617,6 +626,127 @@ def test_summary_fail_loud(tmp: pathlib.Path) -> None:
           f"rc={r2.returncode} stderr={r2.stderr[:120]}")
 
 
+def test_symlinks_rejected(tmp: pathlib.Path) -> None:
+    print("\nM18 — a symlink cannot bring in bytes the ref does not pin")
+    (tmp / "outside.txt").write_text(
+        "Bytes from outside the pinned tree, comfortably past the filter.",
+        encoding="utf-8")
+    root = tmp / "repo"
+    root.mkdir()
+    (root / "real.md").write_text(f"# Real\n\n{LONG}", encoding="utf-8")
+    os.symlink("../outside.txt", root / "terms.md")
+
+    msg = ""
+    try:
+        md.chunk_tree(str(root), [], None)
+    except md.ChunkError as e:
+        msg = str(e)
+    check("a symlinked document stops the build", "symlink" in msg, msg[:120])
+
+    (root / "terms.md").unlink()
+    ok = md.chunk_tree(str(root), [], None)
+    check("the same tree without it builds", len(ok) > 0, str(len(ok)))
+
+    # a symlinked SUMMARY.md is the same problem wearing a hat
+    (tmp / "elsewhere.md").write_text("# ToC\n\n* [Real](real.md)\n",
+                                      encoding="utf-8")
+    os.symlink("../elsewhere.md", root / "SUMMARY.md")
+    msg = ""
+    try:
+        md.chunk_tree(str(root), ["SUMMARY.md"], "SUMMARY.md")
+    except md.ChunkError as e:
+        msg = str(e)
+    check("a symlinked SUMMARY stops the build too", "symlink" in msg, msg[:120])
+
+
+def test_short_document_survives(tmp: pathlib.Path) -> None:
+    print("\nM19 — a document too short to section is still a document")
+    root = tmp / "docs"
+    root.mkdir()
+    (root / "tiny.md").write_text("A short but authoritative note.",
+                                  encoding="utf-8")
+    (root / "normal.md").write_text(f"# Normal\n\n{LONG}", encoding="utf-8")
+    (root / "SUMMARY.md").write_text(
+        "# ToC\n\n* [Tiny](tiny.md)\n* [Normal](normal.md)\n", encoding="utf-8")
+
+    chunks = md.chunk_tree(str(root), ["SUMMARY.md"], "SUMMARY.md")
+    paths = sorted({c.path for c in chunks})
+    check("the short document is emitted", paths == ["normal.md", "tiny.md"],
+          str(paths))
+    tiny = [c for c in chunks if c.path == "tiny.md" and not c.synthesised]
+    check("its text is there in full",
+          len(tiny) == 1 and "authoritative" in tiny[0].model_text,
+          str([c.id for c in chunks if c.path == "tiny.md"]))
+    check("it is flagged as a whole-document chunk",
+          tiny[0].detail.get("whole_document") is True, str(tiny[0].detail))
+    check("and it carries its navigation placement",
+          tiny[0].detail["nav_path"] == [], str(tiny[0].detail["nav_path"]))
+
+
+def test_coverage_counts_emitted_documents(tmp: pathlib.Path, capture) -> None:
+    print("\nM20 — coverage counts what came out, not what went in")
+    root = tmp / "cov"
+    root.mkdir()
+    (root / "hidden.md").write_text("<!-- " + "z" * 300 + " -->\n",
+                                    encoding="utf-8")
+    (root / "real.md").write_text(f"# Real\n\n{LONG}", encoding="utf-8")
+    (root / "SUMMARY.md").write_text(
+        "# ToC\n\n* [Hidden](hidden.md)\n* [Real](real.md)\n", encoding="utf-8")
+
+    out = capture(lambda: md.chunk_tree(str(root), ["SUMMARY.md"], "SUMMARY.md"))
+    text, chunks = out
+    check("the invisible document emits nothing",
+          not any(c.path == "hidden.md" for c in chunks),
+          str(sorted({c.path for c in chunks})))
+    check("it is reported as dropped, by name",
+          "DROPPED" in text and "hidden.md" in text, text[-200:])
+    check("it is not counted as placed", "1/1 emitted" in text, text[-200:])
+    check("the surviving document is intact",
+          any(c.path == "real.md" for c in chunks))
+
+
+def test_lazy_list_continuation() -> None:
+    print("\nM21 — a lazy continuation is not a heading")
+    h, _ = md.scan_structure(b"- foo\nbar\n---\n", 0)
+    check("`- foo / bar / ---` produces no heading",
+          h == [], str([(l, md.heading_text(r)) for _, l, r in h]))
+
+    sec = [c for c in chunk_text(f"# Page\n\n{LONG}\n\n- foo\nbar\n---\n\n{LONG}")
+           if not c.synthesised]
+    check("...and no phantom anchor to cite",
+          [c.detail.get("anchor") for c in sec] == [None],
+          str([c.detail.get("anchor") for c in sec]))
+
+    # the ordinary forms still work
+    h, _ = md.scan_structure(b"- foo\n\nbar\n---\n", 0)
+    check("a real paragraph after the list still setexts",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(2, "bar")], str(h))
+    h, _ = md.scan_structure(b"- foo\n# real\n", 0)
+    check("an ATX heading still interrupts a list",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(1, "real")], str(h))
+    h, _ = md.scan_structure(b"1. one\ntwo\n===\n", 0)
+    check("ordered lists continue lazily too", h == [], str(h))
+
+
+def test_multiline_code_span() -> None:
+    print("\nM22 — a code span that crosses lines is still code")
+    blob = (b"Before ``code starts\n"
+            b"still code <!-- visible literal inside code -->\n"
+            b"and ends`` after.\n")
+    _, comments = md.scan_structure(blob, 0)
+    check("no comment is recorded inside the span", comments == [], str(comments))
+    model = md.strip_comments_by_span(blob, 0, len(blob), comments)
+    check("the visible text survives into model_text",
+          "visible literal inside code" in model, repr(model))
+
+    # and a genuine comment on the far side of the span is still removed
+    blob2 = (b"``open\nclose`` then <!-- really a comment --> tail\n")
+    _, c2 = md.scan_structure(blob2, 0)
+    model2 = md.strip_comments_by_span(blob2, 0, len(blob2), c2)
+    check("a real comment after the span is still stripped",
+          "really a comment" not in model2 and "tail" in model2, repr(model2))
+
+
 # --------------------------------------------------------------------------
 
 def main() -> int:
@@ -639,6 +769,20 @@ def main() -> int:
         test_summary_hierarchy(pathlib.Path(td))
     with tempfile.TemporaryDirectory() as td:
         test_summary_fail_loud(pathlib.Path(td))
+
+    def capture(fn):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            result = fn()
+        return buf.getvalue(), result
+
+    for fn in (test_symlinks_rejected, test_short_document_survives):
+        with tempfile.TemporaryDirectory() as td:
+            fn(pathlib.Path(td))
+    with tempfile.TemporaryDirectory() as td:
+        test_coverage_counts_emitted_documents(pathlib.Path(td), capture)
+    test_lazy_list_continuation()
+    test_multiline_code_span()
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
 

@@ -84,7 +84,8 @@ class Chunk:
 # validation — run before anything is indexed
 # --------------------------------------------------------------------------
 
-def validate(chunks: list[Chunk], oversize_chars: int = 24_000) -> list[str]:
+def validate(chunks: list[Chunk], oversize_chars: int = 24_000,
+             embed_oversize_chars: int | None = None) -> list[str]:
     """
     Return a list of problems. Empty means the set is safe to index.
 
@@ -92,6 +93,8 @@ def validate(chunks: list[Chunk], oversize_chars: int = 24_000) -> list[str]:
     an obvious one, which is why they are checked rather than trusted.
     """
     problems: list[str] = []
+    embed_limit = (oversize_chars if embed_oversize_chars is None
+                   else embed_oversize_chars)
 
     seen: dict[str, int] = {}
     for c in chunks:
@@ -111,8 +114,22 @@ def validate(chunks: list[Chunk], oversize_chars: int = 24_000) -> list[str]:
             problems.append(f"{c.id}: empty embed_text — will embed as noise")
         if len(c.model_text) > oversize_chars:
             problems.append(
-                f"{c.id}: {len(c.model_text)} chars exceeds {oversize_chars}; "
-                "the embedder truncates silently")
+                f"{c.id}: model_text {len(c.model_text)} chars exceeds "
+                f"{oversize_chars}; the context window truncates silently")
+        # embed_text is a superset of model_text by construction, and it is the
+        # string the embedder actually receives. Checking only the shorter one
+        # enforces a limit on text nothing consumes.
+        if len(c.embed_text) > embed_limit:
+            problems.append(
+                f"{c.id}: embed_text {len(c.embed_text)} chars exceeds "
+                f"{embed_limit}; the embedder truncates silently")
+        # A sliced chunk exists to quote its source. One whose visible content
+        # is empty — an all-comment section, say — quotes nothing while still
+        # occupying an index slot and a citation.
+        if not c.synthesised and not c.model_text.strip():
+            problems.append(
+                f"{c.id}: empty model_text — sliced from source but there is "
+                "nothing a reader can see")
         # A chunk claiming to be verbatim must actually be quotable. The
         # chunker knows whether it sliced or assembled; nothing downstream can
         # tell by looking, which is exactly why the flag has to be right.

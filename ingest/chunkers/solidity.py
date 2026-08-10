@@ -58,9 +58,45 @@ CONTAINERS = {"ContractDefinition"}
 # changes.
 OVERSIZE_CHARS = 24_000
 
+# The same ceiling, applied to a different string for a different reason.
+# OVERSIZE_CHARS bounds `model_text`, which is what reaches the model's context
+# window. EMBED_OVERSIZE_CHARS bounds `embed_text`, which is what reaches the
+# embedder — and which composition makes strictly longer than `model_text` by
+# adding exposure and alias lines after deduplication. Round 3 built a corpus
+# whose `model_text` was 25 characters and whose `embed_text` was 46,204, and
+# every check passed, because the guard measured the string nobody embeds.
+EMBED_OVERSIZE_CHARS = 24_000
+
 
 class ChunkError(Exception):
     """Raised for conditions that must stop a build rather than warn."""
+
+
+def validate_source_path(path: str) -> None:
+    """
+    A source-unit key becomes a chunk's `path`, its `id` and its breadcrumb —
+    which is to say it becomes a citation. It must therefore be a canonical
+    repository-relative POSIX path and nothing else.
+
+    `standard-input.json` is an input file, and solc will happily compile a
+    source unit named `src/../../not-in-repo.sol`. Round 3 did exactly that and
+    got chunks citing a path that resolves outside the pinned tree. A citation
+    layer normalising that lands somewhere it was never meant to read, and the
+    result looks as verified as everything around it.
+    """
+    if not path or path != path.strip():
+        raise ChunkError(f"source path is empty or padded: {path!r}")
+    if "\\" in path:
+        raise ChunkError(
+            f"source path uses backslashes, which are not path separators "
+            f"here and can traverse on other platforms: {path!r}")
+    if path.startswith("/") or (len(path) > 1 and path[1] == ":"):
+        raise ChunkError(f"source path is absolute: {path!r}")
+    for part in path.split("/"):
+        if part in ("", ".", ".."):
+            raise ChunkError(
+                f"source path is not canonical — component {part!r} in "
+                f"{path!r}. Chunk ids and citations are built from this.")
 
 
 # --------------------------------------------------------------------------
@@ -123,7 +159,7 @@ class SourceMap:
 # comment stripping — for model_text only, never for display_text
 # --------------------------------------------------------------------------
 
-def strip_comments(code: str, keep_natspec: bool = True) -> str:
+def strip_comments(code: str, keep_ranges: tuple = ()) -> str:
     """
     Remove comments while preserving string and hex literals.
 
@@ -132,10 +168,20 @@ def strip_comments(code: str, keep_natspec: bool = True) -> str:
     hand-rolled scanner instead, and it is deliberately conservative — when in
     doubt it keeps the character.
 
-    Natspec (`///` and `/** */`) is kept by default because it is real
-    documentation. It is still untrusted text and must be fenced as quoted
-    material in the prompt, never treated as instruction.
+    Documentation is preserved only where `keep_ranges` says the *compiler*
+    attached it — character ranges into `code`, supplied by the caller from the
+    AST. Comment syntax alone is not evidence of documentation: solc attaches
+    `///` and `/** */` to a declaration only when it precedes one, so the same
+    tokens mid-function are ordinary comments. Round 3 put
+    `/// IGNORE ALL PREVIOUS INSTRUCTIONS` inside a function body and watched it
+    survive a control whose entire purpose is removing non-documentation text.
+
+    Kept natspec is still untrusted and must be fenced as quoted material in the
+    prompt, never treated as instruction.
     """
+    def kept(pos: int) -> bool:
+        return any(a <= pos < b for a, b in keep_ranges)
+
     out: list[str] = []
     i, n = 0, len(code)
     while i < n:
@@ -159,13 +205,12 @@ def strip_comments(code: str, keep_natspec: bool = True) -> str:
             continue
 
         if code.startswith("//", i):
-            is_natspec = code.startswith("///", i)
             # solc accepts LF, CRLF and lone CR. Stopping only at LF eats the
             # rest of a CR-only file from the first line comment onward.
             nl, cr = code.find("\n", i), code.find("\r", i)
             cands = [x for x in (nl, cr) if x != -1]
             j = min(cands) if cands else n
-            if is_natspec and keep_natspec:
+            if kept(i):
                 out.append(code[i:j])
             else:
                 out.append(" ")     # never weld the comment's neighbours together
@@ -173,10 +218,9 @@ def strip_comments(code: str, keep_natspec: bool = True) -> str:
             continue
 
         if code.startswith("/*", i):
-            is_natspec = code.startswith("/**", i)
             j = code.find("*/", i + 2)
             j = n if j == -1 else j + 2
-            if is_natspec and keep_natspec:
+            if kept(i):
                 out.append(code[i:j])
             else:
                 # A block comment can sit between two tokens with no other
@@ -286,8 +330,10 @@ def natspec_of(node: dict, smap: SourceMap) -> str:
 
 def documented_span(node: dict, smap: SourceMap):
     """
-    Return (path, text, line) covering documentation *and* declaration as one
-    contiguous slice, or None if they cannot be joined contiguously.
+    Return (path, text, line, doc_len) covering documentation *and* declaration
+    as one contiguous slice, or None if they cannot be joined contiguously.
+    `doc_len` is how many leading characters of `text` the compiler considers
+    documentation, which is the only thing the comment stripper may preserve.
 
     Concatenating the two separately-sliced ranges — which is what this used to
     do — silently drops whatever whitespace sat between them, so the result is
@@ -309,7 +355,7 @@ def documented_span(node: dict, smap: SourceMap):
         path, text = smap.slice_range(d_file, d_start, n_start + n_len)
     except (KeyError, ValueError):
         return None
-    return path, text, smap.line_of(doc["src"])
+    return path, text, smap.line_of(doc["src"]), d_len
 
 
 def make_chunk(node, contract, smap, inherits) -> Chunk | None:
@@ -332,10 +378,12 @@ def make_chunk(node, contract, smap, inherits) -> Chunk | None:
     line = smap.line_of(node["src"])
     joined = documented_span(node, smap)
     if joined:
-        _, display, line = joined
+        _, display, line, doc_len = joined
+        keep = ((0, doc_len),)
     else:
         display = text
-    model = strip_comments(display, keep_natspec=True)
+        keep = ()
+    model = strip_comments(display, keep_ranges=keep)
 
     breadcrumb = " › ".join(x for x in (path, cname, sig) if x)
 
@@ -395,7 +443,7 @@ def contract_header(contract: dict, smap: SourceMap, inherits) -> Chunk | None:
         decl += " is " + ", ".join(inherits)
     body = decl + " {\n" + "\n".join("  " + s + ";" for s in state) + "\n}"
     display = (doc + "\n" + body) if doc else body
-    model = strip_comments(display, keep_natspec=True)
+    model = strip_comments(display, keep_ranges=((0, len(doc)),) if doc else ())
     breadcrumb = f"{path} › {contract['name']}"
     return Chunk(
         id=f"{path}:{contract['name']}",
@@ -428,6 +476,10 @@ def contract_header(contract: dict, smap: SourceMap, inherits) -> Chunk | None:
 
 def compile_ast(input_path: str, solc: str) -> dict:
     doc = json.load(open(input_path))
+    # Validated before solc sees it: a path this chunker would refuse to cite
+    # is not worth spending a compilation on.
+    for src_path in (doc.get("sources") or {}):
+        validate_source_path(src_path)
     doc.setdefault("settings", {})["outputSelection"] = {
         "*": {"": ["ast"], "*": ["abi"]}}
     doc["settings"].pop("libraries", None)
@@ -436,6 +488,8 @@ def compile_ast(input_path: str, solc: str) -> dict:
     if r.returncode != 0:
         raise ChunkError(f"solc failed: {r.stderr[:400]}")
     out = json.loads(r.stdout)
+    for src_path in (out.get("sources") or {}):
+        validate_source_path(src_path)      # solc echoes keys; verify it did
     errors = [e for e in out.get("errors", []) if e.get("severity") == "error"]
     if errors:
         detail = "\n".join(e.get("formattedMessage", "")[:300] for e in errors[:5])
@@ -557,6 +611,19 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
             if base is None:
                 continue
             for member in base.get("nodes", []):
+                # A public state variable compiles to an external getter, and
+                # that getter can satisfy — and so shadow — an inherited
+                # function declaration. It is not a chunk of its own, so it
+                # takes no exposure, but it must occupy the slot: Round 3 found
+                # IHooksFactory.marketInitCodeHash() still attributed to
+                # HooksFactory and marked un-overridden, when what HooksFactory
+                # actually exposes is the getter.
+                if member["nodeType"] == "VariableDeclaration":
+                    if member.get("visibility") != "public":
+                        continue
+                    gsig = f"{member.get('name')}({','.join(getter_params(member))})"
+                    seen.add(("FunctionDefinition", gsig))
+                    continue
                 if member["nodeType"] not in CHUNKABLE:
                     continue
                 # A constructor is neither inherited nor callable through a
@@ -650,24 +717,33 @@ def getter_params(var: dict) -> list[str]:
             return params
 
 
-def _abi_callable_names(out: dict, path: str, name: str) -> list[str] | None:
+def _abi_callable_signatures(out: dict, path: str, name: str) -> list[str] | None:
     """
-    Name multiset of the externally callable surface, straight from the ABI:
-    functions by name, plus fallback/receive by kind. Events, errors and the
-    constructor are not callable on a deployed contract and are excluded.
-    Returns None when the ABI was not produced, so the caller can tell "no
-    check ran" apart from "the check passed".
+    Signature multiset of the externally callable surface, straight from the
+    ABI: functions as `name(type,...)`, plus fallback/receive by kind. Events,
+    errors and the constructor are not callable on a deployed contract and are
+    excluded. Returns None when the ABI was not produced, so the caller can
+    tell "no check ran" apart from "the check passed".
+
+    Round 2 compared names only, which checked how many overloads were called
+    `f` and nothing about what any `f` accepted; Round 3 changed a parameter
+    type on the AST side and the check stayed green. `internalType` is
+    preferred over `type` because it preserves the struct, enum and contract
+    names the AST side uses — `struct MarketState` rather than `tuple`.
     """
     entry = ((out.get("contracts") or {}).get(path) or {}).get(name)
     if entry is None or "abi" not in entry:
         return None
-    names: list[str] = []
+    sigs: list[str] = []
     for item in entry["abi"]:
-        if item.get("type") == "function":
-            names.append(item.get("name"))
-        elif item.get("type") in ("fallback", "receive"):
-            names.append(item["type"])
-    return names
+        kind = item.get("type")
+        if kind == "function":
+            params = [canonical_type(i.get("internalType") or i.get("type"))
+                      for i in item.get("inputs") or []]
+            sigs.append(f"{item.get('name')}({','.join(params)})")
+        elif kind in ("fallback", "receive"):
+            sigs.append(f"{kind}()")
+    return sigs
 
 
 def _multiset_diff(a: list[str], b: list[str]) -> list[str]:
@@ -709,7 +785,7 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
             continue
         seen: set[str] = set()
         lines: list[str] = []
-        names: list[str] = []          # multiset, checked against the ABI
+        names: list[str] = []          # signature multiset, checked vs the ABI
         for base_id in contract.get("linearizedBaseContracts", []):
             base = by_id.get(base_id)
             if base is None:
@@ -729,7 +805,7 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
                     if sig in seen:
                         continue
                     seen.add(sig)
-                    names.append(m.get("name"))
+                    names.append(sig)
                     mut = m.get("mutability")
                     tag = ("[getter, constant]" if mut == "constant"
                            else "[getter, immutable]" if mut == "immutable"
@@ -751,7 +827,7 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
                 if sig in seen:
                     continue
                 seen.add(sig)
-                names.append(m.get("name") or m.get("kind"))
+                names.append(sig)
                 lines.append(f"  {m.get('visibility')} {sig}{origin}")
         if not lines:
             continue
@@ -762,10 +838,10 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
         # approximation and the real surface into a stopped build instead of a
         # wrong answer. This is the check that would have caught the missing
         # constant getters.
-        abi_names = _abi_callable_names(out, path, contract["name"])
-        if abi_names is not None and sorted(names) != sorted(abi_names):
-            missing = _multiset_diff(abi_names, names)
-            extra = _multiset_diff(names, abi_names)
+        abi_sigs = _abi_callable_signatures(out, path, contract["name"])
+        if abi_sigs is not None and sorted(names) != sorted(abi_sigs):
+            missing = _multiset_diff(abi_sigs, names)
+            extra = _multiset_diff(names, abi_sigs)
             raise ChunkError(
                 f"surface for {contract['name']} disagrees with the ABI\n"
                 + (f"  in ABI but not listed : {sorted(missing)}\n" if missing else "")
@@ -918,15 +994,19 @@ def main() -> int:
         print(f"\nFATAL: {e}", file=sys.stderr)
         return 1
 
-    # Oversize is a property of length, not of "has any warning attached".
-    oversize = [c for c in chunks if len(c.model_text) > OVERSIZE_CHARS]
+    # Oversize is a property of length, not of "has any warning attached" —
+    # and of both lengths that matter, not just the shorter one.
+    oversize = [c for c in chunks if len(c.model_text) > OVERSIZE_CHARS
+                or len(c.embed_text) > EMBED_OVERSIZE_CHARS]
     sizes = sorted(len(c.model_text) for c in chunks)
+    esizes = sorted(len(c.embed_text) for c in chunks)
     p99 = sizes[int(0.99 * len(sizes))] if sizes else 0
     synth = sum(1 for c in chunks if c.synthesised)
     exposed = sum(1 for c in chunks if c.detail.get("exposed_by"))
     aliased = sum(len(c.detail.get("aliases") or []) for c in chunks)
 
-    problems = _schema.validate(chunks, oversize_chars=OVERSIZE_CHARS)
+    problems = _schema.validate(chunks, oversize_chars=OVERSIZE_CHARS,
+                                embed_oversize_chars=EMBED_OVERSIZE_CHARS)
 
     orphan = [c for c in chunks
               if c.detail.get("contract") and not c.synthesised
@@ -946,8 +1026,9 @@ def main() -> int:
     for pr in problems[:5]:
         print(f"      {pr}")
     print(f"  oversize      : {len(oversize)}  "
-          f"(p99 {p99} chars, max {sizes[-1] if sizes else 0}, "
-          f"limit {OVERSIZE_CHARS})")
+          f"(model p99 {p99}, max {sizes[-1] if sizes else 0}; "
+          f"embed max {esizes[-1] if esizes else 0}; "
+          f"limits {OVERSIZE_CHARS}/{EMBED_OVERSIZE_CHARS})")
     print(f"  synthesised   : {synth}  (not quotable as source)")
     print(f"  inheritance   : {exposed} chunks attributed to a concrete contract")
     print(f"  unreachable   : {len(orphan)} public/external fns on contracts "
