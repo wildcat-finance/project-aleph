@@ -267,6 +267,24 @@ metadata_required:
 ToU chunks carry the version in force and Aleph names it when quoting. A ToU answer
 without a version is a wrong answer even when the text is right.
 
+**`AGENTS.md` and `CLAUDE.md` are excluded.** They are prose written to direct an
+agent's behaviour, sitting inside an otherwise-trustworthy documentation repo. In
+the context window they are indistinguishable from instructions Wildcat intended
+Aleph to follow, and unlike a natspec comment they are *designed* to be obeyed.
+Useful to the pipeline as structure hints; never as retrievable content.
+
+**`wildcat-notifications` is a sibling, not a source.** The existing event bot
+pushes deposits, withdrawal-batch creation and status changes into Telegram with an
+established vocabulary — "market now Pending Repayment", "new withdrawal batch of
+$X (batch expires ...)". Aleph is pull to its push and must not duplicate the feed.
+Two constraints follow:
+
+- **Vocabulary alignment.** Aleph's deterministic renderer reuses the notification
+  bot's phrasing for the same states. Two bots in the same channel describing one
+  market differently is a contradiction someone will screenshot.
+- **No bot chaining.** Aleph derives state from the gateway, never by reading the
+  notification feed. A second-hand event is an unciteable one.
+
 ### 3.5 Other repositories — inputs
 
 All five are inputs to the system; only two are answer sources.
@@ -441,9 +459,11 @@ retention is a 90-day policy.
 6. ~~Subgraph version → deployment ID pinning.~~ **Resolved by the gateway** (§3.3).
    Two residual questions, both **blocked on Dave**: which release SDK `3.1.17`
    expects, and which subgraph commit produced release `v2.0.30`.
-7. `wildcat-docs` has live `docs-tg-bot` and `llm-rewrite-clean` branches. Establish
-   what they are before ingesting Tier B — one may be prior art for this project,
-   the other changes the provenance of the docs corpus.
+7. ~~`wildcat-docs` branches.~~ **Resolved:** `llm-rewrite-clean` added agent
+   navigation files (`AGENTS.md`, `CLAUDE.md`), not agent-written prose — Tier B
+   provenance is intact. `docs-tg-bot` documents `wildcat-notifications`, a
+   separate event-polling bot. Both now excluded from the corpus for different
+   reasons (§3.4).
 
 ---
 

@@ -1,0 +1,167 @@
+# Project Aleph — corpus manifest
+#
+# This file is the single source of truth for what gets indexed. The prose in
+# aleph-ingestion-manifest.md explains *why*; this file is what CI actually reads.
+# If the two disagree, this file wins and the prose is a bug.
+#
+# Anything not listed here is not ingested. There is no crawl mode.
+
+version: 1
+
+policy:
+  scope:
+    chains: [1, 9745]              # Ethereum mainnet, Plasma mainnet
+    testnets: excluded             # not ingested, not queried, not answerable
+  branches: never                  # every source resolves to an immutable ref
+  rebuild: full                    # no incremental indexing, ever
+  self_ingestion: forbidden        # this repo is never a source for Aleph
+
+embedding:
+  # Part of the corpus identity: changing it changes every answer with no
+  # source-side diff to explain why. Treat a change as a rebuild + eval run.
+  model: <pinned-embedding-model-id>
+  dimensions: <n>
+
+sources:
+
+  - id: v2-protocol
+    tier: A
+    repo: wildcat-finance/v2-protocol
+    ref:
+      kind: annotated_tag
+      tag: v2.1.0
+      tag_object: 8aab396          # GPG signature is on this
+      commit: c7be403              # resolve only after signature verifies
+      require_signature: true
+    protocol_version: "v2.1"
+    deployment_status: deployed
+    include:
+      - "src/**/*.sol"
+      - "docs/**/*.md"
+      - "README.md"
+      - "TESTS.md"
+      - "EIP-4626_audit_scope.md"
+    exclude:
+      - "test/**"
+      - "**/*.t.sol"
+      - "script/**"
+      - "scripts/**"
+      - "lib/**"                   # git submodules
+      - ".github/**"
+    verification_only:             # fetched, never chunked, never embedded
+      - "deployments/mainnet/**/standard-input.json"
+      - "deployments/mainnet/deployments.json"
+    always_cite:
+      - "docs/Known Issues.md"     # volunteered, not merely retrievable
+
+  - id: v2-protocol-prerelease
+    tier: A
+    index: separate                # never merged into the main Tier A index
+    repo: wildcat-finance/v2-protocol
+    ref:
+      kind: commit
+      branch_of_origin: release/v2.5
+      commit: dec36d2              # snapshot; re-snapshot deliberately
+      require_signature: false
+    protocol_version: "v2.5"
+    deployment_status: not_deployed
+    audited: false
+    retrieval:
+      requires_explicit_version: true   # only answers when asker names v2.5
+      preamble: mandatory               # states unaudited + undeployed
+      satisfies_general_questions: false
+    include: [ "src/**/*.sol", "docs/**/*.md" ]
+    exclude: [ "test/**", "**/*.t.sol", "script/**", "scripts/**", "lib/**", ".github/**" ]
+
+  - id: wildcat-docs
+    tier: B
+    repo: wildcat-finance/wildcat-docs
+    ref:
+      kind: promoted_commit        # no tags on this repo
+      branch: main                 # renamed from wip-docs
+      commit: <recorded at build time>
+    notes: >
+      Content is human-written. The llm-rewrite-clean branch added agent
+      navigation files, not agent-generated prose, so a Tier B citation still
+      means reviewed documentation. docs-tg-bot documents the separate
+      wildcat-notifications event bot, not this project. Both branches since
+      deleted; AGENTS.md/CLAUDE.md live on the default branch and stay excluded.
+    include:
+      - "**/*.md"
+    exclude:
+      - "SUMMARY.md"               # consumed as hierarchy, not as content
+      - "AGENTS.md"                # instruction files aimed at agents — see below
+      - "CLAUDE.md"
+      - "**/AGENTS.md"
+      - "**/CLAUDE.md"
+      # These are prose whose entire purpose is to direct an agent's behaviour.
+      # They may inform the ingestion pipeline as structure hints; they must never
+      # enter the model's context, where they are indistinguishable from
+      # instructions Wildcat intended Aleph to follow.
+    metadata_required: [ doc_version, effective_date ]
+
+live_state:
+  # Not a corpus. Read at query time, never embedded, never cached into the index.
+  transport: wildcat-data-gateway
+  status: public_staging           # no production SLA — fail closed, never fall back
+  rpc: "https://rpc.wildcat.finance/{chainId}"
+  graph: "https://graph.wildcat.finance/{network}/{release}"
+  health: "https://graph.wildcat.finance/health"     # unauthenticated
+  auth:
+    scheme: bearer
+    env: ALEPH_GATEWAY_TOKEN       # dedicated to Aleph, not the frontend's
+  pinned_releases:
+    mainnet: "v2.0.30"             # v2.0.26 also live — pin, never auto-select
+    plasma-mainnet: "v2.0.30"
+  required_in_every_answer:
+    - "_meta { block { number } }"
+  lag_gate:
+    check: health_before_answering
+    on_lag: decline                # never serve stale numbers as current
+
+addresses:
+  # Authoritative source is the published SDK artefact, not any repository.
+  source: "npm:@wildcatfi/wildcat-sdk"
+  pinned_version: "3.1.17"
+  resolve_by: key                  # never by human-readable name
+  assertions:
+    # Build fails if these move. Three addresses have carried the name
+    # "MarketLens"; the production one is not under the MarketLens key.
+    MarketLensV2: "0xfDA5C5B96bb198D2fca1A01d759620B64Ae5afE7"
+    WildcatArchController: "0xfEB516d9D946dD487A9346F6fee11f40C6945eE4"
+    HooksFactory: "0xdd7dd3b5076Cf89440d05585FF56d246386207BE"
+    WildcatSanctionsSentinel: "0x437e0551892C2C9b06d3fFd248fe60572e08CD1A"
+    Wildcat4626WrapperFactory: "0xEA6DE11f8F3F83c79bD9d8Db5517fCFDf2Bb148a"
+  never_use:
+    - key: MarketLens
+      address: "0xf1D516954f96c1363f8b0aE48D79c8ddE6237847"
+      reason: legacy lens; live but superseded
+    - source: "v2-protocol:deployments/mainnet/deployments.json"
+      key: MarketLens
+      address: "0xC672760757da93B5f3275dc97203D145806dae33"
+      reason: stale in-repo book
+
+excluded_repos:
+  - repo: wildcat-finance/wildcat-juris
+    reason: >
+      Claim-intake for defaulted markets — lender contact details, country,
+      signed claims. Defaults and claims route to a human unconditionally.
+  - repo: wildcat-finance/wildcat.ts
+    reason: >
+      SDK source, main at 3.0.54-beta against published 3.1.17. Provenance only;
+      address and ABI truth comes from the npm artefact.
+  - repo: wildcat-finance/wildcat-app-v2
+    reason: frontend; describes UI behaviour, not protocol behaviour
+  - repo: wildcat-finance/subgraph
+    reason: >
+      Live-state schema, main at 2.0.22 against deployed 2.0.30. networks.json
+      is a useful cross-check for start blocks, not an answer source.
+  - repo: wildcat-finance/wildcat-gateway
+    reason: transport configuration, not protocol documentation
+
+gates:
+  # All blocking. A build that fails any of these does not swap.
+  - signature_verified
+  - address_assertions_hold
+  - corpus_diff_reviewed
+  - eval_not_regressed
