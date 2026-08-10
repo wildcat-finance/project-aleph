@@ -10,10 +10,9 @@ driver claims in its docstring or in PIPELINE.md.
     python3 ingest/test_build.py --solc solc     # + a real chunking run
 
 The signature cases build their own throwaway GPG key and sign a real tag, so
-the *passing* path is exercised rather than assumed. Nothing in this repository
-had ever run a successful `git verify-tag` — the pinned corpus cannot, because
-its tags are unsigned — which is exactly the kind of check that quietly turns
-out to be untested at the moment it matters.
+the passing path, wrong-signer path, absent-signature waiver, and invalid
+signature failure are exercised without depending on the repository's release
+key or network access.
 """
 
 from __future__ import annotations
@@ -615,7 +614,7 @@ def test_merge_and_provenance(tmp: pathlib.Path) -> None:
     check("the build record counts what it wrote",
           rec["chunks"]["total"] == len(rows), str(rec["chunks"]["total"]))
 
-    # a second identical run is the same build, byte for byte
+    # a second identical run has the same identity and byte-identical chunks
     rec2 = ab.build(str(manifest), str(tmp / "out2"), "solc", str(tmp / "w3"),
                     {"alpha": str(a), "beta": str(b)}, True, True, False, None)
     other = pathlib.Path(tmp / "out2" / rec2["build_id"] / "chunks.jsonl")

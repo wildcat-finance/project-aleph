@@ -1,10 +1,14 @@
 # Embedding
 
-Corpus generation stops at `corpus/<build_id>/chunks.jsonl`. Everything here
-consumes that and is deployed separately, because embedding is GPU-shaped and
-slow while corpus builds are CPU-shaped and fast, and because a re-embed
-should never require a re-chunk. `ingest/build.py` imports nothing from this
-directory and never will.
+Corpus generation stops at `corpus/<build_id>/chunks.jsonl`. The embedding
+layer consumes that artifact separately because embedding is model-runtime
+work while corpus builds are source-processing work, and because a re-embed
+does not require a re-chunk. `ingest/build.py` has no dependency on this
+directory.
+
+The implementation is a tiered NumPy index with exact cosine search. It does
+not implement Postgres, pgvector, BM25, hybrid fusion, answer generation, or
+deployment promotion.
 
 ```bash
 python3 embed/index.py build  --corpus corpus/<build_id> \
@@ -12,6 +16,10 @@ python3 embed/index.py build  --corpus corpus/<build_id> \
 python3 embed/index.py search --index index/<build_id> \
                               --embedder ollama:bge-m3 --query "…"
 ```
+
+`numpy` is required for every backend. The `st:` backend additionally requires
+`sentence-transformers`; Ollama and HTTP backends use the Python standard
+library for transport.
 
 ## The one invariant
 
@@ -31,8 +39,13 @@ This is why `backend` is part of the identity and not just the model name.
 `manifest.yaml` pins bge-m3 by **Ollama digest at F16**, and the retrieval
 evidence in that file was gathered through Ollama by `eval/embed_compare.py`.
 The same weights loaded through sentence-transformers at fp32 are a different
-artefact that will rank differently, and an index built with it inherits none
+artifact that can rank differently, and an index built with it inherits none
 of that evidence.
+
+The Ollama backend records the digest it actually loads, and search requires
+that same digest. The CLI does not read the expected digest from
+`manifest.yaml`; confirm the local digest matches the manifest before building
+a release index.
 
 ## Backends
 
@@ -41,7 +54,7 @@ of that evidence.
 | `ollama:bge-m3` | reference; what the eval measured, already a service on a port |
 | `st:BAAI/bge-m3` | in-process convenience; a *different artefact*, see above |
 | `https://host/…` | any service speaking the protocol below |
-| `stub:name` | deterministic hashes; tests only, and says so in its identity |
+| `stub:name` | deterministic hashes; plumbing tests only, and says so in its identity |
 
 A hosted service needs two endpoints:
 
@@ -80,7 +93,7 @@ skipped a gate should not be able to forget that.
 
 ## Brute force, deliberately
 
-~1,600 chunks at 1024 dimensions is a 6.6 MB matrix and one matmul, well under
-a millisecond. An approximate index would add a dependency, a build step and a
-recall cliff for no measurable gain. Revisit around a hundred thousand chunks,
-two orders of magnitude away.
+About 1,600 chunks at 1,024 dimensions is a 6.6 MB matrix and one matrix
+multiplication. An approximate index would add a dependency, a build step, and
+a recall boundary without a useful gain at this size. Revisit this choice if
+the corpus approaches one hundred thousand chunks.

@@ -1,284 +1,352 @@
 # Project Aleph
 
-A retrieval agent that answers questions about the Wildcat Protocol — its
-documentation, its deployed contracts, and its live market state — over Telegram.
+Project Aleph is intended to answer questions about the Wildcat Protocol over
+Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
-> *"The Aleph's diameter was probably little more than an inch, but all space was
-> there, actual and undiminished."*
+This repository contains the evidence foundation: corpus policy, reproducible
+ingestion, Solidity and Markdown chunkers, provenance, embedding backends, a
+tiered vector index, evaluation inputs, and an SDK address watcher. It does not
+yet contain a user-facing agent.
 
----
+The shortest honest status is:
 
-## Why this exists
+> **Aleph can build and search evidence. It cannot yet turn a user's question
+> into a safe answer.**
 
-The same questions arrive repeatedly, across Discord, Telegram and DMs: how does a
-withdrawal batch work, what does this parameter mean, what's the state of this
-market, where is this behaviour specified. They are answerable — usually from
-material that is already public — but they are answerable *by a small number of
-people*, one at a time, forever.
+The remaining work is ordered below by dependency. Later stages should not begin
+by inventing around a missing earlier boundary.
 
-Aleph exists to absorb the repetitive fraction of that load so those people can do
-something else. It is explicitly **not** an attempt to replace human answers. The
-measure of success is not how many questions it answers; it is how many it answers
-*correctly* while reliably declining the rest.
+## Current foundation
 
-## What it is
+The checked-in code already provides:
 
-- A **pinned corpus** built from public Wildcat sources — protocol source at
-  release tags, natspec, audits, and the published documentation.
-- A **live-state tool layer** that reads the chain at query time for anything that
-  changes: the archcontroller registry, market parameters, queue state.
-- A **Telegram bot** exposing both, with citations.
+- immutable source acquisition driven by `manifest.yaml`;
+- verification of the signed `v2-protocol@aleph-v2.1.0` corpus tag against a
+  shipped key and pinned signer fingerprint;
+- published documentation pinned at `wildcat-docs@aleph-v0.3`, including the
+  required legal document versions and effective dates;
+- fail-loud filtering, watched legal-document digests, and corpus diffs;
+- Solidity AST chunking from mainnet deployment verification inputs;
+- Markdown chunking with GitBook hierarchy and renderer-compatible anchors;
+- byte-exact citation text separated from model and embedding text;
+- source, version, deployment, build, and per-document provenance;
+- deterministic corpus build IDs and tier-separated vector artifacts;
+- exact cosine search with strict index/query embedder identity checks;
+- a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
+  comparison; and
+- `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
+  changing the corpus.
 
-Later, and separately: a path to triggering permissionless, idempotent on-chain
-actions (queue processing) via the Hydra executor. That capability is out of scope
-for v1 and is architecturally fenced — see *Non-goals* below.
+This is the substrate for the product, not the product itself. In particular,
+`address_assertions_hold` and `eval_not_regressed` remain `null` in current build
+records, and nothing performs a reviewed atomic promotion.
 
-## What it is not
+## Required build order
 
-- **Not a source of advice.** Aleph reports; it does not recommend, reassure or
-  interpret. Market answers are deterministic renderings with a block number
-  attached.
-- **Not a profiling service.** Borrower-keyed aggregation across markets is
-  permitted — a lender can ask what markets a borrower has run and see them — but
-  the output is deterministic rendering only. Aleph presents the facts; it does
-  not characterise them. It will show six markets and their histories; it will not
-  say that a borrower "tends to" or "has a pattern of" anything, will not score,
-  rank, compare or infer intent, and will not answer whether a borrower is
-  trustworthy. Every fact in such an answer is public and on-chain, but the
-  compilation is an artefact Wildcat produced on request, and the line between
-  showing and characterising is where the risk lives.
-- **Not an oracle for unreleased code.** The corpus tracks release tags bound to
-  verified mainnet deployments. If a behaviour exists only on `main`, the correct
-  answer is that it isn't released.
-- **Not a key holder.** The bot process never has signing authority in its address
-  space. See *Design commitments*.
-- **Not a general chatbot.** Out-of-corpus questions get a refusal and a pointer to
-  a human, not a best guess.
-
-## It speaks in Wildcat's voice, and isn't Wildcat speaking
-
-Aleph will read as authoritative — same name, same channel, answering in the first
-person about live facilities. It isn't a representation by Wildcat Labs or the
-Wildcat Foundation, doesn't create obligations, and doesn't supersede the Terms of
-Use or the market's own on-chain state. Where Aleph and the chain disagree, the
-chain is correct. Where Aleph and the ToU disagree, the ToU is correct.
-
-The gap between how authoritative it sounds and what it actually is cannot be
-closed by a disclaimer nobody reads — which is why the constraints below exist:
-cite everything, generate no numbers, decline rather than guess.
-
-## Design commitments
-
-These are load-bearing and shouldn't be relaxed without a deliberate decision.
-
-**Default deny on sources.** Sources are allowlisted, never crawled-and-filtered.
-An allowlist fails visibly; an exclusion list fails silently the moment someone adds
-a directory.
-
-**Pinned, reproducible, citable.** Nothing tracks a moving branch. Every answer
-names the corpus build that produced it, so any disputed answer can be replayed
-against the exact index that generated it.
-
-**Deployed beats merged.** Where repository state and deployed contract disagree,
-the deployed contract wins. Merged-but-undeployed is the highest-risk answer class
-in the system: correct citation, real code, wrong protocol.
-
-**A citation is a promise.** Text presented as source is byte-exact source.
-Chunks carry the verbatim slice separately from the comment-stripped text that
-reaches the model, so the injection defence never alters what a human is shown.
-Chunks that are *assembled* rather than sliced — contract headers, callable
-surfaces — are flagged and must never be quoted. A synthesised chunk presented as
-a citation is a fabricated quote that looks verified, which is worse than an
-uncited wrong answer.
-
-**The model never generates numbers.** Live-state answers route through a
-deterministic renderer. The model chooses the query; code formats the reply. A
-model-authored figure about someone's capital is a statement Wildcat owns.
-
-**Free text in code is untrusted input.** Comments and natspec reach the model as
-context. Ingestion is from signed tags only, so that cutting a tag — a review gate
-that already exists — stands between a merged docstring and the bot's behaviour.
-These repositories have been targeted through the supply chain before; the
-threat model assumes it happens again.
-
-**Signing authority is out of process.** If and when Hydra integration lands, Aleph
-emits a signed *intent* to a queue. A separate executor, on a separate host,
-validates it against a whitelist of idempotent calls and signs. The worst outcome of
-a successful prompt injection is a rejected intent.
-
-## Architecture
-
-```
-  sources (pinned)                    live state
-  ────────────────                    ──────────
-  v2-protocol @ tag                   archcontroller  ─┐
-  docs build                          market contracts ┤
-        │                                              │
-        ▼                                              ▼
-   CI ingest ──► corpus artefact ──► eval gate ──► atomic swap
-                        │                                │
-                        └──────────► retrieval ◄─────────┘
-                                          │
-                                          ▼
-                              answer + citation + block no.
-                                          │
-                                          ▼
-                                Telegram (long-poll)
+```text
+1. canonical corpus + index
+             |
+2. scoped retrieval + citations
+             |
+3. live-state tools + deterministic renderers
+             |
+4. question router + answer engine
+             |
+5. end-to-end evaluation + promotion gates
+             |
+6. Telegram adapter
+             |
+7. production deployment + operations
 ```
 
-Solidity is chunked through the compiler's AST — one chunk per contract,
-function, modifier, event, error or struct, with natspec attached and inheritance
-resolved, built from the deployment verification inputs so chunks describe
-deployed code by construction. Markdown chunks on heading boundaries, with each
-document placed in the GitBook navigation tree so a section knows where it sits
-and not merely what it is called. Both emit one shared schema, so the retriever
-never branches on source type.
+Testing belongs inside every stage. The numbering describes dependency order,
+not a plan to defer verification until stage 5.
 
-Postgres with pgvector for the index, chat log and audit trail. Hybrid BM25 +
-embeddings — the corpus is small, and exotic retrieval buys nothing here.
+### 1. Produce a canonical corpus and index artifact
 
-**Embedding model: `bge-m3`**, self-hosted via Ollama, 1024 dimensions, pinned by
-digest rather than tag. Chosen by measurement against `qwen3-embedding` at 0.6B
-and 8B, using 25 labelled questions from the golden set: recall@1 was 20/25
-against 18 and 17, and bge-m3 spread first place across more distinct chunks than
-either. The 8B model was no better than the 1.2GB one at seven times the resident
-memory, which is worth remembering the next time a larger model looks like the
-safe default.
+The ingestion and embedding pieces exist, but they are still separate commands
+with release checks split between code, manifest, and operator procedure.
 
-Two questions out of 25 is not statistical significance, and `qwen3-embedding:0.6b`
-was ahead at recall@5. The decisive factor was not a number: bge-m3 performs as
-documented, while the Qwen models only performed with their documented instruct
-prefix *removed* — a configuration that works today and breaks silently the next
-time the weights are repackaged. Full working in `eval/RUNBOOK.md`.
+Build next:
 
-The model is part of the corpus identity. Changing it changes every answer with no
-source-side diff to explain why, so it is pinned in `manifest.yaml` alongside the
-git refs and a change means a rebuild and an eval run, not a config edit. Bot
-process is stateless; long-polls `getUpdates` rather than exposing a webhook, so
-there is no inbound port and no public TLS surface. Privacy mode is on in groups:
-Aleph sees commands and mentions, not every message in rooms where counterparties
-talk to each other.
+- a release command that produces one named corpus/index pair from
+  `manifest.yaml`;
+- automatic enforcement of the manifest's embedding model digest, dimensions,
+  normalization, and query-prefix policy when building the index;
+- immutable output handling so rerunning an existing build ID cannot rewrite a
+  published record;
+- a reviewable corpus diff attached to the candidate artifact; and
+- one machine-readable release record carrying corpus gates, waivers, index
+  identity, source refs, and tier counts.
 
-## Repository contents
+Do not add answer logic here. This stage should produce an evidence artifact that
+another process can load without reconstructing how it was made.
 
+**Complete when:** the same inputs produce the same corpus ID and chunk bytes; a
+model digest mismatch prevents a candidate; every source change carries explicit
+review state; and the candidate loads as one coherent corpus/index pair.
+
+### 2. Build scoped retrieval and citation resolution
+
+`embed/index.py` returns nearest chunks, but it does not implement the retrieval
+policy required by the manifest.
+
+Build next:
+
+- a retrieval API whose request explicitly carries chain, public protocol
+  version, requested tiers, and result limits;
+- Tier A and Tier B searches that remain separate through ranking;
+- lexical matching for contract names, function signatures, addresses, and
+  exact protocol vocabulary, combined with semantic results within each tier;
+- v2.0 as the default deployed corpus and an isolated v2.5 path that activates
+  only when the user explicitly names v2.5;
+- enforcement of `always_cite`, prerelease preambles, deployment status, and
+  source-version filters;
+- a citation resolver that turns a hit into a stable source path and Markdown
+  anchor or Solidity location; and
+- a hard prohibition on quoting chunks marked `synthesised: true`.
+
+Retrieval should return typed evidence objects, not answer prose. Each object
+must carry enough provenance for a later citation validator to prove that the
+quoted bytes came from the named corpus build.
+
+**Complete when:** retrieval labels run against the actual built corpus rather
+than the evaluation harness's simplified Markdown splitter; exact identifiers
+are findable; v2.5 cannot bleed into a general question; and every returned quote
+resolves to byte-exact source.
+
+### 3. Build live-state tools and deterministic renderers
+
+Anything that changes without a corpus promotion belongs here, not in the vector
+index and not in model-authored prose.
+
+Build next:
+
+- SDK artifact loading and enforcement of every address under
+  `addresses.assertions` in `manifest.yaml`;
+- contract resolution by SDK key, especially `MarketLensV2`, never by a reused
+  human-readable name;
+- a Wildcat Data Gateway client that names the pinned mainnet release explicitly;
+- a health and lag gate checked before every live answer;
+- block-number propagation from the query through the rendered response;
+- narrow typed operations for registry, market, account, withdrawal queue, and
+  borrower-to-markets facts; and
+- deterministic renderers for every numeric or market-state response.
+
+The model may eventually choose a typed operation. It must not generate, round,
+compare, or characterize the returned figures. Borrower aggregation may show
+public facts, but the tool schema must not contain scoring, ranking, reliability,
+or inferred-intent fields.
+
+**Complete when:** every live output is reproducible from a typed fixture, names
+its observed block and gateway release, declines while the gateway is unhealthy,
+and makes no model-authored financial claim.
+
+### 4. Build the question router and answer engine
+
+Only after corpus evidence and live operations have stable contracts should a
+model decide how to answer a natural-language question.
+
+Build next:
+
+- a router for the modes already represented in `eval/golden-v1.yaml`:
+  `corpus`, `live`, `corpus+live`, premise correction, refusal, refusal with a
+  destination, and triage-and-handoff;
+- entity and version extraction before retrieval or live queries;
+- answer assembly that keeps corpus explanation separate from deterministic live
+  values;
+- citation validation against the loaded corpus build before an answer leaves
+  the process;
+- calibrated abstention when evidence is absent, contradictory, out of scope, or
+  stale;
+- mandatory Known Issues citations when the selected behavior is covered there;
+  and
+- a triage payload that collects only the details a human actually needs.
+
+The answer engine is not a general chatbot. Advice, borrower trust assessments,
+intent inference, unsupported chains, and unreleased behavior are refusals. A
+refusal should offer an explicit escalation action rather than paging someone
+automatically.
+
+**Complete when:** every factual sentence is backed by validated corpus evidence
+or a deterministic live result; unsupported questions decline consistently; and
+the same typed inputs produce the same non-model portions of the answer.
+
+### 5. Build end-to-end evaluation and promotion gates
+
+The existing embedding comparison chose a model. It does not test the product
+described above.
+
+Build next:
+
+- an evaluator that runs the 125 golden questions through the real router,
+  retriever, answer engine, citation resolver, and fixture-backed live tools;
+- blocking checks for citation existence and claim support;
+- version and deployment correctness, including prerelease isolation;
+- calibrated abstention on known-unanswerable and out-of-scope questions;
+- deterministic live-value and block-number checks;
+- regression reports grouped by answer mode and risk, not only one aggregate
+  score;
+- explicit human approval of corpus diffs; and
+- enforcement of `address_assertions_hold`, `corpus_diff_reviewed`, and
+  `eval_not_regressed` before promotion.
+
+Corpus gaps remain documentation work. The evaluator should report them without
+rewarding the system for inventing an answer.
+
+**Complete when:** no artifact can become active with a failed or `null` blocking
+gate, and a reviewer can reproduce every changed answer from its corpus build,
+live fixture, and evaluation record.
+
+### 6. Add the Telegram adapter
+
+Telegram is an interface over the tested answer engine, not the place where
+retrieval or policy should live.
+
+Build next:
+
+- long-polling with `getUpdates`, avoiding a public webhook and inbound TLS
+  surface;
+- group privacy mode so Aleph receives commands and mentions rather than every
+  room message;
+- message parsing, reply threading, length-aware formatting, and stable citation
+  links;
+- explicit escalation and triage handoff controls;
+- rate limits and bounded concurrency; and
+- user-facing failure messages for unavailable live data, unsupported questions,
+  and internal errors.
+
+**Complete when:** Telegram integration tests prove that the adapter passes typed
+requests and renders typed responses without changing their evidence, figures,
+refusal state, or citations.
+
+### 7. Add production deployment and operations
+
+The final stage turns a tested artifact into a service without weakening its
+replay and rollback guarantees.
+
+Build next:
+
+- atomic activation of a fully built corpus/index pair;
+- rollback by pointer change while retaining the previous artifact;
+- separate processes and credentials for ingestion, embedding, query serving,
+  and any future signing authority;
+- scheduled `sdk-watch.py` execution as an alarm, never an automatic rebuild;
+- gateway, model-runtime, Telegram, and evaluation monitoring;
+- structured audit records carrying corpus build ID, model identity, route,
+  citations, live block, and refusal reason;
+- the retention and text-scrubbing boundary for user questions; and
+- operational runbooks for stale data, model mismatch, address drift, failed
+  promotion, and rollback.
+
+**Complete when:** a bad candidate cannot replace the active artifact, every
+served answer identifies the evidence/runtime state behind it, and rollback does
+not require rebuilding.
+
+## Explicitly outside the v1 sequence
+
+Hydra integration and on-chain execution are not prerequisites for the retrieval
+agent. If added later, the bot process must emit only a signed intent. A separate
+executor on a separate host must validate an allowlist of permissionless,
+idempotent calls and hold transaction-signing authority. The Telegram or answer
+process must never hold that key.
+
+## Rules every stage inherits
+
+**Default deny on sources.** Only manifest-allowed files enter the corpus.
+Agent-directed files and deprecated docs stay excluded.
+
+**Deployed beats merged.** General answers describe verified deployed source,
+not a repository's current branch.
+
+**A citation is a promise.** Human-visible quotes are byte-exact
+`display_text`. Assembled chunks are retrieval aids, never quotations.
+
+**Embedding identity is part of corpus identity.** Backend, model, digest,
+dimensions, normalization, and query behavior must match at build and query time.
+
+**Tiers stay visible.** Canonical source and published prose are not silently
+collapsed into one authority ranking.
+
+**The model never supplies live numbers.** Typed code queries and renders them,
+with a block number.
+
+**Fail closed.** Wrong version, stale gateway, missing citation, model mismatch,
+or failed gate produces no answer or promotion.
+
+## Build the existing foundation
+
+Python 3.10 or later is required. Corpus builds need `pyyaml` and GnuPG;
+indexing needs `numpy`. `ingest/solc-container` uses Docker by default and accepts
+Podman through `CONTAINER_RUNTIME`.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pyyaml numpy
+
+python3 ingest/build.py \
+  --manifest manifest.yaml \
+  --solc ingest/solc-container \
+  --out corpus
+
+python3 embed/index.py build \
+  --corpus corpus/<build_id> \
+  --embedder ollama:bge-m3 \
+  --out index
 ```
-manifest.yaml                 what gets indexed, at what ref — CI reads this
-aleph-ingestion-manifest.md   why it says what it says
-README.md                     this file
+
+Confirm the Ollama digest against `manifest.yaml` before building a release
+index. The current CLI records the runtime digest but does not enforce the
+manifest pin automatically; closing that gap is part of stage 1.
+
+Run the existing checks with:
+
+```bash
+python3 ingest/chunkers/test_markdown.py
+python3 ingest/chunkers/test_solidity.py --solc ingest/solc-container
+python3 ingest/test_build.py
+python3 embed/test_embed.py
+
+# Optional real-model smoke test
+python3 embed/test_embed.py --model ollama:bge-m3
+```
+
+## Repository map
+
+```text
+manifest.yaml                 executable corpus and runtime policy
+aleph-ingestion-manifest.md   rationale and current limitations
 
 ingest/
-  PIPELINE.md                 how manifest.yaml becomes a queryable corpus
-  build.py                    the pipeline driver — manifest in, corpus out
-  keys/                       public keys the corpus definition trusts
-  test_build.py               68 assertions, no compiler needed
-  schema.py                   the chunk shape every chunker emits
-  ADVERSARIAL.md              invariants and attack agenda
-  REVIEW.md                   brief for an adversarial reviewer
-  solc-container              pinned, network-less solc
+  build.py                    manifest -> validated corpus build
+  schema.py                   shared chunk schema and validation
+  PIPELINE.md                 implemented ingestion/index workflow
+  ADVERSARIAL.md              security invariants and resolved findings
+  REVIEW.md                   corpus verification guide
+  solc-container              pinned, networkless solc wrapper
+  keys/                       trusted public signing keys
   chunkers/
-    solidity.py               Solidity → chunks, via the compiler's AST
-    markdown.py               markdown → chunks, on heading boundaries
-    test_solidity.py          142 assertions
-    test_markdown.py          113 assertions, no compiler needed
+    solidity.py               deployment inputs -> semantic Solidity chunks
+    markdown.py               docs tree -> navigable Markdown chunks
+    verify_anchors.py         pinned-source vs live-renderer anchor check
 
 embed/
-  embedder.py                 the embedding boundary: backends and identity
-  index.py                    build and search, one index per tier
-  test_embed.py               36 assertions, no model needed
-  README.md                   why the index refuses a mismatched query
+  embedder.py                 embedding backends and identity checks
+  index.py                    tiered index build and cosine search
+  test_embed.py               index and backend behavior checks
 
 eval/
-  golden-v1.yaml              125 questions, from real support transcripts
-  labels.yaml                 retrieval ground truth for the 25 that matter
-  embed_compare.py            retrieval comparison harness
-  RUNBOOK.md                  choosing the embedding model, by measurement
+  golden-v1.yaml              125 questions and expected handling modes
+  labels.yaml                 retrieval labels for consequential questions
+  embed_compare.py            Markdown-only model comparison harness
+  RUNBOOK.md                  recorded model decision and rerun procedure
 
-sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
+sdk-watch.py                  mainnet SDK deployment-map change detector
 ```
 
-Not yet written: the index build and the retrieval and answer layers. The schema and the eval set exist so those can be built against
-something rather than invented alongside.
-
-`manifest.yaml` is the source of truth; the prose document explains it. If the two
-disagree, the YAML wins and the prose is a bug.
-
-Implementation to follow. The manifest and the eval set come first deliberately:
-the question set determines what the corpus needs to contain, which is cheaper to
-learn before ingestion is built than after.
-
-## Status
-
-**This repository is private; the bot it produces is public.** Those are different
-boundaries and only one of them is a control. Anything that reaches Aleph's context
-window is effectively published — a public bot can be asked what it knows, and will
-eventually be asked in a way that works. Repository privacy protects the working
-notes, the frank assessments and the roster; it protects nothing that gets loaded
-into the model at runtime.
-
-Two consequences. Aleph's own repository is never a source for Aleph — the spec
-documents are not in the allowlist and must not drift into it. And the deployed
-context should be assumed readable by anyone, so it carries public corpus and
-nothing else: no internal status, no names, no gaps we haven't announced.
-
-Pre-implementation. Scope is **Ethereum mainnet only**. Other chains and all
-testnets are ignored entirely: not ingested, not queried, not answerable. That is
-a deliberate narrowing rather than the shape of the protocol — Wildcat deploys
-more widely, and widening Aleph later is a config change plus an eval re-run.
-
-Detailed decisions and accepted risks are at the end of
-[`aleph-ingestion-manifest.md`](./aleph-ingestion-manifest.md). The items below are
-the ones that need a human rather than a build step.
-
-## To address
-
-**Needs Dave**
-
-- Which subgraph release does SDK `3.1.17` expect? `v2.0.26` and `v2.0.30` are both
-  live on mainnet and Aleph must pin one in config, not choose at runtime.
-- Which subgraph commit produced release `v2.0.30`? `subgraph@main` is at `2.0.22`,
-  so the repo can't say.
-- Commit provenance for `MarketLensV2` and `CollateralLens`. Deployed, view-only,
-  and untraceable to source — which is the code that produces every number Aleph
-  will quote.
-- A dedicated gateway bearer for Aleph, separate from the frontend's, so revoking
-  one doesn't take down the other.
-
-**In flight**
-
-- Round 3 of adversarial review. Rounds 1 and 2 found six and then thirteen
-  findings across the chunkers, all fixed with regressions; the pattern both
-  times was code reporting success while doing the wrong thing. The anchor
-  algorithm is fitted to the live renderer (494/494, artifacts included)
-  rather than specified; `ingest/chunkers/verify_anchors.py` re-checks the
-  fit on demand, which is the standing risk made re-testable.
-
-**Needs a decision**
-
-- Vocabulary alignment with `wildcat-notifications`. Aleph is pull to that bot's
-  push; both live in Telegram and must describe the same market state in the same
-  words. Whose phrasing wins where they differ?
-- `wildcat-juris` is currently excluded from the corpus (claims intake for
-  defaulted markets, identified lenders). Confirm or override.
-- Duty roster lives in deployment config, not here. Confirm.
-- The `triage` behaviour. Nine golden-set items are action requests ("bump
-  my withdrawal") or UI faults, where the value is collecting the four details a
-  human always asks for rather than answering. That is a distinct mode from
-  answering and refusing, and it isn't specified anywhere yet.
-
-**Needs authoring, not deciding**
-
-- Review `eval/golden-v1.yaml` — 125 questions clustered from ~2,940 real messages
-  across five channels. Frequency ratings are inferred from the transcripts and
-  want a sanity check from someone who was in the rooms.
-- Ten `corpus_gap` questions are real, recurring, and unanswerable from the docs.
-  That is documentation work no retrieval model can substitute for.
-
-**Housekeeping**
-
-- Report the `@functi0nZer0` Telegram squat via @NoToScam. Not a Fragment
-  collectible, so it is actionable.
-- Publish the real team handles on docs.wildcat.finance so refusals can point at
-  an authoritative page rather than naming a person in-channel.
+`manifest.yaml` is the configuration source of truth. If this README disagrees
+with it, the manifest wins and this file needs correction.
 
 ---
 

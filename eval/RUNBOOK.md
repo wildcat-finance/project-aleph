@@ -1,15 +1,39 @@
-# Runbook: choosing the embedding model
+# Embedding evaluation runbook
 
-Decide between `qwen3-embedding` and `bge-m3` by measurement rather than
-argument. Half a day, mostly waiting.
+This runbook records the `bge-m3` model decision and provides a repeatable way to
+re-evaluate it when the corpus or model artifact changes.
 
-The output you act on is not a score. It is the list of ~20 questions where the
-two models retrieve different things. Where they agree, neither is telling you
-anything.
+The harness is diagnostic, not a production gate. It compares models over a
+Markdown corpus, reports retrieval disagreements and concentration, and computes
+recall for labelled questions. It does not use the ingestion pipeline's full
+corpus or chunk schema.
 
----
+## Recorded decision
 
-## 1. Prerequisites
+The comparison recorded on 2026-08-10 used 87 chunks from
+`v2-protocol/docs`, 52 corpus-answer questions, 25 labels, and no query prefix.
+
+| Model | Distinct top-1 | Recall@1 | Recall@3 | Recall@5 | Resident memory | Dimensions |
+|---|---:|---:|---:|---:|---:|---:|
+| **bge-m3** | **28/52** | **20/25** | 23/25 | 23/25 | ~1.2 GB | 1024 |
+| qwen3-embedding:0.6b | 25/52 | 18/25 | 22/25 | **24/25** | 639 MB | 1024 |
+| qwen3-embedding:8b | 25/52 | 17/25 | 22/25 | 23/25 | 4.7 GB | 4096 |
+
+`bge-m3` is the selected artifact and is pinned in `manifest.yaml`. Its recall@1
+was highest and its first-place choices were spread across more distinct chunks.
+The 8B Qwen model added memory and vector width without improving retrieval.
+
+The numerical margin is small. The stronger reproducibility reason is that
+`bge-m3` performs without an instruction prefix, while the tested Qwen Ollama
+packaging performed better only when its documented query prefix was removed.
+That packaging-specific inversion is easy to lose during a model refresh.
+
+Recall@5 is effectively saturated in this comparison, so it does not distinguish
+the candidates. The selected model should be reconsidered when the evaluated
+corpus, labels, model digest, or chunking method changes—not because a larger
+model becomes available.
+
+## Prerequisites
 
 ```bash
 ollama --version
@@ -19,262 +43,149 @@ source .venv/bin/activate
 pip install numpy pyyaml
 ```
 
-Use a virtualenv. macOS has no bare `pip`, and a Homebrew or system Python will
-refuse `python3 -m pip install` outright with `externally-managed-environment`.
-Add `.venv/` to `.gitignore`.
-
-Corpus is a few megabytes, so indexing runs comfortably on a laptop and indexing
-speed is irrelevant. Only the *query* side is on the bot's hot path later — one
-short string per question — so throughput doesn't matter either.
-
-The constraint that does matter is **resident memory on the bot host**, since the
-model stays loaded to embed queries: 639MB for `0.6b` against 4.7GB for `8b`.
-That is the whole trade, and §5 is how you decide whether it's worth paying.
-
-## 2. Pull the models
+Pull the three recorded candidates:
 
 ```bash
-ollama pull bge-m3                  # 1024 dims, 8K context
-ollama pull qwen3-embedding:0.6b    # 639MB, 32K context
-ollama pull qwen3-embedding:8b      # 4.7GB, 40K context
+ollama pull bge-m3
+ollama pull qwen3-embedding:0.6b
+ollama pull qwen3-embedding:8b
+ollama list
 ```
 
-Pull all three. The whole set is under 7GB and the comparison costs one extra
-coffee, so there is no reason to guess which size is enough.
+Ollama tags are mutable. Record the digest reported by `ollama list` and compare
+the chosen artifact with `embedding.digest` in `manifest.yaml`. A matching name
+with a different digest is a different retrieval artifact.
 
-**Never use `qwen3-embedding` bare or `:latest`** — `latest` resolves to `8b`
-today and may not tomorrow. Same reasoning as every other pin in this repo.
+## Prepare the pinned Markdown corpus
 
-Verify both are actually embedding models and note the dimensions — the numbers
-below are from memory and worth confirming rather than trusting:
+Use the refs named by the manifest rather than repository default branches:
 
 ```bash
-for m in bge-m3 qwen3-embedding:0.6b; do
-  echo -n "$m: "
-  curl -s localhost:11434/api/embed \
-    -d "{\"model\":\"$m\",\"input\":[\"test\"]}" \
-  | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["embeddings"][0]), "dims")'
-done
+git clone https://github.com/wildcat-finance/v2-protocol.git
+git -C v2-protocol checkout aleph-v2.1.0
+git -C v2-protocol rev-parse HEAD
+
+git clone https://github.com/wildcat-finance/wildcat-docs.git
+git -C wildcat-docs checkout aleph-v0.3
+git -C wildcat-docs rev-parse HEAD
 ```
 
-Sizes and contexts from the Ollama library: `0.6b` is 639MB / 32K, `4b` is
-2.5GB / 40K, `8b` is 4.7GB / 40K. Dimensions are what the curl above prints —
-expect 1024 for both `bge-m3` and `qwen3-embedding:0.6b`, and larger for `8b`.
+The recorded result uses only `v2-protocol/docs`. The harness accepts one docs
+root at a time, so adding `wildcat-docs` is a different experiment and should be
+reported separately.
 
-## 3. Get the corpus at the pinned ref
+## Reproduce the comparison
 
-Embed what Aleph will actually serve, not what's on `main`:
-
-```bash
-git clone https://github.com/wildcat-finance/v2-protocol
-cd v2-protocol && git checkout v2.1.0
-
-git clone https://github.com/wildcat-finance/wildcat-docs
-cd wildcat-docs && git checkout aleph-v0
-```
-
-Start with the protocol `docs/` directory. It is small, it is prose, and most of
-section A and B of the golden set should be answerable from it. Add the GitBook
-docs once the harness works, and Solidity last — chunking that properly needs
-the AST path from `ingest/PIPELINE.md`, not the markdown splitter in this script.
-
-## 4. Run the comparison
+From the Project Aleph repository root:
 
 ```bash
 python3 eval/embed_compare.py \
-  --docs v2-protocol/docs \
-  --questions eval/golden-v1.yaml
+  --docs /path/to/v2-protocol/docs \
+  --questions eval/golden-v1.yaml \
+  --labels eval/labels.yaml \
+  --no-prefix
 ```
 
-Defaults to all three models. Output is pairwise disagreement rates, then full
-detail on the questions where *every* model picks something different — those
-are where the choice actually matters — then the remaining disagreements between
-the first two.
+`--no-prefix` is required to reproduce the recorded table. It disables the
+default Qwen query prefix; bge-m3 has no prefix either way.
 
-It filters the golden set to the 61 questions expecting a corpus answer —
-refusals and triage items have no correct chunk, so scoring them is meaningless.
+The harness automatically excludes `refuse`, `triage`, and `corpus_gap` entries
+because none has a correct retrieval chunk. Use `--all-questions` only when
+inspecting behavior, not when reporting recall.
 
-Output is a disagreement list: every question where the two models put a
-different chunk in first place, with each model's pick and the top-5 overlap.
-
-## 5. Read the disagreements
-
-For each one, ask a single question: *which chunk would let you answer this?*
-
-**Watch the chunk type, not just the topic.** bge-m3 leans toward long prose
-sections from Core Behavior; Qwen leans toward short Terminology definitions. A
-glossary entry can be topically perfect and still make a bad answer — "why isn't
-my balance claimable" answered from `Terminology › Claim` yields a definition
-where the asker needed an explanation. Judge what an answer built from the top-5
-would look like, not whether the label sounds right.
-
-You are not looking for a model that wins on average. You are looking for the
-one that fails less badly on the questions that matter — `a01` (partial
-claimability), `b01`/`b02` (interest on deposits), `a07` (interest stops at
-cycle start). If a model retrieves a plausible-but-wrong chunk on those, that is
-disqualifying regardless of how it scores elsewhere.
-
-**Ignore my earlier guess of 15–30%.** The first real run produced 64%, 74% and
-39%. On a small corpus with many near-duplicate chunks, top-1 disagreement is a
-weak signal — several chunks can be equally reasonable answers. Concentration
-(§5a) turned out to be the diagnostic that matters.
-
-**The specific thing to watch for between `0.6b` and `8b`:** on a corpus this
-small and this domain-specific, they may barely differ. If the disagreement rate
-between them is low and the disagreements are ties rather than errors, take the
-`0.6b` — 639MB resident on the bot host instead of 4.7GB, for nothing given up.
-If `8b` is clearly better on the questions in §5 that matter, take it; the
-memory is affordable, it just has to be earned rather than assumed.
-
-## 5a. Check concentration first
-
-The report opens with how many *distinct* chunks each model ever ranks first. A
-healthy model spreads first place widely. A model that returns the same chunk for
-unrelated questions — "how do I enumerate markets", "do you have a Discord",
-"what's the default recovery process" all landing on `Terminology › Lender` — is
-not being opinionated, it is failing to discriminate. The script calls this hub
-collapse and flags it.
-
-Hub collapse invalidates everything downstream. Do not compare quality between a
-collapsed model and a healthy one; fix the collapse or drop the model.
-
-The first thing to try is removing the instruction prefix:
+To compare a different candidate set:
 
 ```bash
-python3 eval/embed_compare.py --docs v2-protocol/docs --no-prefix
+python3 eval/embed_compare.py \
+  --docs /path/to/v2-protocol/docs \
+  --questions eval/golden-v1.yaml \
+  --labels eval/labels.yaml \
+  --models bge-m3 another-model \
+  --no-prefix
 ```
 
-**Result on this corpus: the prefix was actively harmful.** With it,
-`Terminology › Lender` won first place for twelve unrelated queries spanning six
-sections of the golden set — "do you have a Discord", "is there an API to
-enumerate markets", "where's the loan agreement". Without it, Qwen's picks became
-topically sensible: `Withdrawal Cycle` for cycle questions, `Delinquency` for
-delinquency, `Capacity` for capacity. **Run Qwen without the instruct prefix.**
-The GGUF packaging does not preserve the prompt convention of the original
-weights.
+## Interpret the report
 
-Note also that raw repetition is not itself failure. Section A is eighteen
-withdrawal questions, so a withdrawal chunk winning seven times is correct. The
-script now judges by how many *different sections* a repeated chunk absorbs:
-four or more unrelated sections is collapse, two adjacent ones is a topical
-cluster. The first version of this check flagged everything and was useless.
+### Read disagreements, not only scores
 
-## 6. Optional: a number to gate builds on
+For each disagreement, inspect whether the retrieved chunk could support the
+answer. A glossary definition may match a topic while failing to explain the
+behavior the user asked about. Consequential withdrawal and interest questions
+deserve more weight than harmless navigation questions.
 
-Once you have a preference, label a subset so CI can detect regressions:
+### Check top-1 concentration
 
-```yaml
-# eval/labels.yaml — question id → substrings that must appear in a retrieved chunk
-a01: ["withdrawal batch", "claimable"]
-a07: ["interest", "cycle"]
-b01: ["lender deposits"]
-```
+The report counts distinct first-place chunks and flags a chunk that absorbs
+questions from unrelated sections. Repetition within one topic can be correct;
+the withdrawal section contains many related questions. Repetition across
+withdrawals, defaults, APIs, and community links indicates hub collapse.
+
+A collapsed model should not be compared by aggregate recall until the query
+format or packaging issue is understood.
+
+### Treat labels as regression checks
+
+`eval/labels.yaml` maps a question ID to substrings expected in at least one
+retrieved chunk. The labels are intentionally small and high-value. Changes to
+them should reflect evidence review, not tuning to make a model score higher.
+
+## Pin and build the selected artifact
+
+The manifest records:
+
+- model name;
+- Ollama digest;
+- dimensions;
+- precision/quantization;
+- context limit; and
+- query-prefix behavior.
+
+`embed/index.py` records the actual runtime identity in `index.json` and refuses
+queries from a different identity. It does not automatically load the expected
+digest from `manifest.yaml`, so verify the digest before building a release
+index:
 
 ```bash
-python3 eval/embed_compare.py --docs v2-protocol/docs --labels eval/labels.yaml
+ollama list
+
+python3 embed/index.py build \
+  --corpus corpus/<build_id> \
+  --embedder ollama:bge-m3 \
+  --out index
 ```
 
-Thirty labelled questions is enough to catch a regression. This is the
-`eval_not_regressed` gate in `ingest/PIPELINE.md` becoming real.
+Inspect `index/<build_id>/index.json` and confirm its `embedder.digest` matches
+the manifest pin.
 
-## 6a. Results on this corpus (2026-08-10)
+## When to rerun
 
-87 chunks from `v2-protocol/docs`, 52 scored questions, 25 labelled, `--no-prefix`.
+Rerun the comparison when:
 
-| model | distinct top-1 | @1 | @3 | @5 | resident | dims | context |
-|---|---|---|---|---|---|---|---|
-| **bge-m3** | **28/52** | **20/25** | 23/25 | 23/25 | ~1.2GB | 1024 | 8K |
-| qwen3-embedding:0.6b | 25/52 | 18/25 | 22/25 | **24/25** | 639MB | 1024 | 32K |
-| qwen3-embedding:8b | 25/52 | 17/25 | 22/25 | 23/25 | 4.7GB | 4096 | 40K |
+- the promoted docs or protocol source changes materially;
+- chunking changes the evaluated text or breadcrumbs;
+- the selected Ollama digest changes;
+- labels are added or corrected;
+- the corpus gains a source with materially different language or chunk length;
+  or
+- a chunk approaches the selected model's context limit.
 
-**`8b` is out.** Same recall as `bge-m3`, worse than the 0.6b, at seven times the
-resident memory and four times the vector width. Scale buys nothing on a corpus
-this small and this narrow — which is worth remembering the next time a bigger
-model looks like the safe default.
+The current measured Solidity maximum is 5,062 characters and the Markdown
+maximum is 9,524 characters, both below bge-m3's 8,192-token context. The
+ingestion schema rejects oversize embedding text rather than relying on silent
+model truncation.
 
-**Decision: `bge-m3`.** Recorded in `manifest.yaml`.
+## Harness boundaries
 
-@5 is saturated — all three within one question — so it discriminates nothing.
-@1 separates them and puts bge-m3 ahead by two, which agrees with its wider
-spread of first-place chunks and its preference for explanatory prose over
-glossary definitions. Two questions out of 25 is not statistical significance;
-it is the only signal available, and nothing contradicts it.
+`eval/embed_compare.py` uses a small heading splitter that is intentionally
+independent from `ingest/chunkers/markdown.py`. It does not process Solidity,
+GitBook navigation, tier separation, corpus provenance, the real vector-index
+artifact, answer synthesis, citation validity, calibrated abstention, or live
+state.
 
-The counter-argument, on the record: qwen 0.6b wins @5 by one, and since five
-chunks go into the model's context, @5 is arguably the operative metric. It is
-also half the size with four times the context.
+A running Ollama service and the exact model artifacts are external
+prerequisites. The repository does not include an automated test suite for this
+comparison harness, so inspect its reported corpus and question counts before
+using a result as evidence.
 
-What actually settled it was not a number. `bge-m3` performs as documented.
-`qwen3-embedding:0.6b` performs only with its documented instruct prefix
-*removed* — a configuration that works today and breaks silently the next time
-the GGUF is rebuilt. Pinning the digest mitigates that; relying on it does not.
-
-**Revisit when Solidity enters the corpus.** bge-m3's 8K context is comfortable
-for prose. Contract chunks carrying full natspec may not be, and truncation is
-silent. Assert chunk length at ingest; if it bites, qwen's 32K is the reason to
-re-run this whole exercise.
-
-## 7. Pin the winner
-
-In `manifest.yaml`:
-
-```yaml
-embedding:
-  model: qwen3-embedding:0.6b
-  digest: sha256:...          # NOT just the tag
-  dimensions: 1024
-```
-
-Get the digest with `ollama show qwen3-embedding:0.6b --modelfile`, or from
-`ollama list`. **Ollama tags are mutable** — `bge-m3` today and `bge-m3` in six
-months can be different weights. Pinning the tag alone breaks the pipeline's
-central promise that the same manifest produces the same corpus.
-
----
-
-## Gotchas
-
-**The prefix asymmetry.** Qwen3-Embedding expects an instruction on the *query*
-side and bare text on the document side. bge-m3 expects no prefix at all.
-Applying the wrong convention doesn't error — retrieval just quietly gets worse,
-with nothing in any log to explain it. The script handles this; if you
-reimplement, don't drop it.
-
-**Dimension changes are corpus rebuilds.** Vectors from different models are not
-comparable and pgvector columns are fixed-width. Switching from a 1024-dim model
-to a 2560-dim one means a new column and a full re-embed. Cheap at this corpus
-size, but not a config toggle.
-
-**Quantisation.** Default Ollama tags are usually quantised, and for embeddings
-that loss lands directly on retrieval accuracy. Checked for the chosen model:
-`ollama show bge-m3` reports **F16**, 566.70M parameters, bert architecture — so
-this one ships full precision and there is nothing to compare against. Re-check
-if the model or its packaging ever changes; do not assume it holds.
-
-**Context length silently truncates.** A chunk longer than the model's window is
-cut without warning. bge-m3's 8k is comfortable for prose but Solidity chunks
-with full natspec can be long. Assert chunk length at ingest rather than
-discovering it in a bad answer.
-
-**A fast laptop is not the deployment target.** On Apple Silicon the 8B model
-runs on Metal and feels instant, which tells you nothing about a headless x86 VPS
-with no GPU holding 4.7GB resident next to Postgres. Choose on retrieval quality
-here; decide the size question against the host the bot will actually run on.
-
-**Ollama version.** The `/api/embed` endpoint (batched, returns `embeddings`)
-superseded `/api/embeddings` (single, returns `embedding`). If you get a shape
-error, that's why.
-
-**This harness is markdown-only.** It uses a heading splitter, not the AST
-chunker from `ingest/PIPELINE.md`. Fine for choosing a model on prose; do not
-use its Solidity results to conclude anything about Solidity retrieval.
-
----
-
-## What I couldn't test
-
-The script's chunking, question filtering, prefix selection and ranking are
-verified — 51 chunks with correct breadcrumbs from the four protocol docs, 61
-questions filtered, ranking shape correct. The HTTP path to Ollama is *not*
-tested, because there's no Ollama in the environment this was written in. If it
-falls over on first run it will be there, and it will be obvious.
+A production `eval_not_regressed` gate needs an end-to-end retrieval and answer
+evaluation. `ingest/build.py` currently records that gate as `null`.

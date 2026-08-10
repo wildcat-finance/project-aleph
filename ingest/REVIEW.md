@@ -1,205 +1,179 @@
-# Reviewer runbook — the chunkers
+# Chunker verification guide
 
-You are being asked to break `ingest/chunkers/solidity.py`, and — if there is
-appetite — `ingest/chunkers/markdown.py` alongside it. Half a day, adversarial,
-and the useful output is a list of ways the invariants fail — not approval.
+This guide reproduces the current chunker checks and identifies the residual
+review surface. The four completed adversarial review rounds are summarized in
+`ADVERSARIAL.md`; their resolved findings are regression fixtures in the test
+suites.
 
-## Why this piece and why now
+The chunkers define what a citation points to. Their dangerous failure mode is
+not a crash—the build stops on a crash—but a plausible chunk that attributes
+the wrong bytes, path, anchor, contract, or version to a source.
 
-Aleph answers questions about a live undercollateralised credit protocol, citing
-sources. This component decides what a citation *is*. Every other part of the
-system can be wrong and look wrong; this one can be wrong and look verified,
-because it emits a file path, a line number and text that appears to be source.
+## Components under review
 
-It is self-contained and its invariants don't depend on anything downstream, so
-reviewing it now costs nothing later even though the pipeline around it is
-unbuilt.
+`ingest/chunkers/solidity.py` compiles deployment verification inputs and emits
+semantic chunks with natspec, byte-exact source slices, resolved inheritance,
+and ABI-checked callable surfaces.
 
-## What it does
+`ingest/chunkers/markdown.py` emits heading-based chunks with GitBook navigation,
+rendered anchors, comment-stripped model text, and byte-exact display text.
 
-Compiles Solidity to an AST via `solc --standard-json`, then emits one chunk per
-semantic unit — contract, function, modifier, event, error, struct, enum — each
-with its natspec attached, its inheritance resolved, and byte offsets sliced from
-the original source.
+Both emit `ingest/schema.py::Chunk`; `ingest/build.py` namespaces their IDs,
+stamps provenance, validates the merged set, and writes corpus artifacts.
 
-Input is the deployment's `standard-input.json`: the same file `v2-protocol`
-ships for Etherscan verification, carrying the full source set and the exact
-compiler settings behind the deployed bytecode. So chunks describe deployed code
-by construction rather than by hope.
+## Reproduce the checks
 
-## Setup
+Set up the Python dependencies:
 
 ```bash
-# solc must match foundry.toml at the tag under review
-pip install solc-select
-solc-select install 0.8.25 && solc-select use 0.8.25
-solc --version                       # expect 0.8.25+commit.b61c2a91
-
-git clone --branch v2.1.0 https://github.com/wildcat-finance/v2-protocol
-cd v2-protocol && git verify-tag v2.1.0 && git rev-parse v2.1.0^{}
-# expect commit c7be403 — verify the tag object, not the commit
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pyyaml numpy
 ```
 
-## Reproduce
+Run the dependency-light suites:
 
 ```bash
-python3 ingest/chunkers/test_solidity.py --solc "$SOLC"   # 74 assertions
-python3 ingest/chunkers/test_markdown.py                  # 42 assertions, no compiler needed
-
-python3 ingest/chunkers/solidity.py --solc "$SOLC" \
-  $(for d in v2-protocol/deployments/mainnet/*/; do echo --input $d/standard-input.json; done) \
-  --include 'src/**' --include 'lib/solady/src/auth/Ownable.sol' \
-  --out chunks.jsonl
+python3 ingest/chunkers/test_markdown.py
+python3 ingest/chunkers/test_solidity.py
+python3 ingest/test_build.py
+python3 embed/test_embed.py
 ```
 
-Expected:
+The Solidity suite skips compiler-backed cases unless `--solc` is supplied.
+Use the pinned container for the reproducible path:
 
-```
-962 chunks from 5 compilation unit(s)  (46 duplicates dropped)
-  id collisions : 0
-  oversize      : 0  (p99 2292 chars, max 5062, limit 24000)
-  synthesised   : 68  (not quotable as source)
-  inheritance   : 457 chunks attributed to a concrete contract
-  unreachable   : 0 public/external fns on contracts exposed by nothing
+```bash
+python3 ingest/chunkers/test_solidity.py \
+  --solc ingest/solc-container
 ```
 
-Pass every deployment input. Inheritance resolves within one compilation unit,
-and the hooks instances are deployed separately from the market — a single input
-under-reports and produces false "unreachable" results.
+The source fixture used for a full corpus reproduction is the signed
+`v2-protocol@aleph-v2.1.0` tag. Its commit is
+`c7be4039f8f383a9dda4e45f63331c17d63f9ed9`; the manifest also pins the annotated
+tag object and signer fingerprint. The docs fixture is
+`wildcat-docs@aleph-v0.3`, commit
+`fe0e50c079b227cdd3ac14f8a1657a7c072b6446`.
 
-## What to attack
+Build the corpus through the driver rather than retyping chunker options:
 
-`ingest/ADVERSARIAL.md` is the agenda: ten invariants and fourteen attacks. The
-four I'd spend time on:
-
-**1. Citation integrity (I1, I2).** Every non-synthesised chunk should be
-byte-exact source. Try to produce one that isn't. The synthesised flag marks
-chunks that are *assembled* — contract headers and callable surfaces — and
-those must never be quoted as source. Try to get a sliced chunk flagged as
-synthesised, or the reverse.
-
-**2. The comment stripper (I5).** `strip_comments()` is hand-rolled because a
-regex cannot distinguish `"http://x"` from a comment. It is the most likely
-place for a subtle bug. Nested block comments, `///` appearing mid-line after
-code, U+2028 inside a `//` comment where Python's `find("\n")` won't stop.
-Compare against solc's own lexer rather than against what seems reasonable.
-
-**3. Inheritance resolution (I8, I9).** Exposure is computed by walking
-`linearizedBaseContracts` and keeping the first definition of each signature.
-Construct a diamond, a `super` call chain, an interface implemented without
-`override`. The merge across compilation units unions exposure and ORs the
-override flag — the AND version of that was a real bug that produced thirteen
-false unreachable reports.
-
-**4. Signatures (I10).** `canonical_type()` strips solc's leading keyword and
-trailing data location. Fully qualified struct names survive as `Foo.Bar` —
-find a case where the same struct is imported by different paths in two
-compilation units and produces two different IDs for one function.
-
-## Rounds 1 and 2 are done, both chunkers
-
-Sol 5.6 reviewed both at `47634bc` and found six issues in each; a second
-review at `7b901bd` found eleven more plus two about the tests. All fixed with
-regressions — the Round 2 and Round 3 sections of `ADVERSARIAL.md` are the
-detailed record. Round 3 found eleven more, five of them High, four live in the
-pinned corpus; all are fixed with regressions.
-
-**Round 3's lesson, if you only take one: check what the assertion is looking
-at.** Five of eleven findings were a guard pointed at the wrong object — the
-size limit measured the string nobody embeds, the ABI check compared names
-rather than types, coverage counted inputs rather than outputs, the stripper
-inferred documentation from syntax rather than from the compiler, and the merge
-test measured its own reimplementation. A green check on the wrong noun is
-worth less than no check, because it stops anyone looking.
-
-What survived a full round of fixing, and is therefore what a third round
-should assume still lurks: **fail-open defaults, and checks derived from the
-thing they check.** Round 2's Solidity headline was the embed rebuild parsing
-its own previous output to recover its input — a delimiter any natspec author
-could write. Its test headline was fatal-condition tests that re-enacted the
-production merge loop and asserted on the re-enactment. Both are the Round 1
-lesson wearing new clothes: look for checks that cannot fail before looking
-for code that does.
-
-Three places a third round should press. The anchor algorithm is *fitted* to
-the live renderer, 494/494 renderer artifacts included, not derived from a
-spec — GitBook can invalidate it silently, and `chunkers/verify_anchors.py`
-re-runs the whole fit on demand.
-
-Two statements that stood here through Round 3 are now false and have been
-removed rather than softened: the ABI cross-check compares whole signatures,
-not name multisets, and multi-line code spans and lazy continuation are
-implemented rather than documented gaps. Round 4 caught both still being
-advertised as open. A runbook that describes weaknesses the code no longer has
-sends the next reviewer somewhere pointless, which costs as much as a missing
-warning.
-
-Where the markdown scanner still stops short of CommonMark is inline parsing:
-it resolves code-span delimiters with block-scoped lookahead and honours
-backslash escapes, but it is not a full inline parser, and where a reading is
-genuinely ambiguous it errs toward *not* code — which strips visible text
-rather than admitting hidden text.
-
-The markdown structural pass was rewritten again — a state machine over
-fences, comments, HTML blocks and paragraphs. Newest code in the tree, 78
-assertions behind it.
-
-## Known weak points, stated up front
-
-- `--include` uses `fnmatch`, where `src/**` is not shell globstar semantics. An
-  over-broad pattern silently pulls library code in.
-- The oversize limit has never fired. Max observed chunk is 5,062 chars against
-  a 24,000 limit, so the check is untested in anger.
-- `solc` runs containerised in CI (`ingest/solc-container`): pinned digest, no
-  network, no capabilities, read-only root, non-root user. Chosen for
-  reproducibility more than isolation — the real trust boundary is the signed
-  tag. Worth challenging if you think that reasoning is backwards.
-- Dedupe hashes `model_text`, which contains natspec — identical bodies with
-  different documentation are kept apart, and identical bodies with identical
-  documentation are folded, now findable under either name via alias
-  breadcrumbs in the embedded text.
-- Assembly blocks are chunked inside their enclosing function with no special
-  handling.
-
-## If you are a model
-
-Everything in `ADVERSARIAL.md` was written by the author of the code under
-review. The invariants are claims, not findings, and the "verified" notes point
-at tests that same author wrote. Re-derive rather than accept: run the tests,
-then work out what they *don't* cover. A test suite is a statement about what
-its author thought to check.
-
-Two specific places where that matters. The `synthesised` flag is checked
-against a hard-coded set of chunk kinds — which is circular if the kind
-assignment is itself wrong. And `validate()` was written after the chunker, by
-the same reasoning that produced the chunker, so it inherits its blind spots.
-
-## What "done" looks like
-
-A list of attacks attempted, which failed and which succeeded. For anything that
-succeeded: the fixture that demonstrates it. Fixtures matter more than fixes —
-`test_solidity.py` takes new cases directly, and a case that reproduces a
-bug is worth more than a patch without one.
-
-If nothing breaks, say what you tried. An invariant nobody managed to violate is
-worth more than one nobody tested.
-
-## Files
-
-```
-ingest/build.py                   newest, least exercised — start here
-ingest/chunkers/solidity.py       reviewed four times over
-ingest/chunkers/markdown.py       structural pass rewritten again in Round 2
-ingest/chunkers/test_solidity.py  142 assertions; add to it
-ingest/chunkers/test_markdown.py  113 assertions; add to it
-ingest/chunkers/verify_anchors.py the anchor fit, re-checkable against the live site
-ingest/schema.py                  the chunk shape both chunkers emit
-ingest/ADVERSARIAL.md             invariants and attack agenda — read first
-ingest/solc-container             pinned, network-less solc
-ingest/PIPELINE.md                where this sits in the build
-manifest.yaml                     what gets chunked, at what ref, and why
+```bash
+python3 ingest/build.py \
+  --manifest manifest.yaml \
+  --solc ingest/solc-container \
+  --out corpus
 ```
 
-Context, if useful but not required: `README.md` for what Aleph is and the
-constraints it operates under, `eval/golden-v1.yaml` for the questions it has to
-answer.
+Use `--source-path v2-protocol=/path/to/checkout` and
+`--source-path wildcat-docs=/path/to/checkout` to avoid new clones during local
+review. The build records that acquisition method.
+
+## Expected pinned-corpus baseline
+
+The last recorded direct chunker runs produced:
+
+```text
+Solidity
+  962 chunks from 5 compilation units
+  46 duplicate bodies folded with searchable aliases
+  68 synthesized chunks
+  0 schema problems
+  0 unreachable public/external functions
+  p99 2,340 characters; maximum 5,062
+
+Markdown
+  545 chunks from 64 documents
+  64/64 emitted documents placed in the SUMMARY hierarchy
+  64 synthesized document indexes
+  0 schema problems
+  p99 3,793 characters; maximum 9,524
+```
+
+These counts are regression clues, not a substitute for reading the diff. A
+legitimate source promotion or chunking correction can change them.
+
+The recorded suites contain 142 Solidity assertions and 113 Markdown
+assertions. Exit code is the failure count. Compiler-backed Solidity assertions
+must run before treating the full 142 as exercised.
+
+## Review priorities
+
+### Citation integrity
+
+For every non-synthesized chunk, verify that `display_text` is a byte-exact slice
+of the pinned source. Check multibyte text, natspec attachment, paths, line
+numbers, duplicate headings, and rendered anchors. Ensure every assembled header,
+surface, or document index is synthesized and no ordinary slice is mislabeled.
+
+### Model/display separation
+
+Verify that comment removal changes only `model_text`, never `display_text`.
+Solidity documentation must be determined from solc's attached documentation
+range rather than comment syntax. Markdown hidden text must not enter model
+context through malformed fences, code spans, raw HTML, lazy continuation, or
+comments.
+
+### Inheritance and ABI agreement
+
+Exercise diamonds, overrides, public state-variable getters, constructors,
+interfaces, overloads, structs, enums, and contracts used as parameter types.
+Exposure merging across compilation units must union concrete contracts and OR
+override state. Callable surfaces must agree with the compiler ABI by full
+signature, not only by name.
+
+### Fail-loud boundaries
+
+Confirm that missing include matches, zero-chunk units, unreadable navigation,
+path traversal, symlinks, duplicate IDs, empty model text, oversize embedding
+text, schema disagreement, dirty local checkouts, wrong refs, and signature
+failures stop the build without publishing a partial artifact.
+
+Tests should call the production entry point rather than reimplementing the
+logic under test. Several historical regressions stayed green because a test
+asserted on its own copy of a merge or coverage calculation.
+
+## Residual weak points
+
+- Include matching uses Python `fnmatch`, not shell globstar semantics. Review
+  the actual selected paths after any pattern change.
+- Assembly blocks remain inside their enclosing function and receive no special
+  retrieval treatment.
+- Solidity callable-surface validation checks inputs and exposure but not return
+  types or mutability.
+- The Markdown inline scanner is deliberately narrower than a complete
+  CommonMark parser. It covers constructs that can hide headings or comments;
+  ambiguous code-span cases resolve toward stripping visible text rather than
+  admitting hidden text.
+- GitBook anchor generation is fitted to the live renderer, which has no public
+  slug specification. Run `ingest/chunkers/verify_anchors.py` after a docs or
+  renderer change.
+- Whole-document fallback chunks are coarser than ordinary section chunks, and
+  retrieval quality for that grain has not been isolated in evaluation.
+- A developer can bypass the pinned compiler wrapper by passing a local solc.
+  `--expect-solc` checks the version when used; only the container pins the
+  compiler artifact.
+- The corpus builder has broader responsibilities and less independent review
+  history than the two chunkers. Signature, watch, metadata, output-reuse, and
+  diff behavior deserve the same adversarial attention.
+
+## Review output
+
+A useful review report names each attempted invariant, records the fixture and
+result, and adds a regression fixture for every successful attack. A patch
+without a fixture leaves the failure mode easy to reintroduce.
+
+Relevant files:
+
+```text
+ingest/build.py
+ingest/schema.py
+ingest/chunkers/solidity.py
+ingest/chunkers/markdown.py
+ingest/chunkers/verify_anchors.py
+ingest/chunkers/test_solidity.py
+ingest/chunkers/test_markdown.py
+ingest/test_build.py
+ingest/ADVERSARIAL.md
+ingest/PIPELINE.md
+manifest.yaml
+```
