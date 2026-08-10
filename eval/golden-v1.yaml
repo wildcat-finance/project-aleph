@@ -30,9 +30,11 @@ meta:
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted
   period: 2025-02-13 – 2026-08-05
   count: 125
-  corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable from v2-protocol/docs.
-    These are documentation work, not retrieval work — no embedding model can fix them. Excluded
-    from retrieval scoring.'
+  corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
+    from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
+    work, not retrieval work; no embedding model can fix them. Excluded from retrieval
+    scoring. e06 cleared at aleph-v0.1, which also gave e02, e09 and g01 real sources —
+    drop the marker whenever a docs release answers one and the scored set grows for free.'
 questions:
 
   # ====================================================================
@@ -378,6 +380,7 @@ questions:
   question: Why does the minimum deposit exist and how is it chosen?
   expected: corpus
   frequency: low
+  corpus_gap: minimum deposit is a market parameter with no documentation
 - id: d09
   question: Is there a way to be notified when capacity opens up in a full market?
   expected: refuse+point
@@ -400,7 +403,11 @@ questions:
   question: So it's basically self-service, no KYC/KYB?
   expected: corpus
   frequency: medium
-  note: Answer carefully — the borrower side and lender side differ.
+  source: using-wildcat/how-borrowers-are-onboarded.md
+  note: >
+    Answer carefully — the borrower side and lender side differ, and the premise
+    is half wrong. Borrowers pass an automated KYB check before they can deploy;
+    lender access is per-market and borrower-set. Documented since aleph-v0.1.
 - id: e03
   question: We already have an MLA signed with them off-platform. Can we use that to access
     the pool?
@@ -420,7 +427,12 @@ questions:
     the market page.
   expected: corpus
   frequency: medium
-  corpus_gap: loan agreement location is UI/Foundation, not protocol docs
+  source: using-wildcat/how-borrowers-are-onboarded.md, security-measures/proving-you-are-an-affected-lender-in-a-default.md
+  note: >
+    Gap closed at aleph-v0.1. The MLA is optional and per-market; the borrower
+    profile on app.wildcat.finance carries the verified legal-identity fields.
+    Distinguish those from the borrower-supplied marketing copy, which is not
+    verified.
 - id: e07
   question: Which legal entity is <borrower>, and what agreements have they signed with Wildcat?
   expected: refuse+point
@@ -439,7 +451,11 @@ questions:
     heard back.
   expected: refuse+point
   frequency: high
-  note: Onboarding chase. Very frequent, entirely routable, zero judgement required.
+  source: using-wildcat/how-borrowers-are-onboarded.md
+  note: >
+    Onboarding chase. Very frequent, entirely routable, zero judgement required.
+    Since aleph-v0.1 the process is documented, so the refusal has somewhere to
+    point rather than just deferring to a human.
 - id: e10
   question: We want to deploy a market and work with a few borrowers. Can someone walk me
     through the steps?
@@ -519,10 +535,15 @@ questions:
   must_not:
   - reassurance
   - likelihood assessment
-  note: 'Mechanism and documents, delivered plainly. The honest answer includes that recovery
-    is a legal process outside the protocol.
-
-    '
+  source: security-measures/proving-you-are-an-affected-lender-in-a-default.md
+  note: >
+    Mechanism and documents, delivered plainly. The honest answer includes that
+    recovery is a legal process outside the protocol. Since aleph-v0.1 there is
+    a documented route: prove you are an affected lender, send the bundle to the
+    Foundation. Carry the page's own distinction — the protocol-observable
+    default (delinquent beyond grace plus 90 days) is not an Event of Default
+    under an MLA, which may trigger earlier and on grounds the protocol never
+    sees.
 - id: g02
   question: Do Wildcat lenders have senior rights?
   expected: corpus

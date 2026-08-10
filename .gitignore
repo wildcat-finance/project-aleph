@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+
+# build artefacts: chunk output and corpus indexes are reproducible from
+# manifest.yaml and never belong in git
+*.jsonl
+chunks/

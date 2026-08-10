@@ -83,6 +83,14 @@ against the exact index that generated it.
 the deployed contract wins. Merged-but-undeployed is the highest-risk answer class
 in the system: correct citation, real code, wrong protocol.
 
+**A citation is a promise.** Text presented as source is byte-exact source.
+Chunks carry the verbatim slice separately from the comment-stripped text that
+reaches the model, so the injection defence never alters what a human is shown.
+Chunks that are *assembled* rather than sliced — contract headers, callable
+surfaces — are flagged and must never be quoted. A synthesised chunk presented as
+a citation is a fabricated quote that looks verified, which is worse than an
+uncited wrong answer.
+
 **The model never generates numbers.** Live-state answers route through a
 deterministic renderer. The model chooses the query; code formats the reply. A
 model-authored figure about someone's capital is a statement Wildcat owns.
@@ -118,6 +126,12 @@ a successful prompt injection is a rejected intent.
                                 Telegram (long-poll)
 ```
 
+Solidity is chunked through the compiler's AST — one chunk per contract,
+function, modifier, event, error or struct, with natspec attached and inheritance
+resolved, built from the deployment verification inputs so chunks describe
+deployed code by construction. Markdown chunks on heading boundaries. Both emit
+one shared schema, so the retriever never branches on source type.
+
 Postgres with pgvector for the index, chat log and audit trail. Hybrid BM25 +
 embeddings — the corpus is small, and exotic retrieval buys nothing here.
 
@@ -146,16 +160,33 @@ talk to each other.
 ## Repository contents
 
 ```
-manifest.yaml                 machine-readable corpus definition — CI reads this
-aleph-ingestion-manifest.md   why the manifest says what it says
-ingest/PIPELINE.md            how manifest.yaml becomes a queryable corpus
-sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
+manifest.yaml                 what gets indexed, at what ref — CI reads this
+aleph-ingestion-manifest.md   why it says what it says
 README.md                     this file
-eval/golden-v1.yaml           question set, built from real support transcripts
-eval/RUNBOOK.md               choosing the embedding model, by measurement
-eval/embed_compare.py         retrieval comparison harness
-eval/labels.yaml              retrieval ground truth for the 25 that matter
+
+ingest/
+  PIPELINE.md                 how manifest.yaml becomes a queryable corpus
+  schema.py                   the chunk shape every chunker emits
+  ADVERSARIAL.md              invariants and attack agenda
+  REVIEW.md                   brief for an adversarial reviewer
+  solc-container              pinned, network-less solc
+  chunkers/
+    solidity.py               Solidity → chunks, via the compiler's AST
+    markdown.py               markdown → chunks, on heading boundaries
+    test_solidity.py          47 assertions
+    test_markdown.py          21 assertions, no compiler needed
+
+eval/
+  golden-v1.yaml              125 questions, from real support transcripts
+  labels.yaml                 retrieval ground truth for the 25 that matter
+  embed_compare.py            retrieval comparison harness
+  RUNBOOK.md                  choosing the embedding model, by measurement
+
+sdk-watch.py                  mainnet SDK deployment-map watcher (CI)
 ```
+
+Not yet written: the index build and the retrieval and answer layers. The schema and the eval set exist so those can be built against
+something rather than invented alongside.
 
 `manifest.yaml` is the source of truth; the prose document explains it. If the two
 disagree, the YAML wins and the prose is a bug.
@@ -178,8 +209,10 @@ documents are not in the allowlist and must not drift into it. And the deployed
 context should be assumed readable by anyone, so it carries public corpus and
 nothing else: no internal status, no names, no gaps we haven't announced.
 
-Pre-implementation. Scope is **mainnets only** — Ethereum and Plasma. Sepolia and
-other testnets are ignored entirely: not ingested, not queried, not answerable.
+Pre-implementation. Scope is **Ethereum mainnet only**. Other chains and all
+testnets are ignored entirely: not ingested, not queried, not answerable. That is
+a deliberate narrowing rather than the shape of the protocol — Wildcat deploys
+more widely, and widening Aleph later is a config change plus an eval re-run.
 
 Detailed decisions and accepted risks are at the end of
 [`aleph-ingestion-manifest.md`](./aleph-ingestion-manifest.md). The items below are
@@ -199,6 +232,11 @@ the ones that need a human rather than a build step.
 - A dedicated gateway bearer for Aleph, separate from the frontend's, so revoking
   one doesn't take down the other.
 
+**In flight**
+
+- Adversarial review of `ingest/chunkers/solidity.py` — briefed in
+  `ingest/REVIEW.md`, with Sol 5.6.
+
 **Needs a decision**
 
 - Vocabulary alignment with `wildcat-notifications`. Aleph is pull to that bot's
@@ -207,7 +245,7 @@ the ones that need a human rather than a build step.
 - `wildcat-juris` is currently excluded from the corpus (claims intake for
   defaulted markets, identified lenders). Confirm or override.
 - Duty roster lives in deployment config, not here. Confirm.
-- Decide the `triage` behaviour. Nine golden-set items are action requests ("bump
+- The `triage` behaviour. Nine golden-set items are action requests ("bump
   my withdrawal") or UI faults, where the value is collecting the four details a
   human always asks for rather than answering. That is a distinct mode from
   answering and refusing, and it isn't specified anywhere yet.
