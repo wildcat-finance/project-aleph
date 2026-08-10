@@ -45,6 +45,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -587,6 +588,65 @@ def corpus_diff(previous: pathlib.Path, chunks: list) -> dict:
                        "before": len(old), "after": len(new)}}
 
 
+def _without_created(record: dict) -> dict:
+    """The creation clock is provenance, never part of artifact identity."""
+    return {k: v for k, v in record.items() if k != "created"}
+
+
+def _reuse_corpus(out_dir: pathlib.Path, chunks_bytes: bytes,
+                  record: dict) -> dict:
+    """Validate and return an already-published immutable corpus."""
+    chunks_path = out_dir / "chunks.jsonl"
+    build_path = out_dir / "build.json"
+    if not chunks_path.is_file() or not build_path.is_file():
+        raise BuildError(
+            f"{out_dir}: an artifact directory already exists but is "
+            "incomplete; refusing to repair or overwrite an immutable build")
+    if chunks_path.read_bytes() != chunks_bytes:
+        raise BuildError(
+            f"{out_dir}: chunks.jsonl does not match a replay of build "
+            f"{record['build_id']}; refusing to overwrite it")
+    try:
+        existing = json.loads(build_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        raise BuildError(f"{build_path}: invalid immutable build record: {e}")
+    if _without_created(existing) != _without_created(record):
+        raise BuildError(
+            f"{build_path}: metadata does not match a replay of build "
+            f"{record['build_id']}; use a clean artifact root and investigate")
+    print(f"\nreused    {out_dir} (immutable artifact already verified)")
+    return existing
+
+
+def _publish_corpus(out_root: pathlib.Path, chunks: list, record: dict) -> dict:
+    """Atomically publish once; subsequent runs can only verify and reuse."""
+    out_root.mkdir(parents=True, exist_ok=True)
+    out_dir = out_root / record["build_id"]
+    chunks_bytes = "".join(
+        json.dumps(c.to_dict()) + "\n"
+        for c in sorted(chunks, key=lambda x: x.id)).encode()
+    if out_dir.exists():
+        return _reuse_corpus(out_dir, chunks_bytes, record)
+
+    temp_dir = pathlib.Path(tempfile.mkdtemp(
+        prefix=f".{record['build_id']}.", dir=out_root))
+    try:
+        (temp_dir / "chunks.jsonl").write_bytes(chunks_bytes)
+        (temp_dir / "build.json").write_text(
+            json.dumps(record, indent=2) + "\n")
+        try:
+            os.replace(temp_dir, out_dir)
+        except OSError:
+            # Another identical builder may have won the publish race.
+            if out_dir.exists():
+                return _reuse_corpus(out_dir, chunks_bytes, record)
+            raise
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+    return record
+
+
 # --------------------------------------------------------------------------
 
 def build(manifest_path: str, out_root: str, solc: str, workdir: str,
@@ -761,11 +821,7 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
               f"-{c['removed']} ~{c['changed_text']} changed text")
 
     out_dir = pathlib.Path(out_root) / build_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "chunks.jsonl", "w") as f:
-        for c in sorted(all_chunks, key=lambda x: x.id):
-            f.write(json.dumps(c.to_dict()) + "\n")
-    (out_dir / "build.json").write_text(json.dumps(record, indent=2) + "\n")
+    record = _publish_corpus(pathlib.Path(out_root), all_chunks, record)
 
     print(f"\npublished {out_dir}")
     print(f"  chunks.jsonl   {len(all_chunks)} chunks")

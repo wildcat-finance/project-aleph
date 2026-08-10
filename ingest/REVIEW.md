@@ -38,6 +38,7 @@ python3 ingest/chunkers/test_markdown.py
 python3 ingest/chunkers/test_solidity.py
 python3 ingest/test_build.py
 python3 embed/test_embed.py
+python3 test_release.py
 ```
 
 The Solidity suite skips compiler-backed cases unless `--solc` is supplied.
@@ -55,13 +56,14 @@ tag object and signer fingerprint. The docs fixture is
 `wildcat-docs@aleph-v0.3`, commit
 `fe0e50c079b227cdd3ac14f8a1657a7c072b6446`.
 
-Build the corpus through the driver rather than retyping chunker options:
+Build the canonical corpus/index candidate through the release driver rather
+than retyping component options:
 
 ```bash
-python3 ingest/build.py \
+python3 release.py \
   --manifest manifest.yaml \
   --solc ingest/solc-container \
-  --out corpus
+  --artifacts artifacts
 ```
 
 Use `--source-path v2-protocol=/path/to/checkout` and

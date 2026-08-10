@@ -31,9 +31,13 @@ embedder that built the index, which is checked before any comparison — see
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import pathlib
+import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -47,7 +51,8 @@ from embed.embedder import (  # noqa: E402
 CARRIED = ("id", "kind", "source_type", "path", "line", "breadcrumb", "tier",
            "synthesised", "corpus_build_id", "source_ref", "protocol_version",
            "deployment_status", "effective_date", "doc_version",
-           "content_hash")
+           "content_hash", "display_text", "model_text", "embed_text",
+           "detail", "warnings")
 
 
 class IndexError_(Exception):
@@ -60,6 +65,59 @@ def _np():
     except ImportError:
         raise IndexError_("embed/index.py needs numpy (pip install numpy)")
     return np
+
+
+def _sha256(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tool_hashes() -> dict[str, str]:
+    return {name: _sha256(HERE / name)
+            for name in ("embedder.py", "index.py")}
+
+
+def _validate_existing(out_dir: pathlib.Path, build_id: str,
+                       identity: Identity, tools: dict,
+                       rows: list[dict], record: dict,
+                       corpus_sha256: str) -> dict:
+    """An index directory is immutable: verify it fully or reject it."""
+    manifest_path = out_dir / "index.json"
+    if not manifest_path.is_file():
+        raise IndexError_(f"{out_dir}: incomplete immutable index (index.json "
+                          "is missing); refusing to repair or overwrite it")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        raise IndexError_(f"{manifest_path}: invalid immutable index: {e}")
+    expected = {
+        "corpus_build_id": build_id,
+        "corpus_sha256": corpus_sha256,
+        "embedder": identity.to_dict(),
+        "tools": tools,
+        "total_chunks": len(rows),
+        "corpus_gates": record.get("gates"),
+        "corpus_waivers": record.get("waivers"),
+    }
+    mismatched = [k for k, value in expected.items()
+                  if manifest.get(k) != value]
+    if mismatched:
+        raise IndexError_(
+            f"{manifest_path}: immutable index metadata differs in "
+            f"{', '.join(mismatched)}; use a clean output path and investigate")
+    artifacts = manifest.get("artifacts") or {}
+    required = {f"tier-{tier}{suffix}"
+                for tier in manifest.get("tiers", {})
+                for suffix in (".npy", ".jsonl")}
+    if set(artifacts) != required:
+        raise IndexError_(f"{manifest_path}: artifact inventory is incomplete")
+    for name, declared_hash in artifacts.items():
+        path = out_dir / name
+        if not path.is_file() or _sha256(path) != declared_hash:
+            raise IndexError_(
+                f"{path}: missing or modified immutable index artifact; "
+                "refusing to repair or overwrite it")
+    print(f"reused    {out_dir} (immutable index already verified)")
+    return manifest
 
 
 # --------------------------------------------------------------------------
@@ -90,10 +148,12 @@ def load_corpus(corpus_dir: pathlib.Path) -> tuple[list[dict], dict]:
 
 
 def build_index(corpus_dir: str, out_root: str, embedder_spec: str,
-                batch: int = 16) -> dict:
+                batch: int = 16,
+                expected_identity: Identity | None = None) -> dict:
     np = _np()
     corpus = pathlib.Path(corpus_dir)
     rows, record = load_corpus(corpus)
+    corpus_sha256 = _sha256(corpus / "chunks.jsonl")
     build_id = (record.get("build_id")
                 or (rows[0].get("corpus_build_id") if rows else None))
     if not build_id:
@@ -102,6 +162,11 @@ def build_index(corpus_dir: str, out_root: str, embedder_spec: str,
 
     embedder = make_embedder(embedder_spec)
     identity = embedder.identity()
+    if expected_identity is not None and identity != expected_identity:
+        raise IndexError_(
+            "the embedding runtime does not match manifest.yaml\n"
+            f"  manifest: {expected_identity.to_dict()}\n"
+            f"  runtime : {identity.to_dict()}")
     print(f"embedder  {identity.key()}")
     if identity.backend == "stub":
         print("  WARNING: stub backend — this index is a test artefact and "
@@ -111,43 +176,67 @@ def build_index(corpus_dir: str, out_root: str, embedder_spec: str,
     for r in rows:
         by_tier.setdefault(r.get("tier") or "?", []).append(r)
 
-    out_dir = pathlib.Path(out_root) / build_id
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_root_path = pathlib.Path(out_root)
+    out_root_path.mkdir(parents=True, exist_ok=True)
+    out_dir = out_root_path / build_id
+    tools = _tool_hashes()
+    if out_dir.exists():
+        return _validate_existing(out_dir, build_id, identity, tools,
+                                  rows, record, corpus_sha256)
+
+    temp_dir = pathlib.Path(tempfile.mkdtemp(
+        prefix=f".{build_id}.", dir=out_root_path))
 
     tiers: dict[str, dict] = {}
-    for tier in sorted(by_tier):
-        members = by_tier[tier]
-        texts = [m["embed_text"] for m in members]
-        empty = sum(1 for t in texts if not t.strip())
-        if empty:
-            raise IndexError_(f"tier {tier}: {empty} chunk(s) have empty "
-                              "embed_text; the corpus should not have shipped")
-        print(f"  tier {tier}: embedding {len(texts)} chunks…")
-        vectors = embedder.embed(texts, kind="document", batch=batch)
-        if vectors.shape[0] != len(members):
-            raise IndexError_(
-                f"tier {tier}: embedded {vectors.shape[0]} of {len(members)}")
+    try:
+        for tier in sorted(by_tier):
+            members = by_tier[tier]
+            texts = [m["embed_text"] for m in members]
+            empty = sum(1 for t in texts if not t.strip())
+            if empty:
+                raise IndexError_(f"tier {tier}: {empty} chunk(s) have empty "
+                                  "embed_text; the corpus should not have shipped")
+            print(f"  tier {tier}: embedding {len(texts)} chunks…")
+            vectors = embedder.embed(texts, kind="document", batch=batch)
+            if vectors.shape[0] != len(members):
+                raise IndexError_(
+                    f"tier {tier}: embedded {vectors.shape[0]} of {len(members)}")
 
-        np.save(out_dir / f"tier-{tier}.npy",
-                np.ascontiguousarray(vectors, dtype="float32"))
-        with open(out_dir / f"tier-{tier}.jsonl", "w") as f:
-            for m in members:
-                f.write(json.dumps({k: m.get(k) for k in CARRIED}) + "\n")
-        tiers[tier] = {"chunks": len(members),
-                       "dimensions": int(vectors.shape[1])}
-        print(f"    {len(members)} vectors, {vectors.shape[1]} dimensions")
+            np.save(temp_dir / f"tier-{tier}.npy",
+                    np.ascontiguousarray(vectors, dtype="float32"))
+            with open(temp_dir / f"tier-{tier}.jsonl", "w") as f:
+                for m in members:
+                    f.write(json.dumps({k: m.get(k) for k in CARRIED}) + "\n")
+            tiers[tier] = {"chunks": len(members),
+                           "dimensions": int(vectors.shape[1])}
+            print(f"    {len(members)} vectors, {vectors.shape[1]} dimensions")
 
-    manifest = {
-        "corpus_build_id": build_id,
-        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "embedder": identity.to_dict(),
-        "embedder_key": identity.key(),
-        "tiers": tiers,
-        "total_chunks": len(rows),
-        "corpus_gates": record.get("gates"),
-        "corpus_waivers": record.get("waivers"),
-    }
-    (out_dir / "index.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        artifacts = {path.name: _sha256(path) for path in sorted(temp_dir.iterdir())}
+        manifest = {
+            "corpus_build_id": build_id,
+            "corpus_sha256": corpus_sha256,
+            "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "embedder": identity.to_dict(),
+            "embedder_key": identity.key(),
+            "tools": tools,
+            "tiers": tiers,
+            "total_chunks": len(rows),
+            "artifacts": artifacts,
+            "corpus_gates": record.get("gates"),
+            "corpus_waivers": record.get("waivers"),
+        }
+        (temp_dir / "index.json").write_text(
+            json.dumps(manifest, indent=2) + "\n")
+        try:
+            os.replace(temp_dir, out_dir)
+        except OSError:
+            if out_dir.exists():
+                return _validate_existing(out_dir, build_id, identity, tools,
+                                          rows, record, corpus_sha256)
+            raise
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
     print(f"written   {out_dir}")
     if record.get("waivers"):
         print(f"  note: the corpus was built with waivers "

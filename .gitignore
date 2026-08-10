@@ -21,4 +21,6 @@ ingest/keys/*secret*
 *.jsonl
 chunks/
 corpus/
+index/
+artifacts/
 .aleph-work/

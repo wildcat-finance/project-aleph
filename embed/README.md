@@ -6,15 +6,19 @@ work while corpus builds are source-processing work, and because a re-embed
 does not require a re-chunk. `ingest/build.py` has no dependency on this
 directory.
 
-The implementation is a tiered NumPy index with exact cosine search. It does
-not implement Postgres, pgvector, BM25, hybrid fusion, answer generation, or
-deployment promotion.
+The implementation is a tiered, immutable NumPy index with exact cosine search.
+It does not yet implement BM25, hybrid fusion, answer generation, or deployment
+promotion.
 
 ```bash
 python3 embed/index.py build  --corpus corpus/<build_id> \
                               --embedder ollama:bge-m3 --out index/
 python3 embed/index.py search --index index/<build_id> \
                               --embedder ollama:bge-m3 --query "…"
+
+# Canonical corpus + index release (preferred outside component development)
+python3 release.py --manifest manifest.yaml --artifacts artifacts \
+                   --solc ingest/solc-container
 ```
 
 `numpy` is required for every backend. The `st:` backend additionally requires
@@ -31,9 +35,9 @@ downstream check that can notice, because nothing about the output is
 malformed.
 
 So every set of vectors carries an `Identity` — backend, model, digest,
-dimensions, normalisation — the index records it, and `search()` refuses a
-query whose identity does not match. That refusal is the only thing standing
-between a model substitution and confidently wrong answers.
+dimensions, normalisation, and query prefix. The index records it, and
+`search()` refuses a query whose identity does not match. That refusal is the
+only thing standing between a model substitution and confidently wrong answers.
 
 This is why `backend` is part of the identity and not just the model name.
 `manifest.yaml` pins bge-m3 by **Ollama digest at F16**, and the retrieval
@@ -43,9 +47,9 @@ artifact that can rank differently, and an index built with it inherits none
 of that evidence.
 
 The Ollama backend records the digest it actually loads, and search requires
-that same digest. The CLI does not read the expected digest from
-`manifest.yaml`; confirm the local digest matches the manifest before building
-a release index.
+that same digest. `release.py` reads the expected identity from `manifest.yaml`
+and refuses a runtime mismatch. Direct `embed/index.py build` remains available
+for component development, where the caller owns that expectation.
 
 ## Backends
 
@@ -76,7 +80,7 @@ index/<corpus_build_id>/
   tier-A.jsonl    one metadata row per vector, aligned by position
   tier-B.npy
   tier-B.jsonl
-  index.json      embedder identity, corpus build id, counts, corpus waivers
+  index.json      identity, tool and payload hashes, counts, corpus waivers
 ```
 
 One index per tier, never blended: a single ranked list across both lets a
@@ -90,6 +94,11 @@ can name the version it quotes.
 
 Corpus waivers are copied into `index.json`. An index built from a corpus that
 skipped a gate should not be able to forget that.
+
+Index publication is atomic and immutable. Repeating the same build verifies
+every payload hash and reuses the original record. A missing or modified vector,
+metadata file, identity, tool hash, or corpus association is fatal rather than
+being silently overwritten.
 
 ## Brute force, deliberately
 

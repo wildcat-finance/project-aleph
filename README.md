@@ -5,13 +5,13 @@ Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
 This repository contains the evidence foundation: corpus policy, reproducible
 ingestion, Solidity and Markdown chunkers, provenance, embedding backends, a
-tiered vector index, evaluation inputs, and an SDK address watcher. It does not
-yet contain a user-facing agent.
+tiered vector index, an immutable release builder, evaluation inputs, and an
+SDK address watcher. It does not yet contain a user-facing agent.
 
 The shortest honest status is:
 
-> **Aleph can build and search evidence. It cannot yet turn a user's question
-> into a safe answer.**
+> **Aleph can publish a coherent evidence release. It must next implement the
+> retrieval policy that turns a scoped request into validated evidence.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -30,8 +30,10 @@ The checked-in code already provides:
 - Markdown chunking with GitBook hierarchy and renderer-compatible anchors;
 - byte-exact citation text separated from model and embedding text;
 - source, version, deployment, build, and per-document provenance;
-- deterministic corpus build IDs and tier-separated vector artifacts;
-- exact cosine search with strict index/query embedder identity checks;
+- deterministic, immutable corpus and tier-separated vector artifacts;
+- a canonical release record that enforces the manifest embedding identity,
+  records corpus-diff review state, and exposes every promotion gate;
+- exact cosine search with strict full index/query embedder identity checks;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -62,29 +64,28 @@ records, and nothing performs a reviewed atomic promotion.
 Testing belongs inside every stage. The numbering describes dependency order,
 not a plan to defer verification until stage 5.
 
-### 1. Produce a canonical corpus and index artifact
+### 1. Canonical corpus and index artifact — implemented
 
-The ingestion and embedding pieces exist, but they are still separate commands
-with release checks split between code, manifest, and operator procedure.
+`release.py` is the stage-one boundary. It builds one named corpus/index pair,
+derives the required embedding identity from `manifest.yaml`, and writes an
+immutable release record under `artifacts/releases/<release_id>/release.json`.
 
-Build next:
+The implementation provides:
 
-- a release command that produces one named corpus/index pair from
+- one release command that produces a named corpus/index pair from
   `manifest.yaml`;
 - automatic enforcement of the manifest's embedding model digest, dimensions,
   normalization, and query-prefix policy when building the index;
-- immutable output handling so rerunning an existing build ID cannot rewrite a
-  published record;
-- a reviewable corpus diff attached to the candidate artifact; and
+- atomic, immutable publication: a repeat verifies and reuses the artifact,
+  while missing or modified files are fatal;
+- a reviewable corpus diff with pending, unchanged, or attributable approved
+  state; and
 - one machine-readable release record carrying corpus gates, waivers, index
-  identity, source refs, and tier counts.
+  identity, hashes, source refs, and tier counts.
 
-Do not add answer logic here. This stage should produce an evidence artifact that
-another process can load without reconstructing how it was made.
-
-**Complete when:** the same inputs produce the same corpus ID and chunk bytes; a
-model digest mismatch prevents a candidate; every source change carries explicit
-review state; and the candidate loads as one coherent corpus/index pair.
+Downstream gates remain visible rather than being guessed: the current release
+is not promotable while `address_assertions_hold` and `eval_not_regressed` are
+`null`.
 
 ### 2. Build scoped retrieval and citation resolution
 
@@ -274,7 +275,7 @@ with a block number.
 **Fail closed.** Wrong version, stale gateway, missing citation, model mismatch,
 or failed gate produces no answer or promotion.
 
-## Build the existing foundation
+## Build a canonical evidence release
 
 Python 3.10 or later is required. Corpus builds need `pyyaml` and GnuPG;
 indexing needs `numpy`. `ingest/solc-container` uses Docker by default and accepts
@@ -285,20 +286,17 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install pyyaml numpy
 
-python3 ingest/build.py \
+python3 release.py \
   --manifest manifest.yaml \
   --solc ingest/solc-container \
-  --out corpus
-
-python3 embed/index.py build \
-  --corpus corpus/<build_id> \
-  --embedder ollama:bge-m3 \
-  --out index
+  --artifacts artifacts
 ```
 
-Confirm the Ollama digest against `manifest.yaml` before building a release
-index. The current CLI records the runtime digest but does not enforce the
-manifest pin automatically; closing that gap is part of stage 1.
+The command checks the Ollama backend, model, digest, dimensions,
+normalization, and query-prefix policy against the manifest before publishing
+an index. Use `--against artifacts/corpus/<previous-id>/chunks.jsonl` for a
+candidate diff. If it contains changes, a separate reviewed release record can
+be created with `--diff-reviewed-by <reviewer>`.
 
 Run the existing checks with:
 
@@ -307,6 +305,7 @@ python3 ingest/chunkers/test_markdown.py
 python3 ingest/chunkers/test_solidity.py --solc ingest/solc-container
 python3 ingest/test_build.py
 python3 embed/test_embed.py
+python3 test_release.py
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
@@ -317,6 +316,8 @@ python3 embed/test_embed.py --model ollama:bge-m3
 ```text
 manifest.yaml                 executable corpus and runtime policy
 aleph-ingestion-manifest.md   rationale and current limitations
+release.py                    manifest -> immutable corpus/index release
+test_release.py               release coherence and immutability checks
 
 ingest/
   build.py                    manifest -> validated corpus build

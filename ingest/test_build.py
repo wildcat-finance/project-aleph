@@ -623,6 +623,25 @@ def test_merge_and_provenance(tmp: pathlib.Path) -> None:
     check("...and byte-identical contents",
           path.read_bytes() == other.read_bytes())
 
+    build_record = path.parent / "build.json"
+    original_record = build_record.read_bytes()
+    rec3 = ab.build(str(manifest), str(tmp / "out"), "solc", str(tmp / "w3"),
+                    {"alpha": str(a), "beta": str(b)}, True, True, False, None)
+    check("publishing the same build twice reuses the immutable artifact",
+          rec3["created"] == rec["created"]
+          and build_record.read_bytes() == original_record)
+
+    original_chunks = path.read_bytes()
+    path.write_bytes(original_chunks + b"{}\n")
+    raised = ""
+    try:
+        ab.build(str(manifest), str(tmp / "out"), "solc", str(tmp / "w3"),
+                 {"alpha": str(a), "beta": str(b)}, True, True, False, None)
+    except ab.BuildError as e:
+        raised = str(e)
+    check("a damaged immutable artifact is refused, never repaired",
+          "refusing to overwrite" in raised, raised[:160])
+
 
 # --------------------------------------------------------------------------
 # B5 — gates and waivers

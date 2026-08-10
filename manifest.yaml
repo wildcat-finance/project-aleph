@@ -24,8 +24,10 @@ embedding:
   # Part of the corpus identity: changing it changes every answer with no
   # source-side diff to explain why. Treat a change as a rebuild + eval run.
   model: bge-m3
+  backend: ollama
   digest: "790764642607"      # short id from `ollama list`, 2026-08-10; tags are mutable, this is not
   dimensions: 1024
+  normalised: true
   size_on_disk: 1.2GB
   parameters: 566.70M
   architecture: bert

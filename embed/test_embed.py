@@ -111,6 +111,16 @@ def test_identity() -> None:
         ok = False
     check("an exact match is allowed", ok)
 
+    prefix_mismatch = ""
+    try:
+        em.require_match(a, em.Identity(
+            "ollama", "bge-m3", 1024, True, "790764642607",
+            "Represent this sentence:"))
+    except em.EmbeddingError as e:
+        prefix_mismatch = str(e)
+    check("a query-prefix mismatch is refused",
+          "query_prefix" in prefix_mismatch, prefix_mismatch[:160])
+
 
 def test_stub() -> None:
     print("\nE2 — the stub is deterministic, bounded and obviously a stub")
@@ -173,6 +183,35 @@ def test_index_build(tmp: pathlib.Path) -> None:
     check("per-document provenance survives into the index",
           all(m["effective_date"] == "2025-01-16" for m in meta),
           str(meta[0]))
+    check("citation text travels with the vectors",
+          all(m["display_text"] and m["detail"] is not None for m in meta))
+
+    index_record = out / "index.json"
+    original_record = index_record.read_bytes()
+    reused = ix.build_index(str(corpus), str(tmp / "index"), "stub:test")
+    check("a repeat build reuses the immutable index",
+          reused["created"] == manifest["created"]
+          and index_record.read_bytes() == original_record)
+
+    vector_path = out / "tier-A.npy"
+    vector_path.write_bytes(vector_path.read_bytes() + b"damage")
+    raised = ""
+    try:
+        ix.build_index(str(corpus), str(tmp / "index"), "stub:test")
+    except ix.IndexError_ as e:
+        raised = str(e)
+    check("a modified immutable vector artifact is refused",
+          "modified immutable" in raised, raised[:160])
+
+    mismatch = ""
+    try:
+        ix.build_index(str(corpus), str(tmp / "other-index"), "stub:test",
+                       expected_identity=em.Identity(
+                           "stub", "other", 64, True, "test-v1", ""))
+    except ix.IndexError_ as e:
+        mismatch = str(e)
+    check("a runtime differing from the manifest identity is refused",
+          "does not match manifest" in mismatch, mismatch[:160])
 
 
 def test_search(tmp: pathlib.Path) -> None:
