@@ -265,6 +265,18 @@ def run(tmp: pathlib.Path) -> None:
           "does not match its release_id" in refused, refused)
     main.write_text(original_release)
 
+    changed_release = json.loads(original_release)
+    changed_release["sources"]["v2-protocol"]["commit"] = "b" * 40
+    main.write_text(json.dumps(changed_release, indent=2))
+    refused = ""
+    try:
+        retrieval.Retriever(str(manifest), str(main), "stub:test")
+    except retrieval.RetrievalError as error:
+        refused = str(error)
+    check("citation source commits are bound to the release identity",
+          "does not match its release_id" in refused, refused)
+    main.write_text(original_release)
+
     index_path = tmp / "artifacts/index/main/main-build/tier-A.npy"
     index_path.write_bytes(index_path.read_bytes() + b"damage")
     refused = ""

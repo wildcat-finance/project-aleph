@@ -6,9 +6,12 @@ work while corpus builds are source-processing work, and because a re-embed
 does not require a re-chunk. `ingest/build.py` has no dependency on this
 directory.
 
-The implementation is a tiered, immutable NumPy index with exact cosine search.
-It does not yet implement BM25, hybrid fusion, answer generation, or deployment
-promotion.
+This directory implements the tiered, immutable NumPy index with exact cosine
+search. `retrieval.py` adds BM25-style lexical ranking and per-tier hybrid
+fusion; `agent.py` performs evidence-checked answer assembly;
+`eval/product_eval.py` gates it; and `promotion.py` plus `activation.py` approve
+and select the complete release. Those boundaries stay outside the embedding
+component because none changes vector construction.
 
 ```bash
 python3 embed/index.py build  --corpus corpus/<build_id> \

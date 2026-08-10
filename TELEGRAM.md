@@ -80,5 +80,7 @@ The implementation follows the current Telegram Bot API contracts for
 delivery assumptions follow Telegram's
 [`Privacy Mode`](https://core.telegram.org/bots/features#privacy-mode) rules.
 
-Production composition, restart/backoff policy, metrics, audit logging, secret
-delivery, and a concrete human handoff sink belong to stage 7.
+`serve.py` supplies production composition, restart signaling, scrubbed audit
+logging, and environment-only secret delivery. `monitor.py` supplies dependency
+checks for the supervisor timer. A concrete human handoff sink remains disabled
+until an operator names its owner and destination.

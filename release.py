@@ -68,23 +68,26 @@ def _without_created(record: dict) -> dict:
 def compute_release_id(record: dict) -> str:
     """Recompute the identifier from the security-relevant release fields."""
     basis = {
-        "corpus_build_id": record["corpus"]["build_id"],
-        "index_namespace": record["index"]["namespace"],
-        "index_artifacts": record["index"]["artifacts"],
+        "kind": record["kind"],
+        "manifest_sha256": record["manifest"]["sha256"],
+        "corpus": record["corpus"],
+        "index": record["index"],
         "embedding": record["embedding"],
+        "sources": record.get("sources"),
         "review": record["review"],
         "gates": record["gates"],
         "required_gates": record["required_gates"],
         "promotable": record["promotable"],
-        "prerelease": record["kind"] == "prerelease",
-        "release_tool": record["tools"]["release.py"],
+        "waivers": record.get("waivers") or [],
+        "address_book": record.get("address_book"),
+        "tools": record["tools"],
     }
     # Evaluations are bound after the candidate exists, so evaluated releases
     # form a new immutable identity over the same corpus/index payloads. Keep
     # the field absent for compatibility with pre-evaluation release records.
     if record.get("evaluation") is not None:
         basis["evaluation"] = record["evaluation"]
-        basis["promotion_tool"] = record.get("tools", {}).get("promotion.py")
+        basis["parent_release_id"] = record.get("parent_release_id")
     return hashlib.sha256(_canonical(basis)).hexdigest()[:20]
 
 

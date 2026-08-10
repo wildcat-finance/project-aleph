@@ -1,0 +1,30 @@
+[Unit]
+Description=Project Aleph Telegram query service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aleph-query
+Group=aleph-query
+WorkingDirectory=/opt/aleph
+EnvironmentFile=/etc/aleph/gateway.env
+EnvironmentFile=/etc/aleph/telegram.env
+EnvironmentFile=/etc/aleph/audit.env
+EnvironmentFile=-/etc/aleph/model.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/serve.py --manifest /opt/aleph/manifest.yaml --artifacts /srv/aleph/artifacts --pointer /srv/aleph/active-release.json --prerelease /srv/aleph/artifacts/releases/REPLACE_V25_RELEASE_ID/release.json --audit-dir /var/log/aleph/audit --telegram-offset /var/lib/aleph-query/telegram-offset.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aleph-query /var/log/aleph
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

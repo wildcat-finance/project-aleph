@@ -44,6 +44,7 @@ python3 test_live.py
 python3 test_agent.py
 python3 test_evaluation.py
 python3 test_telegram.py
+python3 test_operations.py
 ```
 
 The Solidity suite skips compiler-backed cases unless `--solc` is supplied.

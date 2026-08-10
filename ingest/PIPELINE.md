@@ -16,8 +16,9 @@ acquire -> filter/watch -> parse -> enrich/validate -> write corpus
 `ingest/build.py` stops after writing a validated corpus. `embed/index.py`
 consumes that corpus and writes a tiered vector index. `release.py` is the
 canonical wrapper that enforces the manifest embedding identity and records one
-coherent corpus/index candidate. Answer generation, live-state queries, and
-deployment pointer swaps remain downstream.
+coherent corpus/index candidate. Answer generation, live-state queries,
+evaluation, approval, and deployment pointer swaps are implemented by the
+downstream modules named in the gate table below.
 
 ## Prerequisites
 
@@ -221,7 +222,7 @@ ones:
 | Corpus diff review | release record is pending until a changed diff names its reviewer |
 | SDK address assertions | `release.py --fetch-sdk` verifies the pinned npm artifact and sets the gate; otherwise `null` |
 | Retrieval/answer evaluation | corpus build records `null`; `eval/product_eval.py` evaluates the completed release and `promotion.py` binds a passing immutable record |
-| Atomic deployment swap | not implemented in this repository |
+| Atomic deployment swap | `activation.py` re-verifies a promotable release, publishes immutable switch history, and atomically replaces the active pointer |
 
 The `gates` section of `manifest.yaml` is the promotion policy. A corpus existing
 on disk does not by itself mean that every promotion gate passed. Only the

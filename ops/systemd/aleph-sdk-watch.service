@@ -1,0 +1,17 @@
+[Unit]
+Description=Project Aleph SDK address drift alarm
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aleph-query
+Group=aleph-query
+WorkingDirectory=/opt/aleph
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/sdk-watch.py --pinned 3.1.17 --json
+SuccessExitStatus=0 2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

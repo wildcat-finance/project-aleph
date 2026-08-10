@@ -249,15 +249,15 @@ gate is exactly `true`.
 - Routing, answer assembly, live state, deterministic rendering, and blocking
   extractive claim-support evaluation are implemented. A production language
   writer remains blocked until a separately pinned semantic verifier exists.
-  The Telegram transport is implemented; production composition remains
-  downstream.
+  The Telegram transport and production composition are implemented. A concrete
+  human handoff destination remains operator-owned.
 - SDK address assertions are enforced by `live.AddressBook` and can be bound
   into a release with `release.py --fetch-sdk`. A release built without that
   artifact check keeps `address_assertions_hold: null`.
 - Corpus diffs carry pending, unchanged, or named-reviewer approval state in an
   immutable release record. Product evaluation produces a separately identified
-  promotable release; production activation of that release is not yet
-  implemented.
+  promotable release, and `activation.py` atomically selects only a re-verified
+  promotable release while retaining rollback history.
 - Lens addresses are pinned through the SDK artifact, while the deployed
   `MarketLens`, `MarketLensV2`, and `CollateralLens` source is not bound here to
   reviewed commits. A disputed numeric answer must be resolved against on-chain

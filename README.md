@@ -5,13 +5,14 @@ Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
 This repository contains the evidence and answer path: reproducible ingestion,
 tiered retrieval, typed live-state reads, policy-first routing, citable answer
-assembly, blocking product evaluation, and a long-polling Telegram adapter. It
-does not yet contain the production service composition or deployment wrapper.
+assembly, blocking product evaluation, a long-polling Telegram adapter, and
+verified production activation, rollback, audit, and monitoring controls.
 
 The shortest honest status is:
 
-> **Aleph has a promotion-gated answer path and a tested Telegram interface.
-> The next dependency is production activation and operations.**
+> **Aleph's repository build sequence is implemented end to end. Deployment now
+> requires operator-owned infrastructure, service credentials, and a named
+> human-handoff destination.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -46,6 +47,8 @@ The checked-in code already provides:
   every manifest gate is `true`;
 - a privacy-mode, long-polling Telegram adapter with durable offsets, bounded
   admission, threaded replies, exact answer splitting, and confirmed handoffs;
+- compare-and-swap activation, immutable switch history, pointer-only rollback,
+  scrubbed audit records, runtime composition, and dependency monitoring;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -54,7 +57,7 @@ The checked-in code already provides:
 Raw corpus build records retain `null` placeholders for checks that require the
 SDK and completed index. `release.py --fetch-sdk`, `eval/product_eval.py`, and
 `promotion.py` resolve those gates at their proper boundaries. Production
-activation and rollback remain deliberately separate stage-7 operations.
+activation remains a separate, attributable operator action.
 
 ## Required build order
 
@@ -249,28 +252,38 @@ adapter. It checks unchanged citation text, topic/reply identity, exact
 reconstruction of split answers, send-failure checkpoint behavior, bounded
 admission, fixed internal-error text, and the no-confirmation/no-handoff rule.
 
-### 7. Add production deployment and operations — build next
+### 7. Production deployment and operations — implemented
 
 The final stage turns a tested artifact into a service without weakening its
 replay and rollback guarantees.
 
-Build next:
+`activation.py`, `serve.py`, `audit.py`, and `monitor.py` implement the runtime
+boundary. `ops/OPERATIONS.md` is the operator runbook and `ops/systemd/` contains
+hardened service and timer templates.
 
-- atomic activation of a fully built corpus/index pair;
-- rollback by pointer change while retaining the previous artifact;
+The implementation provides:
+
+- compare-and-swap activation after re-verifying the release, corpus, index,
+  evaluation, manifest policy, and every required gate;
+- immutable activation records and atomic pointer replacement;
+- rollback as a new pointer generation while retaining every artifact;
 - separate processes and credentials for ingestion, embedding, query serving,
   and any future signing authority;
-- scheduled `sdk-watch.py` execution as an alarm, never an automatic rebuild;
-- gateway, model-runtime, Telegram, and evaluation monitoring;
+- a daily `sdk-watch.py` alarm that never rebuilds or edits the manifest;
+- one-shot active-release, model-runtime, gateway, Telegram, and evaluation
+  monitoring suitable for a five-minute supervisor timer;
 - structured audit records carrying corpus build ID, model identity, route,
   citations, live block, and refusal reason;
-- the retention and text-scrubbing boundary for user questions; and
+- HMAC-only question fingerprints, no raw question/answer/address retention,
+  owner-only daily audit files, and bounded retention; and
 - operational runbooks for stale data, model mismatch, address drift, failed
   promotion, and rollback.
 
-**Complete when:** a bad candidate cannot replace the active artifact, every
-served answer identifies the evidence/runtime state behind it, and rollback does
-not require rebuilding.
+The checked tests prove that a raw, failed, null-gated, changed, or incoherent
+candidate cannot become active; every served answer audit identifies its
+evidence/runtime state; and rollback does not rebuild or delete anything.
+Actually starting the service remains an operator action because the repository
+does not own its host, gateway token, Telegram bot, or human support destination.
 
 ## Explicitly outside the v1 sequence
 
@@ -340,6 +353,7 @@ python3 test_live.py
 python3 test_agent.py
 python3 test_evaluation.py
 python3 test_telegram.py
+python3 test_operations.py
 
 # After building both main and prerelease evidence releases:
 python3 eval/product_eval.py \
@@ -375,6 +389,11 @@ test_evaluation.py            product gate and approval adversarial checks
 telegram.py                   privacy-mode long-polling interface adapter
 TELEGRAM.md                   Telegram delivery and handoff boundaries
 test_telegram.py              parsing, delivery, offset and handoff integration
+activation.py                 verified atomic activation and rollback history
+audit.py                      scrubbed append-only answer provenance
+serve.py                      production query/Telegram composition
+monitor.py                    active/model/gateway/Telegram one-shot checks
+test_operations.py            activation, audit, composition and monitor checks
 
 ingest/
   build.py                    manifest -> validated corpus build
@@ -404,6 +423,7 @@ eval/
   RUNBOOK.md                  recorded model decision and rerun procedure
 
 sdk-watch.py                  mainnet SDK deployment-map change detector
+ops/                          production runbook and hardened systemd templates
 ```
 
 `manifest.yaml` is the configuration source of truth. If this README disagrees
