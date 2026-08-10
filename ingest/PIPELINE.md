@@ -114,7 +114,7 @@ whatever happens to sit in the overlap.
 
 ```bash
 python3 ingest/chunkers/markdown.py --root wildcat-docs --manifest manifest.yaml \
-  --out docs.jsonl
+  --summary SUMMARY.md --out docs.jsonl
 ```
 
 Pass `--manifest`. The exclude list lives there, and a list retyped at every
@@ -127,8 +127,12 @@ metadata:
 Core Behavior › Withdrawals › Expired batches
 ```
 
-For `wildcat-docs`, `SUMMARY.md` is GitBook's table of contents and gives the
-hierarchy directly — consume it as structure, exclude it as content.
+For `wildcat-docs`, `SUMMARY.md` is GitBook's table of contents. It is consumed
+as structure and excluded as content: `parse_summary()` resolves each document to
+its place in the nav, and that prefix goes in front of the in-document heading
+path. Without it `day-to-day-usage/lenders.md` has no idea it sits under "Using
+Wildcat", which is most of what a reader means when they ask where something is
+documented.
 
 A chunk under a heading it doesn't repeat is a chunk that retrieves badly and cites
 worse. The breadcrumb goes in metadata *and* is prepended to the embedded text.

@@ -1,5 +1,12 @@
 # Adversarial review: the chunkers
 
+**Round 1 complete, both chunkers.** Sol 5.6 reviewed `chunkers/solidity.py` and
+`chunkers/markdown.py` at `47634bc` and found six issues in each, most of them
+live in the pinned corpora. All twelve are fixed;
+the invariants and tests below reflect the repaired state. What the round found
+is recorded at the bottom under *Round 1*, because a list of what a review caught
+is a better guide to where the next one should look than a list of what passed.
+
 Read this before the code. It states what the chunkers promise, what breaks
 those promises, and what has and hasn't been checked.
 
@@ -207,5 +214,6 @@ Input: all five `deployments/mainnet/*/standard-input.json` at
 Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
 `manifest.yaml` for why only one external library file is in.
 
-Tests: `python3 ingest/chunkers/test_solidity.py --solc solc` — 47 assertions
-across I1–I5 and I8–I11, exit code is the failure count.
+Tests: `test_solidity.py --solc solc` — 74 assertions across I1–I17.
+`test_markdown.py` — 42 assertions across M1–M12, no compiler needed. Exit code
+is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions.
