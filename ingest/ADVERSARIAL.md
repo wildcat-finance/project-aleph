@@ -325,11 +325,11 @@ check reading the wrong end of a pipeline.
 ```
 
 ```
-516 chunks from 63 document(s)
-  hierarchy     : 63/63 included document(s) placed
+521 chunks from 63 document(s)
+  hierarchy     : 63/63 emitted document(s) placed (63 included)
   synthesised   : 63  (not quotable as source)
-  nav hierarchy : 510 chunks placed in the SUMMARY tree
-  size          : median 498, p99 3793, max 9524
+  nav hierarchy : 515 chunks placed in the SUMMARY tree
+  size          : median 491, p99 3793, max 9524
   schema        : 0 problem(s)
 ```
 
@@ -340,7 +340,121 @@ Input: all five `deployments/mainnet/*/standard-input.json` at
 Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
 `manifest.yaml` for why only one external library file is in.
 
-Tests: `test_solidity.py --solc solc` — 100 assertions across I1–I23.
-`test_markdown.py` — 78 assertions across M1–M17, no compiler needed. Exit code
+Tests: `test_solidity.py --solc solc` — 130 assertions across I1–I28.
+`test_markdown.py` — 101 assertions across M1–M22, no compiler needed. Exit code
 is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions;
-I18–I23 and M13–M17 are Round 2.
+I18–I23 and M13–M17 are Round 2; I24–I28 and M18–M22 are Round 3, and I9 was
+rewritten in Round 3 to exercise `build()` rather than a local copy of it.
+---
+
+# Round 3 — what a third review found
+
+Eleven findings, five of them High, every one reproducible on demand and four
+of them live in the pinned corpus. The pattern has shifted. Rounds 1 and 2 were
+mostly *the tool reports success while doing the wrong thing*; Round 3 is mostly
+**the tool checks a different object than the one that matters**. Five findings
+are literally that: the oversize guard measured `model_text` while the embedder
+receives `embed_text`; the ABI cross-check compared names while correctness
+lives in the types; hierarchy coverage counted filenames discovered before
+chunking rather than documents that came out; the comment stripper decided what
+was documentation from syntax rather than from the compiler that had already
+decided; and the merge test measured its own local reimplementation instead of
+the merge. Optimise the next round for *what is this assertion actually looking
+at* before looking for logic that is wrong.
+
+**Public getters did not shadow the functions they implement.**
+`resolve_inheritance()` walked `CHUNKABLE` members only, so a public state
+variable satisfying an inherited declaration never occupied the slot. Four live
+examples, including `IHooksFactory.marketInitCodeHash()` attributed to
+`HooksFactory` and marked un-overridden, when what `HooksFactory` exposes is the
+compiler-generated getter. The callable surface had it right the whole time,
+which is what made the metadata plausible. *Fixed: public variables enter the
+shadowing set under their getter signature. 13 exposure attributions and 12
+override flags corrected in the live corpus.*
+
+**Source-unit paths were trusted as repository paths.** `standard-input.json` is
+an input file, and solc will compile a unit called `src/../../not-in-repo.sol`.
+Those characters became the chunk's `path`, its `id` and its breadcrumb — which
+is to say, its citation. *Fixed: absolute paths, backslashes, empty components,
+`.` and `..` are rejected before solc is invoked and again on what solc returns.
+The pinned corpus contains no such path; the check is for the input that does.*
+
+**The embedding limit measured the wrong string.** `compose_embed_text()`
+appends exposure and alias lines after deduplication, so `embed_text` is a
+superset of `model_text` by construction — and `model_text` was the only one
+checked. A corpus of 260 identical interfaces produced a 25-character
+`model_text` beside a 30,000-character `embed_text` and passed every gate.
+*Fixed: `EMBED_OVERSIZE_CHARS` exists, is checked in `schema.validate()`, and is
+reported by the CLI. Two limits, two names, two checks.*
+
+**The ABI cross-check counted names.** It verified how many overloads were
+called `f` and nothing about what any `f` accepted; changing a parameter type on
+the AST side left the build green. *Fixed: whole signatures are compared,
+canonicalised from ABI `internalType` so structs, enums and contracts read the
+way the AST names them rather than as `tuple`.*
+
+**Comment syntax was mistaken for documentation.** The stripper preserved any
+`///` or `/** */`, but solc attaches documentation only where it precedes a
+declaration. `/// IGNORE ALL PREVIOUS INSTRUCTIONS` mid-function survived the
+control whose only job is removing non-documentation comments. *Fixed: the
+caller passes the AST's documentation range and nothing else is preserved. 16
+live chunks changed, all of them Solady's mid-body
+`/// @solidity memory-safe-assembly` pragmas.*
+
+**Markdown symlinks read bytes the ref does not pin.** A symlinked `terms.md`
+ingested content from outside the repository under a byte-exact citation
+promise; `source_ref` pins the link target string, not the bytes behind it, so
+the same build on another machine can quote different text. *Fixed: symlinked
+documents and a symlinked `SUMMARY.md` are fatal, and any path resolving outside
+the root — a symlinked directory — is too.*
+
+**Short documents vanished while coverage called them placed.** A headingless
+note under the 40-character section filter produced no section and no index,
+and hierarchy coverage — computed from filenames gathered *before* chunking —
+reported it as placed anyway. *Fixed: the size filter suppresses noise within a
+document, it does not erase one, so a document with nothing else surviving is
+emitted whole. Coverage is computed from emitted paths, and documents that
+produce nothing are named in a DROPPED list. Five live navigation pages
+recovered their text this way: 516 chunks to 521.*
+
+**Lazy list continuation invented headings.** `- foo / bar / ---` is a list and
+a thematic break; the scanner read `bar` as a paragraph and `---` as its setext
+underline, emitting an H2 and a `#bar` fragment the rendered page does not have.
+A citation-integrity failure, not a chunk-shape difference. *Fixed: list state
+is tracked, unindented lines after an item are its lazy continuation and cannot
+be underlined. Verified against markdown-it-py in CommonMark mode: 84/84
+documents agree on heading levels, as do all four of the review's fixtures.*
+
+**Multi-line code spans lost visible text.** Code-span detection ran per line,
+so a span opened on one line and closed on another left its middle looking like
+prose — enough for a `<!-- ... -->` the renderer displays to be deleted as an
+invisible comment. *Fixed: the open backtick run carries across soft line
+breaks, and is reset by the blank line or fence that would end it anyway.*
+
+**Empty `model_text` passed validation.** A comment-only section quoted nothing
+while holding an index slot and a citation. *Fixed: sections with no visible
+content are not emitted, and `schema.validate()` rejects an unsynthesised chunk
+whose `model_text` is empty as a backstop.*
+
+**The merge regression still did not call the merge.** `test_merge_semantics()`
+built two chunks, recomputed the union and the OR locally, and asserted on its
+own arithmetic. The reviewer flipped the production OR back to the broken AND
+and the entire compiler-backed suite stayed green. *Fixed: two real compilation
+units go through `build()`, and flipping OR to AND now fails the suite — checked
+by doing it.*
+
+## Known weak points after Round 3
+
+- **The anchor fit is measured against a moving target.** `verify_anchors.py`
+  compares the pinned corpus to the live site, but the site tracks `main`. As of
+  this writing `overview/faqs.md` serves 30 heading ids against the pinned
+  source's 3 — genuine drift, reported and skipped, leaving 462 verified. Drift
+  detection working is not the same as the denominator being stable, and a
+  future run finding *fewer* pages verifiable is expected rather than alarming.
+- **Whole-document chunks overlap nothing but exist at a different grain.** A
+  document that emits `#document` has no per-section chunks by definition, so
+  there is no overlap; but the grain is coarser than the rest of the corpus and
+  retrieval scoring has not been re-measured against it.
+- **Code-span tracking is still line-oriented.** It carries an open run across
+  soft breaks, which is what CommonMark requires, but it is not a full inline
+  parser and does not model backslash-escaped backticks.

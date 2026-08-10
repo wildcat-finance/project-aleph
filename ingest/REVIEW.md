@@ -100,7 +100,17 @@ compilation units and produces two different IDs for one function.
 
 Sol 5.6 reviewed both at `47634bc` and found six issues in each; a second
 review at `7b901bd` found eleven more plus two about the tests. All fixed with
-regressions — the Round 2 section of `ADVERSARIAL.md` is the detailed record.
+regressions — the Round 2 and Round 3 sections of `ADVERSARIAL.md` are the
+detailed record. Round 3 found eleven more, five of them High, four live in the
+pinned corpus; all are fixed with regressions.
+
+**Round 3's lesson, if you only take one: check what the assertion is looking
+at.** Five of eleven findings were a guard pointed at the wrong object — the
+size limit measured the string nobody embeds, the ABI check compared names
+rather than types, coverage counted inputs rather than outputs, the stripper
+inferred documentation from syntax rather than from the compiler, and the merge
+test measured its own reimplementation. A green check on the wrong noun is
+worth less than no check, because it stops anyone looking.
 
 What survived a full round of fixing, and is therefore what a third round
 should assume still lurks: **fail-open defaults, and checks derived from the
@@ -169,8 +179,8 @@ worth more than one nobody tested.
 ```
 ingest/chunkers/solidity.py       primary subject of review
 ingest/chunkers/markdown.py       structural pass rewritten again in Round 2
-ingest/chunkers/test_solidity.py  100 assertions; add to it
-ingest/chunkers/test_markdown.py  81 assertions; add to it
+ingest/chunkers/test_solidity.py  130 assertions; add to it
+ingest/chunkers/test_markdown.py  101 assertions; add to it
 ingest/chunkers/verify_anchors.py the anchor fit, re-checkable against the live site
 ingest/schema.py                  the chunk shape both chunkers emit
 ingest/ADVERSARIAL.md             invariants and attack agenda — read first
