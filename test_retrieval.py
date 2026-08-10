@@ -87,7 +87,13 @@ def write_release(root: pathlib.Path, manifest: pathlib.Path,
         "embedding": index_record["embedder"],
         "sources": build_record["sources"],
         "review": {"status": "not_applicable", "reviewed": True},
-        "gates": {"corpus_diff_reviewed": True},
+        "gates": {"signature_verified": True,
+                  "address_assertions_hold": True,
+                  "corpus_diff_reviewed": True,
+                  "eval_not_regressed": None},
+        "required_gates": ["signature_verified", "address_assertions_hold",
+                           "corpus_diff_reviewed", "eval_not_regressed"],
+        "promotable": False,
         "tools": {"release.py": "fixture-release-tool"},
     }
     release_record["release_id"] = release.compute_release_id(release_record)
@@ -104,7 +110,14 @@ def fixture(tmp: pathlib.Path):
     manifest.write_text(
         "version: 1\npolicy:\n  scope:\n    chains: [1]\n"
         "embedding:\n  backend: stub\n  model: test\n  dimensions: 64\n"
-        "  normalised: true\nsources:\n"
+        "  normalised: true\n"
+        "live_state:\n  graph: 'https://graph.example/{network}/{release}'\n"
+        "  health: 'https://graph.example/health'\n"
+        "  auth: {scheme: bearer, env: ALEPH_GATEWAY_TOKEN}\n"
+        "  pinned_releases: {mainnet: v2.0.30}\n"
+        "evaluation:\n  minimum_retrieval_label_passes: 1\n"
+        "gates: [signature_verified, address_assertions_hold, corpus_diff_reviewed, eval_not_regressed]\n"
+        "sources:\n"
         "  - id: v2-protocol\n    tier: A\n    repo: wildcat/v2-protocol\n"
         "    protocol_version: v2.0\n    always_cite: [docs/Known Issues.md]\n"
         "  - id: wildcat-docs\n    tier: B\n    repo: wildcat/wildcat-docs\n"

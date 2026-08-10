@@ -229,7 +229,7 @@ with the named corpus bytes and refuses synthesized retrieval aids as quotes.
 
 `eval/golden-v1.yaml` contains 125 questions clustered from support traffic.
 `eval/labels.yaml` supplies retrieval labels for 25 consequential corpus
-questions. Ten entries identify genuine corpus gaps rather than pretending a
+questions. Nine entries identify genuine corpus gaps rather than pretending a
 retrieval model can answer from absent documentation.
 
 The model-selection harness is narrower than the production target: it uses a
@@ -237,21 +237,25 @@ simple Markdown splitter over protocol docs. It does not exercise the built
 corpus, tier policy, answer generation, citation rendering, abstention,
 live-state joins, or Telegram behavior.
 
-`ingest/build.py` therefore records `eval_not_regressed: null`. A downstream
-promotion controller must run and enforce the complete retrieval-and-answer
-evaluation before deployment.
+`ingest/build.py` records `eval_not_regressed: null` because no corpus-only step
+can evaluate the answer path. `eval/product_eval.py` runs the complete 125-case
+path, retrieval labels, fixture-backed typed live reads, claim and citation
+checks, version isolation, and abstention boundaries. Its immutable report is
+bound by `promotion.py`; the evaluated release exists only when every manifest
+gate is exactly `true`.
 
 ## 10. Current limitations
 
-- Routing, answer assembly, live state, and deterministic rendering are
-  implemented. The default writer is extractive; a production language writer
-  and the blocking semantic claim-support evaluation are not yet configured.
+- Routing, answer assembly, live state, deterministic rendering, and blocking
+  extractive claim-support evaluation are implemented. A production language
+  writer remains blocked until a separately pinned semantic verifier exists.
   Telegram remains downstream.
 - SDK address assertions are enforced by `live.AddressBook` and can be bound
   into a release with `release.py --fetch-sdk`. A release built without that
   artifact check keeps `address_assertions_hold: null`.
 - Corpus diffs carry pending, unchanged, or named-reviewer approval state in an
-  immutable release record. Activation of an approved release is not yet
+  immutable release record. Product evaluation produces a separately identified
+  promotable release; production activation of that release is not yet
   implemented.
 - Lens addresses are pinned through the SDK artifact, while the deployed
   `MarketLens`, `MarketLensV2`, and `CollateralLens` source is not bound here to

@@ -3,15 +3,15 @@
 Project Aleph is intended to answer questions about the Wildcat Protocol over
 Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
-This repository contains the evidence foundation: corpus policy, reproducible
-ingestion, Solidity and Markdown chunkers, provenance, embedding backends, a
-tiered vector index, an immutable release builder, evaluation inputs, and an
-SDK address watcher. It does not yet contain a user-facing agent.
+This repository contains the evidence and answer path: reproducible ingestion,
+tiered retrieval, typed live-state reads, policy-first routing, citable answer
+assembly, and blocking product evaluation. It does not yet contain the Telegram
+interface or production service wrapper.
 
 The shortest honest status is:
 
-> **Aleph has the complete answer path over fixture-backed state. It must next
-> turn the golden set into a blocking end-to-end promotion gate.**
+> **Aleph has a promotion-gated answer path over immutable evidence and
+> fixture-backed live state. The next dependency is the Telegram adapter.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -40,14 +40,19 @@ The checked-in code already provides:
   block, five narrow live operations, and deterministic numeric renderers;
 - policy-first routing over every golden handling mode, entity extraction,
   evidence-supported claim assembly, refusals, and bounded triage payloads;
+- a blocking 125-question product evaluator with deterministic live replay,
+  version isolation, exact claim-support checks, and immutable reports;
+- approval that binds the exact evaluation to a new release identity only when
+  every manifest gate is `true`;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
   changing the corpus.
 
-This is the substrate for the product, not the product itself. In particular,
-`address_assertions_hold` and `eval_not_regressed` remain `null` in current build
-records, and nothing performs a reviewed atomic promotion.
+Raw corpus build records retain `null` placeholders for checks that require the
+SDK and completed index. `release.py --fetch-sdk`, `eval/product_eval.py`, and
+`promotion.py` resolve those gates at their proper boundaries. Production
+activation and rollback remain deliberately separate stage-7 operations.
 
 ## Required build order
 
@@ -89,9 +94,8 @@ The implementation provides:
 - one machine-readable release record carrying corpus gates, waivers, index
   identity, hashes, source refs, and tier counts.
 
-Downstream gates remain visible rather than being guessed: the current release
-is not promotable while `address_assertions_hold` and `eval_not_regressed` are
-`null`.
+Downstream gates remain visible rather than being guessed: a candidate is not
+promotable while `address_assertions_hold` or `eval_not_regressed` is `null`.
 
 ### 2. Scoped retrieval and citation resolution — implemented
 
@@ -179,36 +183,43 @@ appends the deterministic live block without exposing it to the writer.
 Advice, borrower assessment, inferred intent, unsupported chains, private
 lender lists, and prompt/private-context extraction are refused. Handoffs are
 prepared but never sent without a separate explicit confirmation. The router's
-handling mode matches all 125 reviewed golden questions; answer-quality and
-claim-support scoring become the blocking stage-5 gate.
+handling mode matches all 125 reviewed golden questions; answer quality and
+claim support are enforced by the blocking stage-5 gate.
 
-### 5. Build end-to-end evaluation and promotion gates
+### 5. End-to-end evaluation and promotion gates — implemented
 
 The existing embedding comparison chose a model. It does not test the product
 described above.
 
-Build next:
+`eval/product_eval.py` runs every reviewed question through the real router,
+retriever, citation resolver, answer engine, and typed fixture-backed live
+client. It publishes a content-addressed record under
+`artifacts/evaluations/<evaluation_id>/evaluation.json`.
 
-- an evaluator that runs the 125 golden questions through the real router,
-  retriever, answer engine, citation resolver, and fixture-backed live tools;
+The implementation provides:
+
+- execution of all 125 golden questions through the real router, retriever,
+  answer engine, citation resolver, and fixture-backed live tools;
 - blocking checks for citation existence and claim support;
 - version and deployment correctness, including prerelease isolation;
 - calibrated abstention on known-unanswerable and out-of-scope questions;
 - deterministic live-value and block-number checks;
-- regression reports grouped by answer mode and risk, not only one aggregate
-  score;
-- explicit human approval of corpus diffs; and
-- enforcement of `address_assertions_hold`, `corpus_diff_reviewed`, and
-  `eval_not_regressed` before promotion.
+- reporting by reviewed mode and conservative risk class, with every failed ID;
+- nine declared corpus gaps that must abstain or route elsewhere rather than
+  receiving credit for a plausible-looking answer; and
+- `promotion.py`, which verifies the immutable evaluation and current evaluator
+  hashes, refuses failed or altered reports, and creates a distinct evaluated
+  release only when every required gate is exactly `true`.
 
-Corpus gaps remain documentation work. The evaluator should report them without
-rewarding the system for inventing an answer.
+The current claim gate is deliberately strict: claims must be exact extracted
+evidence. A future paraphrasing writer remains blocked until a separately pinned
+semantic verifier exists.
 
-**Complete when:** no artifact can become active with a failed or `null` blocking
-gate, and a reviewer can reproduce every changed answer from its corpus build,
-live fixture, and evaluation record.
+Approval does not activate a release. It produces the only artifact stage 7 may
+later activate, retaining the candidate, live fixture hash, tool hashes, per-case
+results, and evaluation identity needed for reproduction.
 
-### 6. Add the Telegram adapter
+### 6. Add the Telegram adapter — build next
 
 Telegram is an interface over the tested answer engine, not the place where
 retrieval or policy should live.
@@ -319,6 +330,18 @@ python3 test_release.py
 python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
+python3 test_evaluation.py
+
+# After building both main and prerelease evidence releases:
+python3 eval/product_eval.py \
+  --manifest manifest.yaml \
+  --release artifacts/releases/<main_release_id>/release.json \
+  --prerelease artifacts/releases/<v25_release_id>/release.json \
+  --embedder ollama:bge-m3
+
+python3 promotion.py \
+  --release artifacts/releases/<main_release_id>/release.json \
+  --evaluation artifacts/evaluations/<evaluation_id>/evaluation.json
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
@@ -338,6 +361,8 @@ test_live.py                  lag, block, address and numeric fixtures
 agent.py                      routing, refusals and answer assembly
 ANSWERING.md                  answer-path contracts and failure boundaries
 test_agent.py                 golden routing and assembly adversarial checks
+promotion.py                  all-gates-true evaluated release approval
+test_evaluation.py            product gate and approval adversarial checks
 
 ingest/
   build.py                    manifest -> validated corpus build
@@ -362,6 +387,8 @@ eval/
   labels.yaml                 retrieval labels for consequential questions
   embed_compare.py            Markdown-only model comparison harness
   retrieval_eval.py           labels against an immutable release retriever
+  product_eval.py             blocking 125-question product evaluation
+  live-fixture-v1.json        deterministic typed promotion fixture
   RUNBOOK.md                  recorded model decision and rerun procedure
 
 sdk-watch.py                  mainnet SDK deployment-map change detector

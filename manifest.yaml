@@ -345,6 +345,19 @@ addresses:
       address: "0xC672760757da93B5f3275dc97203D145806dae33"
       reason: stale in-repo book
 
+evaluation:
+  # Every rate is blocking. The default writer is extractive, so exact claim
+  # support is both achievable and required; a future paraphrasing writer needs
+  # a separately pinned semantic verifier before these gates can accept it.
+  route_accuracy: 1.0
+  outcome_accuracy: 1.0
+  citation_validity: 1.0
+  claim_support: 1.0
+  live_determinism: 1.0
+  refusal_accuracy: 1.0
+  minimum_retrieval_label_passes: 23
+  maximum_known_gap_answers: 0
+
 excluded_repos:
   - repo: wildcat-finance/wildcat-juris
     reason: >

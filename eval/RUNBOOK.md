@@ -196,5 +196,8 @@ prerequisites. The repository does not include an automated test suite for this
 comparison harness, so inspect its reported corpus and question counts before
 using a result as evidence.
 
-A production `eval_not_regressed` gate needs an end-to-end retrieval and answer
-evaluation. `ingest/build.py` currently records that gate as `null`.
+`ingest/build.py` correctly leaves `eval_not_regressed` as `null`: the corpus
+builder has no answer engine. Run `eval/product_eval.py` against completed main
+and prerelease artifacts, then bind its passing immutable record with
+`promotion.py`. The product evaluator is the promotion gate; this comparison
+harness remains a diagnostic model-selection tool.

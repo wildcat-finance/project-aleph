@@ -54,9 +54,25 @@ does not resolve against the loaded release. `ExtractiveWriter` is the safe
 dependency-free implementation and emits corpus substrings directly. A language
 writer cannot weaken the validation contract.
 
-Stage 5 adds semantic claim-support evaluation. Structural attribution is
-already enforced here; a writer that pairs a true quote with an unsupported
-paraphrase must still fail the promotion evaluation.
+`eval/product_eval.py` makes claim support blocking. The current evaluator is
+conservative: it accepts exact extractive claims and fails paraphrases. A future
+language writer needs a separately pinned semantic verifier before promotion;
+pairing a true quote with an unsupported paraphrase cannot pass by attribution
+alone.
+
+## Evaluation boundary
+
+The blocking evaluator runs all 125 golden questions, not a sample. Fixture
+addresses complete live-shaped questions without changing their reviewed route,
+and fixture GraphQL responses pass through `GatewayClient` parsing and the same
+deterministic renderers used by the answer engine. Each live case is executed
+twice and must reproduce its text, block, and gateway release byte-for-byte.
+
+The immutable report records per-question route, outcome, citations, live
+identity, refusal reason, and every structural check. It also runs retrieval
+labels, explicit v2.5 isolation, general-query prerelease exclusion, known-gap
+abstention, and an unsupported-chain refusal. `promotion.py` can bind that report
+to a new release identity only after all required manifest gates are `true`.
 
 ## Live-state separation
 

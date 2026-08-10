@@ -220,11 +220,13 @@ ones:
 | Watched legal digests | measured and recorded; mismatch is not fatal |
 | Corpus diff review | release record is pending until a changed diff names its reviewer |
 | SDK address assertions | `release.py --fetch-sdk` verifies the pinned npm artifact and sets the gate; otherwise `null` |
-| Retrieval/answer evaluation | recorded as `null`; not implemented in the build |
+| Retrieval/answer evaluation | corpus build records `null`; `eval/product_eval.py` evaluates the completed release and `promotion.py` binds a passing immutable record |
 | Atomic deployment swap | not implemented in this repository |
 
 The `gates` section of `manifest.yaml` is the promotion policy. A corpus existing
-on disk does not by itself mean that every promotion gate passed.
+on disk does not by itself mean that every promotion gate passed. Only the
+evaluated child release emitted by `promotion.py` can be promotable; a failed or
+`null` required gate prevents that record from being written.
 
 ## 7. Embed and search
 

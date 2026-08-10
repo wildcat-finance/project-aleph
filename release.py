@@ -74,9 +74,17 @@ def compute_release_id(record: dict) -> str:
         "embedding": record["embedding"],
         "review": record["review"],
         "gates": record["gates"],
+        "required_gates": record["required_gates"],
+        "promotable": record["promotable"],
         "prerelease": record["kind"] == "prerelease",
         "release_tool": record["tools"]["release.py"],
     }
+    # Evaluations are bound after the candidate exists, so evaluated releases
+    # form a new immutable identity over the same corpus/index payloads. Keep
+    # the field absent for compatibility with pre-evaluation release records.
+    if record.get("evaluation") is not None:
+        basis["evaluation"] = record["evaluation"]
+        basis["promotion_tool"] = record.get("tools", {}).get("promotion.py")
     return hashlib.sha256(_canonical(basis)).hexdigest()[:20]
 
 

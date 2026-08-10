@@ -82,6 +82,7 @@ class Answer:
     text: str
     route: Route
     citations: tuple[Citation, ...] = ()
+    claims: tuple[DraftClaim, ...] = ()
     live: RenderedLive | None = None
     triage: TriagePayload | None = None
     corpus_release_id: str | None = None
@@ -210,6 +211,17 @@ class Router:
     _mechanism = re.compile(
         r"\b(why|how|what does|what happens|difference|criteria|process|"
         r"include|mean|when does|do i need)\b", re.I)
+    _known_gap = re.compile(
+        r"how do i ping the market|why does the minimum deposit exist|"
+        r"how do i get access to the app|sdk require ethers|"
+        r"track loan history.*original deposit.*current balance|"
+        r"findings from the audit.*resolved|do you have a discord|"
+        r"checking on the platform every day", re.I)
+
+    @classmethod
+    def known_gap(cls, question: str) -> str | None:
+        return ("the pinned corpus does not document this recurring question"
+                if cls._known_gap.search(question) else None)
 
     def route(self, question: str) -> Route:
         if not question.strip():
@@ -330,6 +342,9 @@ class AnswerEngine:
             return self._refusal(route, destination=route.destination)
         if route.mode == RouteMode.TRIAGE:
             return self._triage(route)
+        known_gap = self.router.known_gap(question)
+        if known_gap:
+            return self._abstain(route, f"known corpus gap: {known_gap}")
 
         retrieval_response = None
         evidence: tuple[Evidence, ...] = ()
@@ -426,7 +441,8 @@ class AnswerEngine:
             sections.append("Sources\n\n" + "\n".join(sources))
         return Answer(
             status="answered", mode=route.mode, text="\n\n".join(sections),
-            route=route, citations=tuple(citations), live=live_rendered,
+            route=route, citations=tuple(citations), claims=claims,
+            live=live_rendered,
             corpus_release_id=(retrieval_response.release_id
                                if retrieval_response else None))
 

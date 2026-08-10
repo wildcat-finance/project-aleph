@@ -158,6 +158,10 @@ def run(tmp: pathlib.Path) -> None:
     check("missing entities ask one targeted question instead of guessing",
           missing.status == "needs_input"
           and "market contract address" in missing.text)
+    gap = engine.answer("Why does the minimum deposit exist and how is it chosen?")
+    check("a known corpus gap abstains instead of retrieving plausible noise",
+          gap.status == "unavailable" and not gap.citations
+          and "known corpus gap" in gap.text)
 
     print("\nA4 — refusals and handoffs are explicit and non-automatic")
     advice = engine.answer("Should I lend to this market?")
