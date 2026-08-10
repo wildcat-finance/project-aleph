@@ -2,10 +2,10 @@
 """
 build.py — Project Aleph
 
-`manifest.yaml` in, a stamped and validated corpus out. This is the thing
-PIPELINE.md has described since the beginning and nobody had written: until
-now every corpus was produced by a person retyping the manifest's contents onto
-a command line, which is not reproducibility, it is care.
+`manifest.yaml` in, a stamped and validated corpus out. The driver owns source
+acquisition, manifest filtering, both chunkers, provenance stamping, schema
+validation, and the corpus build record so a build does not depend on a person
+retyping manifest policy as command-line options.
 
     python3 ingest/build.py --manifest manifest.yaml --out corpus/
 

@@ -43,11 +43,11 @@ embedding:
   context_headroom: >
     Measured after Solidity chunking, not assumed: 962 chunks at v2.1.0, median
     175 chars, p99 2,292, max 5,062 — roughly 1,700 tokens against a limit of
-    8,192. The earlier concern that contract chunks with full natspec would
-    exceed bge-m3's context was speculation and is wrong. The check stays in
-    chunk_solidity.py to notice if that ever changes.
+    8,192. Contract chunks with full natspec fit comfortably. Schema validation
+    still rejects oversize embedding text so future source growth cannot be
+    truncated silently.
   markdown_headroom: >
-    Measured at wildcat-docs@21e7db2, not assumed: 545 chunks across 64
+    Measured at wildcat-docs@fe0e50c, not assumed: 545 chunks across 64
     documents, median 510 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
     against a limit of 8,192. Prose sections are longer than Solidity chunks,
     as expected, and still less than half the budget.
@@ -65,12 +65,10 @@ sources:
     ref:
       kind: annotated_tag
       # aleph-v2.1.0 rather than v2.1.0. The release tag is annotated but
-      # unsigned — the first build that actually ran `git verify-tag`,
-      # ingest/build.py, found that out — and v2.0.0 is lightweight, so
-      # require_signature could not be met by any build of either. Rather than
-      # move v2.1.0, which nobody who already fetched it would ever pick up,
-      # this is a second tag on the same commit whose only job is to carry a
-      # signature. Same object, same corpus, byte for byte.
+      # unsigned, and v2.0.0 is lightweight, so neither can satisfy
+      # require_signature. This second tag designates the same commit as the
+      # signed corpus source without moving an existing release tag. Same
+      # commit, same source bytes.
       tag: aleph-v2.1.0
       tag_object: 1b9c50935a84d76a19138b1dd88e419add93e562
       commit: c7be4039f8f383a9dda4e45f63331c17d63f9ed9
@@ -186,33 +184,30 @@ sources:
     repo: wildcat-finance/wildcat-docs
     ref:
       kind: tag
-      tag: aleph-v0.2
-      commit: 21e7db223e55ffc2c125186280368f8d3856d46f
+      tag: aleph-v0.3
+      commit: fe0e50c079b227cdd3ac14f8a1657a7c072b6446
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
-      supersedes: aleph-v0.1 / 6c94fb3
+      supersedes: aleph-v0.2 / 21e7db223e55ffc2c125186280368f8d3856d46f
     notes: >
-      Content is human-written. The llm-rewrite-clean branch added agent
-      navigation files, not agent-generated prose, so a Tier B citation still
-      means reviewed documentation. docs-tg-bot documents the separate
-      wildcat-notifications event bot, not this project. Both branches since
-      deleted; AGENTS.md/CLAUDE.md live on the default branch and stay excluded.
+      Content is human-written, so a Tier B citation means reviewed published
+      documentation. Agent navigation files are excluded. Documentation for
+      the separate wildcat-notifications event bot is not a source for Aleph.
+      AGENTS.md and CLAUDE.md remain excluded wherever they occur.
       The aleph-v0.x tags are lightweight: they pin a commit, but carry no
       signature, so docs promotion has no cryptographic gate the way v2-protocol
       does. Ref immutability is by convention here — never move a tag, cut the
       next one.
 
-      Since aleph-v0: the deprecated V1 tree is unpublished at source (so the
-      exclusion below is now belt-and-braces rather than the only defence), two
-      pages recovered that had existed only in GitBook, and the ?ask
-      documentation corrected.
-
-      Since aleph-v0.1: the FAQ rewritten and expanded from 4 headings to 31,
-      and a page added for the downloadable market CSV exporter. The FAQ
-      rewrite retires three anchors — the same questions survive under new
-      wording, so the content is intact but any citation held against the old
-      fragments will not resolve. That is what a docs promotion does, and it is
-      the reason answers name the corpus build that produced them.
+      At aleph-v0.3, the deprecated V1 tree is unpublished at source as well as
+      excluded here, recovered GitBook-only pages are present, the ?ask
+      documentation is corrected, the FAQ contains 31 headings, and the
+      downloadable market CSV exporter has a documentation page. FAQ anchor
+      changes demonstrate why citations carry the corpus build that produced
+      them rather than assuming fragments remain stable across promotions.
+      All legal pages carry effective_date and doc_version frontmatter, and the
+      affected-lender guide identifies Wildcat Labs as the Juris host and the
+      Foundation as the claim-data recipient and handler.
 
       The exporter ships as `using-wildcat/wildcat-market-csv.skill`, a zip
       containing agent instructions, sitting outside `skills/**`. It is not
@@ -281,7 +276,7 @@ sources:
       # round. These are Markdown with GitBook frontmatter above the text, so
       # the digest covers the body alone: what is watched is the legal
       # language, not the `description:` line, and certainly not the
-      # effective_date/doc_version keys that metadata_required is about to add.
+      # effective_date/doc_version keys required separately by metadata_required.
       - path: "legal/risk-disclosure-statement.md"
         strip_frontmatter: true
         sha256: "6421aaf1c2dcd976084226158d1db375a59def81820ac396ad26bb7e8bd2d9be"
@@ -353,14 +348,14 @@ excluded_repos:
       signed claims. Defaults and claims route to a human unconditionally.
   - repo: wildcat-finance/wildcat.ts
     reason: >
-      SDK source, main at 3.0.54-beta against published 3.1.17. Provenance only;
-      address and ABI truth comes from the npm artefact.
+      SDK repository history is provenance only; address and ABI truth comes
+      from the pinned npm artefact rather than a moving source branch.
   - repo: wildcat-finance/wildcat-app-v2
     reason: frontend; describes UI behaviour, not protocol behaviour
   - repo: wildcat-finance/subgraph
     reason: >
-      Live-state schema, main at 2.0.22 against deployed 2.0.30. networks.json
-      is a useful cross-check for start blocks, not an answer source.
+      Live-state schema is not a corpus answer source. networks.json is a useful
+      cross-check for start blocks but does not identify the deployed release.
   - repo: wildcat-finance/wildcat-gateway
     reason: transport configuration, not protocol documentation
 

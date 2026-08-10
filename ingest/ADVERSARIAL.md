@@ -1,524 +1,244 @@
-# Adversarial review: the chunkers
+# Chunker security invariants and review record
 
-**Rounds 1 and 2 complete, both chunkers.** Sol 5.6 reviewed both at `47634bc`
-and found six issues in each; a second review at `7b901bd` found five more in
-the Solidity chunker and five in the markdown chunker, plus two findings about
-the tests themselves. All are fixed; the invariants and tests below reflect the
-repaired state. What each round found is recorded at the bottom, because a list
-of what a review caught is a better guide to where the next one should look
-than a list of what passed.
+This document states the current chunker guarantees, the main classes of defects
+fixed during four adversarial review rounds, and the residual weak points. The
+historical findings remain relevant where they explain a non-obvious design or
+regression fixture; resolved alternatives and superseded review instructions do
+not.
 
-Read this before the code. It states what the chunkers promise, what breaks
-those promises, and what has and hasn't been checked.
+The central risk is a citation that looks verified while pointing at the wrong
+bytes, source, contract, or rendered fragment. A crash is safer because the build
+stops.
 
-Two chunkers, one schema. Invariants I1–I3 and I11 apply to both; I4–I10 are
-Solidity-specific; M1–M6 are markdown-specific. Where an invariant is shared,
-breaking it in one chunker probably breaks it in the other.
+## Current invariants
 
-**The dangerous failure mode is not a crash.** A chunker that falls over is
-harmless — the build stops. The failure that costs something is a chunk that
-carries a correct-looking citation to the wrong source, because Aleph will
-present it with a file path and a line number and it will look verified.
+### Shared schema and citation invariants
 
----
+**I1 — display text is byte-exact source.** For every chunk with
+`synthesised: false`, `display_text` is sliced from the source bytes and decoded
+after slicing. Source offsets from solc are byte offsets, not Python character
+offsets.
 
-## Invariants
+**I2 — assembled chunks are labeled.** Contract headers, callable surfaces, and
+document indexes combine multiple source regions. They carry
+`synthesised: true` and cannot be rendered as verbatim quotes.
 
-Each of these should hold for every chunk. Each is something to attack.
+**I3 — IDs are unique after source namespacing.** Solidity IDs include path,
+contract, signature, and canonical parameter types. Markdown duplicate headings
+are disambiguated. The merged pipeline rejects collisions across sources.
 
-**I1 — `display_text` is byte-exact source.** For any chunk where
-`synthesised == false`, `display_text` minus its natspec prefix appears verbatim
-in the corresponding source file. Nothing is normalised, reflowed or reordered.
-*Verified: 486/486 non-container chunks against the WildcatMarket deployment.*
+**I4 — evidence and model input remain separate.** Comment removal changes
+`model_text`; it never changes `display_text`. `embed_text` is composed from
+structured state rather than parsed back from a previous rendered string.
 
-**I2 — synthesised chunks are labelled.** Contract/interface/library header
-chunks are *assembled* from the declaration and state variables, not sliced.
-They carry `synthesised: true` and must never be quoted as source.
-*Verified: 28/28 container chunks flagged; nothing else is.*
+**I5 — schema validation is fatal.** Empty required fields, invalid source types
+or tiers, duplicate IDs, incorrect synthesized flags, empty visible model text,
+and oversize model or embedding text stop the build.
 
-**I3 — IDs are unique.** `path:Contract.signature(paramTypes)`. Overloads differ
-by parameter types, so `getHooksTemplates(uint,uint)` and
-`getHooksTemplates(address,uint,uint)` do not collide. The tool exits non-zero
-if any collision appears.
-*Verified: 0 collisions across 514 chunks, 7 genuinely overloaded names.*
+**I6 — provenance is pipeline-owned.** Chunkers emit source-local facts.
+`ingest/build.py` applies corpus build ID, resolved source ref, tier, protocol
+version, deployment status, and per-document legal metadata.
 
-**I4 — offsets are byte offsets.** solc `src` is `start:length:fileIndex` in
-bytes. All slicing happens on `bytes` and decodes afterwards. Slicing a `str`
-by those numbers corrupts any file containing a multi-byte character, and
-Solidity source legitimately contains them.
-*Verified against a fixture with `unicode""` literals and non-ASCII natspec.
-Byte-slicing returns the function verbatim; character-slicing returns text
-offset by ten characters — corrupted, and plausible enough to ship:*
+### Solidity invariants
 
-```
-byte : 'function get() external view returns (string memory) { return greeting; }'
-char : 'et() external view returns (string memory) { return greeting; }\n}\n'
-```
+**S1 — deployed inputs define the corpus.** The chunker consumes every configured
+mainnet deployment `standard-input.json`. Compilation errors, unexpected solc
+versions when `--expect-solc` is used, invalid source-unit paths, and empty
+selections are fatal.
 
-*The test keeps that comparison as a regression canary: if char and byte
-slicing ever agree on that fixture, the fixture has stopped exercising the bug.*
+**S2 — comment removal preserves code.** Strings containing comment delimiters,
+Unicode and hex literals, escaped quotes, division, and CR line endings survive.
+Only the documentation range attached by solc is retained as natspec; mid-body
+`///` and `/** */` comments are ordinary comments.
 
-**I5 — comment stripping never damages code.** `model_text` has non-natspec
-comments removed, and nothing else. String literals containing `//` or `/*`,
-`unicode""` and `hex""` forms, and escaped quotes all survive intact.
-*Verified: 12/12 adversarial cases, including `"http://x"`, `unicode"héllo // ok"`,
-`"/* not a comment */"`, unterminated blocks, and division mistaken for a comment.*
+**S3 — signatures distinguish semantic types.** Canonical signatures preserve
+struct, enum, contract, fully qualified type, array, and payable-address
+distinctions while removing data-location syntax.
 
-**I6 — natspec is preserved but never trusted.** Natspec is real documentation
-and stays in `model_text`. It is also attacker-writable free text inside an
-otherwise trustworthy file. The prompt layer must fence it as quoted material.
-*The chunker deliberately does NOT sanitise it — that is the prompt's job, and
-silently rewriting documentation would break I1.*
+**S4 — inheritance follows compiler order.** Exposure walks
+`linearizedBaseContracts` and keeps the first definition of a signature. Public
+state-variable getters occupy their signature slot, derived overrides shadow
+bases, and constructors are not inherited.
 
-**I11 — one schema, and the flags in it are right.** Every chunker emits
-`schema.Chunk`; source-specific fields live in `detail` so the retriever never
-branches on source type. `validate()` refuses a set with duplicate ids, empty
-text, oversize chunks, or a `synthesised` flag that disagrees with the chunk
-kind — the last being the one that would let an assembled chunk be quoted as
-source. Provenance is stamped by the pipeline, not guessed by the chunker.
-*Verified: 962 real chunks validate clean; flipping one `synthesised` flag is
-caught; `stamp()` rejects unknown fields.*
+**S5 — compilation-unit merging is monotonic.** Exposure is unioned across units
+and override state is ORed. Absence from a separately deployed unit does not
+erase evidence from another unit.
 
-**I10 — signature types distinguish.** Parameter types are canonicalised rather
-than truncated, so two functions differing only by struct or contract type
-produce different signatures and therefore different chunk IDs.
-*Verified: 8 type-reduction cases plus the distinctness property.*
+**S6 — callable surfaces agree with the ABI.** Public and external functions and
+getters are compared with the compiler ABI by full input signature. A divergence
+stops the build.
 
-**I8 — inheritance is resolved, not merely recorded.** Every member chunk
-carries `exposed_by`: the concrete contracts that expose it, computed by walking
-solc's `linearizedBaseContracts` and keeping the first definition of each
-signature — which is Solidity's own override semantics. A base function shadowed
-by a derived override is correctly *not* attributed to the deriving contract.
-Each concrete contract also gets a synthesised `surface` chunk listing its full
-external/public API with the contract that defines each entry.
-*Verified: `queueWithdrawal(uint256)`, defined in `WildcatMarketWithdrawals`,
-resolves to `exposed_by=[WildcatMarket, WildcatMarketWithdrawals]`.*
+**S7 — deduplicated declarations remain retrievable.** Identical model text may
+fold into one chunk, but alias IDs and breadcrumbs are preserved in structured
+detail and embedding text.
 
-**I9 — merging compilation units unions, never intersects.** Inheritance
-resolves within one `standard-input.json`. `IHooks` is abstract and its concrete
-implementations are deployed separately, so it looks unreachable in the market
-build and is overridden by `OpenTermHooks` in another. Passing every deployment
-input merges them: `exposed_by` unions, `overridden` ORs.
-*This found a real bug. The merge originally ANDed `overridden`, so a member
-overridden in one unit and simply absent from another came out un-overridden and
-produced thirteen false "unreachable" reports. Absence is not evidence. With OR,
-the count is zero.*
+### Markdown invariants
 
-**I7 — the corpus describes deployed code.** Input is the
-`standard-input.json` used for Etherscan verification, so sources and compiler
-settings match the deployed bytecode by construction. Compilation errors abort
-the run rather than producing partial output.
-*Verified: 0 errors, 35 sources, solc 0.8.25 matching `foundry.toml`.*
+**M1 — only rendered structure creates boundaries.** Headings inside code fences,
+HTML comments, raw HTML blocks, inline code, lazy list continuation, and lazy
+blockquote continuation do not become section boundaries.
 
----
+**M2 — hidden comments do not enter model text.** Comment bytes are removed while
+visible text on the same line survives. Comment syntax inside a valid code span
+remains visible. An unmatched or escaped backtick is literal text rather than an
+unbounded hiding delimiter.
 
-## Attacks worth attempting
+**M3 — anchors follow renderer behavior.** Inline markup is reduced to rendered
+text before slugging. Duplicate suffixes count every parsed heading, including
+headings filtered from chunk output. Page titles have no fragment, and the
+renderer-specific handling for entities, mentions, punctuation, leading digits,
+and length limits is reproduced.
 
-**Against citation integrity (I1, I2)**
+**M4 — navigation failures are explicit.** A requested unreadable `SUMMARY.md`
+or a hierarchy that places zero emitted documents is fatal. Included documents
+missing from navigation and navigation entries missing from output are reported.
 
-1. Craft a source file where a natspec block contains text identical to a real
-   function body. Does anything downstream conflate the two?
-2. Add a contract whose state variable declarations contain `}` inside a string.
-   Does the synthesised header chunk still parse as plausible Solidity, and does
-   anyone downstream try to compile it?
-3. Feed a `standard-input.json` whose `sources` map contains a path not present
-   in the AST output. Currently skipped silently in `SourceMap.__init__` — is
-   that right, or should it abort?
+**M5 — short documents do not disappear silently.** Section-size filtering may
+remove noise, but a document with no surviving section is emitted as a
+whole-document chunk. Coverage counts emitted documents rather than discovered
+filenames.
 
-**Against the comment stripper (I5)**
+**M6 — pinned refs determine all bytes.** Symlinked documents, symlinked
+navigation, paths outside the root, and unreadable sources are rejected.
 
-4. Nested block comments: `/* outer /* inner */ still outer? */`. Solidity does
-   not support nesting, so the scanner ends at the first `*/`. Confirm that
-   matches solc's lexer rather than merely being defensible.
-5. A comment inside a string inside a comment.
-6. `///` appearing mid-line after code: `uint x = 1; /// @notice tricky`. Kept as
-   natspec — should it be, given solc only treats leading natspec as
-   documentation?
-7. Line separator characters (U+2028/U+2029) inside a `//` comment. Python's
-   `str.find("\n")` will not stop there; does anything downstream treat them as
-   newlines and desynchronise?
+## Why the implementation has these shapes
 
-**Against IDs and dedupe (I3)**
+The following defect classes were found and fixed across four review rounds.
+Each fix has a regression fixture in the current suites.
 
-8. Two contracts with the same name in different files — IDs stay distinct via
-   path, but does the *breadcrumb* become ambiguous to a reader?
-9. ~~Struct parameters collapsing to `struct` in signatures.~~ **Fixed.**
-   `canonical_type()` strips solc's leading keyword and trailing data location,
-   so `struct MarketState memory` becomes `MarketState` and
-   `contract WildcatMarket` becomes `WildcatMarket`. IDs are now
-   self-describing — `fill(MarketData,WildcatMarket)` rather than
-   `fill(struct,contract)` — which also improves what the embedding sees. No
-   live collision existed beforehand; the risk was latent. Remaining question
-   for review: fully qualified struct names (`Foo.Bar`) survive, but do they
-   stay stable across compilation units that import differently?
-10. Dedupe hashes `model_text`. Two genuinely different functions with identical
-    bodies but different natspec are deduped — is dropping the second right?
+### Byte and character offsets diverge
 
-**Against resource use**
+Solc reports byte offsets. Slicing decoded Python strings corrupted Solidity
+after non-ASCII text while still producing plausible code. A later variant used
+a byte length as a character length when preserving natspec and could extend the
+trusted documentation range into a function body. Source and documentation
+slicing now remain in bytes until the selected region is decoded.
 
-11. A single function larger than the embedding context (~24,000 chars). Flagged
-    as a warning, not an error, and the chunk is still emitted. bge-m3 will
-    truncate it silently at 8K tokens. Should oversize be fatal?
-12. Deeply nested AST from generated code — recursion is currently only two
-    levels (source → contract → member), so this is bounded. Confirm no
-    contract-in-contract construct exists that would need more.
+### Self-derived checks can certify the wrong object
 
-**Against the trust boundary**
+Several green checks measured a proxy rather than the production value:
 
-13. `standard-input.json` is read from a repo path and passed to `solc`. It is
-    an untrusted-shaped input executed by a compiler. Is running solc on it
-    inside CI acceptable, or does it want a container?
-14. The `--include` globs use `fnmatch`, where `src/**` does not behave like a
-    shell globstar. Confirm the include set is what you think it is; an
-    over-broad glob silently pulls `lib/` into the corpus.
+- the oversize guard measured `model_text` although the embedder receives the
+  larger `embed_text`;
+- callable-surface validation compared ABI names instead of signatures;
+- Markdown hierarchy coverage counted discovered files rather than emitted
+  documents; and
+- merge tests reproduced the merge loop instead of calling it.
 
----
+Current validation targets the actual embedded string, full ABI input
+signatures, emitted document paths, and production entry points.
 
-## Known gaps
+### Re-parsing generated text creates attacker-controlled delimiters
 
-- **`--include` uses `fnmatch`, not shell globbing.** `src/**` matches by
-  substring semantics rather than path segments. Verify the include set is what
-  you intend; an over-broad pattern quietly pulls library code into the corpus.
-  Attack 14.
-- **Assembly blocks are chunked as part of their enclosing function** and carry
-  no special treatment. Some are long and dominated by opcodes, which may
-  embed poorly.
-- **Only `src/**` is chunked.** Library code from `lib/` is present in the
-  compilation input but excluded from output. Behaviour inherited from those
-  libraries is therefore invisible to retrieval.
-- **Attacks 1–14 above are not all covered by tests.** The numbered attacks
-  are the review agenda and several are still open — particularly 4 (nested
-  block comments against solc's own lexer) and 7 (U+2028 inside a line
-  comment). Attack 9 was closed by `canonical_type()`.
-- **Inline code spans are modelled per line, not per paragraph.** A CommonMark
-  code span can cross a soft line break; a comment marker inside one of those
-  is treated as a real comment. No such construct exists in the pinned corpus,
-  and the failure direction is stripping visible text, not leaking hidden
-  text.
-- **The anchor algorithm is fitted, not specified.** It reproduces all 494
-  heading ids docs.wildcat.finance serves for the pinned commit — including
-  the literal `undefined-N` ids GitBook emits for mention-only headings — but
-  GitBook publishes no spec, so a renderer change can invalidate it silently.
-  `chunkers/verify_anchors.py` re-checks the whole fit against the live site;
-  run it when the docs platform changes and before touching `gitbook_id()`.
-- **The ABI cross-check compares whole signatures.** Types are canonicalised
-  from the ABI's `internalType`, so the comparison reads in the same
-  human-oriented terms as the listing (`IHooks`, not `address`). What it does
-  not check is return types or mutability.
+Embedding text once reconstructed its base by splitting on a human-readable
+marker that natspec could contain. Text after the marker disappeared from
+retrieval while the citation remained intact. Embedding text is now composed
+from the chunk's model text, breadcrumb, exposure, and alias fields on every
+update.
 
----
+### Handwritten syntax approximations need fail-safe direction
 
-# Round 2 — what a second review found
+The Markdown scanner historically mistook raw HTML, setext thematic breaks,
+lazy continuation, multi-line code spans, and closing tags for structure. The
+current state machine covers the constructs that affect heading or comment
+visibility. Where inline interpretation remains ambiguous, it resolves toward
+not-code, which can remove visible text from model context but does not admit
+reader-hidden instructions.
 
-Eleven code findings and two about the tests, reviewing `7b901bd` — the commit
-that closed Round 1. The pattern that survived a round of fixing: **fail-open
-defaults, and checks derived from the thing they check.** The embed rebuild
-recovered its input by parsing its own previous output; the fatal-condition
-tests re-enacted the production logic instead of calling it; empty selections
-and missing navigation were warnings. None of it crashed. All of it reported
-success.
+### Compiler facts should replace lexical guesses
 
-**Solidity**
+Natspec was initially identified by `///` or `/** */` syntax. That preserved
+documentation-shaped comments in function bodies. Solc has already decided
+which documentation attaches to a declaration, so the chunker now preserves
+only the compiler-reported documentation range.
 
-**Natspec could truncate the embedding.** `rebuild_embed_text()` recovered the
-base text by splitting on `\n\nexposed by: ` — a marker any natspec author can
-write. Everything after it, function body included, vanished from `embed_text`
-while `display_text` stayed intact and every check passed. *Fixed:
-`compose_embed_text()` derives the whole string from breadcrumb, kind,
-`model_text`, exposure and alias state. Nothing parses previous embed text,
-ever.* (I18)
+The same principle applies to inheritance order and ABI surfaces: compiler
+linearization and ABI output are stronger evidence than a parallel source-level
+approximation.
 
-**Public constant getters were missing from surfaces.** The one chunk that
-promises to answer "what can I call" excluded `constant` state variables, so
-`MaximumLoanTerm()` was absent from the FixedTermHooks surface. *Fixed:
-every public state variable is listed, tagged `[getter]`, `[getter, constant]`
-or `[getter, immutable]` — and the whole listing is now cross-checked against
-the compiler's ABI, fatally — as a name multiset in Round 2, and as whole
-signatures since Round 4. The approximation is still hand-built; divergence is
-no longer silent.* (I19, I27)
+### Fail-open selection creates plausible incomplete corpora
 
-**Constructors were attributed to derived contracts.** Inheritance resolution
-treated them as inherited members, so four live constructor chunks claimed
-exposure by contracts that cannot call them, or anything. *Fixed: constructors
-carry no exposure and are excluded from the unreachable report — they run
-once, at deployment.* (I20)
+Typoed include patterns, unreadable navigation, zero emitted documents, and
+empty model text once produced successful commands. Each now stops the build.
+Warnings remain for non-fatal coverage information, but absence of the selected
+corpus is not a warning condition.
 
-**Folded duplicates were unfindable under their folded names.** Dedupe recorded
-alias IDs in `detail.aliases` and nothing downstream indexed them: 46 live
-aliases, none retrievable. *Fixed: dedupe also records the alias breadcrumb,
-and composition appends "also declared as:" lines to `embed_text`.* (I21)
+## Recorded pinned-corpus baseline
 
-**An empty selection was a successful build.** `--include 'typo/**'` produced
-zero chunks, a green summary and exit 0 — while PIPELINE.md §2 promised the
-opposite. *Fixed: a unit whose selection is empty, a pattern matching nothing
-across all units, and a zero-chunk corpus are all fatal. A pattern matched by
-only some units is fine; only one deployment input carries Ownable.sol.* (I22)
+The last recorded direct runs over all five v2.0 mainnet deployment inputs and
+`wildcat-docs@aleph-v0.3` produced:
 
-**Markdown**
+```text
+Solidity
+  962 chunks from 5 compilation units
+  46 duplicate bodies folded; 46 alias IDs retained
+  68 synthesized chunks
+  460 chunks attributed to a concrete contract
+  0 unreachable public/external functions
+  p99 2,340 characters; maximum 5,062; limit 24,000
 
-**Inline comments corrupted headings and code.** A same-line comment blanked
-everything before its close, so `# Visible <!-- x --> title` stopped being a
-heading; and comment markers inside inline code spans were stripped out of
-`model_text`. *Fixed: only comment bytes are blanked, and a `<!--` inside a
-single-line code span is literal text.* (M13)
-
-**Raw HTML was invisible to the scanner.** A `#` line inside `<div>…</div>`
-became a heading and corrupted every breadcrumb after it. *Fixed: the scanner
-tracks all seven CommonMark HTML block types; types 1/3/4/5 run to their
-terminators, types 6/7 to the next blank line, and nothing inside is
-structure.* (M14)
-
-**Setext detection had no idea what a paragraph was.** `> quoted` followed by
-`---` produced a heading of the quote; a two-line setext heading kept only its
-last line. *Fixed: the scanner tracks open paragraphs. An underline heads the
-whole paragraph above it or, absent one, `---` is a thematic break.* (M15)
-
-**Anchors were slugged from raw markup and numbered over survivors.**
-`[alpeh\_v](https://x.com/alpeh_v)…` slugged URL and all; duplicate numbering
-skipped headings the size filter discarded, so citation fragments pointed at
-the wrong section. *Fixed: anchors come from rendered inline text through the
-renderer's own algorithm — fitted and verified against all 465 heading ids
-docs.wildcat.finance serves for the pinned commit, GitBook's literal
-`undefined-N` ids for mention-only headings included, because a fragment
-that does not say what the renderer says does not resolve — counted over every parsed
-heading, with `-1`/`-2` suffixes as GitBook numbers them and `None` for page
-titles, which get no id at all.* (M16)
-
-**A missing SUMMARY failed open.** A typo'd path was a warning and an
-exit 0 corpus with no hierarchy. *Fixed: requested-but-unreadable navigation
-is fatal, a hierarchy that places zero documents is fatal, and coverage is
-reported both ways — included files the nav omits, nav entries pointing at
-nothing. `--summary ''` remains the explicit opt-out.* (M17)
-
-**The tests**
-
-The fatal-condition tests re-enacted the merge loop and validated the
-re-enactment; markdown had no fixtures for any of the above. *Fixed: build()
-and chunk_tree() are the code the CLIs run and the code the tests call, plus
-subprocess-level checks that a failed build exits 1 and writes nothing.*
-(I15, I23, M17)
-
-`chunkers/verify_anchors.py` re-runs the whole fit against the live site —
-every SUMMARY page, every heading id, paired positionally against the pinned
-sources through the same `assign_anchors()` the chunker uses. Zero mismatches
-or the algorithm has been invalidated. It found two bugs the day it was
-written: the renderer's `undefined` artifact, and its author's exit-code
-check reading the wrong end of a pipeline.
-
----
-
-## Current output, for reference
-
-```
-962 chunks from 5 compilation unit(s)  (46 duplicate bodies folded, 46 alias id(s) kept)
-  schema        : 0 problem(s)
-  oversize      : 0  (p99 2340 chars, max 5062, limit 24000)
-  synthesised   : 68  (not quotable as source)
-  inheritance   : 460 chunks attributed to a concrete contract
-  unreachable   : 0 public/external fns on contracts exposed by nothing
-  by kind       : Enum=2, Error=104, Event=75, Function=655, Modifier=15,
-                  Struct=39, UserDefinedValueType=4, contract=19,
-                  interface=13, library=23, surface=13
+Markdown
+  545 chunks from 64 documents
+  64/64 emitted documents placed
+  64 synthesized document indexes
+  539 chunks placed in the SUMMARY hierarchy
+  median 510 characters; p99 3,793; maximum 9,524
 ```
 
+The Solidity suite contains 142 assertions through S1–S7 and their boundary
+fixtures when run with solc. The Markdown suite contains 113 assertions through
+M1–M6 and renderer-specific fixtures. Counts are useful regression signals, but
+a source promotion can legitimately change them.
+
+## Residual weak points
+
+**Include matching uses `fnmatch`.** Patterns such as `src/**` do not have shell
+globstar semantics. The manifest's current selections are tested, but every
+pattern change should inspect the resolved file list.
+
+**Assembly has no special chunk.** Inline assembly remains inside its enclosing
+function and may embed poorly when opcode-heavy.
+
+**ABI comparison is not total.** Callable-surface validation compares callable
+names and input types. It does not independently check return types or state
+mutability.
+
+**The Markdown inline scanner is intentionally incomplete.** It is not a full
+CommonMark inline parser; link titles, autolinks, and reference definitions are
+not modeled. The covered boundary is hidden text and heading structure.
+
+**Anchor behavior is empirical.** GitBook publishes no slug specification.
+`verify_anchors.py` compares pinned sources with the live site through the same
+`assign_anchors()` implementation. A live site that has advanced beyond the
+pinned ref reduces the comparable denominator, so fewer verified pages indicates
+docs drift rather than proof of correctness.
+
+**Whole-document fallbacks use a different grain.** A short document emitted as
+one chunk has no overlapping sections, but retrieval quality for these coarse
+chunks has not been measured separately.
+
+**Compiler pinning depends on invocation.** `--expect-solc` checks a version and
+the build records the compiler. Only `ingest/solc-container` pins the compiler
+artifact by image digest; a developer can deliberately pass a local binary.
+
+**The oversize limit has headroom rather than operational history.** The current
+maximums are well below the limit. Synthetic fixtures exercise rejection, but no
+pinned source has approached it.
+
+## Verification commands
+
+```bash
+python3 ingest/chunkers/test_markdown.py
+python3 ingest/chunkers/test_solidity.py --solc ingest/solc-container
+python3 ingest/test_build.py
+python3 embed/test_embed.py
 ```
-545 chunks from 64 document(s)
-  hierarchy     : 64/64 emitted document(s) placed (64 included)
-  synthesised   : 64  (not quotable as source)
-  nav hierarchy : 539 chunks placed in the SUMMARY tree
-  size          : median 510, p99 3793, max 9524
-  schema        : 0 problem(s)
+
+Run the renderer fit after a promoted docs or platform change:
+
+```bash
+python3 ingest/chunkers/verify_anchors.py --help
 ```
 
-Input: all five `deployments/mainnet/*/standard-input.json` at
-`v2-protocol@v2.1.0` (`c7be403`), solc 0.8.25; `wildcat-docs@aleph-v0.2`
-(`21e7db2`) with `SUMMARY.md` as hierarchy and excludes from `manifest.yaml`.
-
-Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
-`manifest.yaml` for why only one external library file is in.
-
-Tests: `test_solidity.py --solc solc` — 142 assertions across I1–I29.
-`test_markdown.py` — 113 assertions across M1–M22, no compiler needed. Exit code
-is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions;
-I18–I23 and M13–M17 are Round 2; I24–I28 and M18–M22 are Round 3, and I9 was
-rewritten in Round 3 to exercise `build()` rather than a local copy of it.
-Round 4 added I29 and extended I28, M14, M21 and M22 in place, because its
-findings were narrower cases of invariants those tests already owned.
----
-
-# Round 3 — what a third review found
-
-Eleven findings, five of them High, every one reproducible on demand and four
-of them live in the pinned corpus. The pattern has shifted. Rounds 1 and 2 were
-mostly *the tool reports success while doing the wrong thing*; Round 3 is mostly
-**the tool checks a different object than the one that matters**. Five findings
-are literally that: the oversize guard measured `model_text` while the embedder
-receives `embed_text`; the ABI cross-check compared names while correctness
-lives in the types; hierarchy coverage counted filenames discovered before
-chunking rather than documents that came out; the comment stripper decided what
-was documentation from syntax rather than from the compiler that had already
-decided; and the merge test measured its own local reimplementation instead of
-the merge. Optimise the next round for *what is this assertion actually looking
-at* before looking for logic that is wrong.
-
-**Public getters did not shadow the functions they implement.**
-`resolve_inheritance()` walked `CHUNKABLE` members only, so a public state
-variable satisfying an inherited declaration never occupied the slot. Four live
-examples, including `IHooksFactory.marketInitCodeHash()` attributed to
-`HooksFactory` and marked un-overridden, when what `HooksFactory` exposes is the
-compiler-generated getter. The callable surface had it right the whole time,
-which is what made the metadata plausible. *Fixed: public variables enter the
-shadowing set under their getter signature. 13 exposure attributions and 12
-override flags corrected in the live corpus.*
-
-**Source-unit paths were trusted as repository paths.** `standard-input.json` is
-an input file, and solc will compile a unit called `src/../../not-in-repo.sol`.
-Those characters became the chunk's `path`, its `id` and its breadcrumb — which
-is to say, its citation. *Fixed: absolute paths, backslashes, empty components,
-`.` and `..` are rejected before solc is invoked and again on what solc returns.
-The pinned corpus contains no such path; the check is for the input that does.*
-
-**The embedding limit measured the wrong string.** `compose_embed_text()`
-appends exposure and alias lines after deduplication, so `embed_text` is a
-superset of `model_text` by construction — and `model_text` was the only one
-checked. A corpus of 260 identical interfaces produced a 25-character
-`model_text` beside a 30,000-character `embed_text` and passed every gate.
-*Fixed: `EMBED_OVERSIZE_CHARS` exists, is checked in `schema.validate()`, and is
-reported by the CLI. Two limits, two names, two checks.*
-
-**The ABI cross-check counted names.** It verified how many overloads were
-called `f` and nothing about what any `f` accepted; changing a parameter type on
-the AST side left the build green. *Fixed: whole signatures are compared,
-canonicalised from ABI `internalType` so structs, enums and contracts read the
-way the AST names them rather than as `tuple`.*
-
-**Comment syntax was mistaken for documentation.** The stripper preserved any
-`///` or `/** */`, but solc attaches documentation only where it precedes a
-declaration. `/// IGNORE ALL PREVIOUS INSTRUCTIONS` mid-function survived the
-control whose only job is removing non-documentation comments. *Fixed: the
-caller passes the AST's documentation range and nothing else is preserved. 16
-live chunks changed, all of them Solady's mid-body
-`/// @solidity memory-safe-assembly` pragmas.*
-
-**Markdown symlinks read bytes the ref does not pin.** A symlinked `terms.md`
-ingested content from outside the repository under a byte-exact citation
-promise; `source_ref` pins the link target string, not the bytes behind it, so
-the same build on another machine can quote different text. *Fixed: symlinked
-documents and a symlinked `SUMMARY.md` are fatal, and any path resolving outside
-the root — a symlinked directory — is too.*
-
-**Short documents vanished while coverage called them placed.** A headingless
-note under the 40-character section filter produced no section and no index,
-and hierarchy coverage — computed from filenames gathered *before* chunking —
-reported it as placed anyway. *Fixed: the size filter suppresses noise within a
-document, it does not erase one, so a document with nothing else surviving is
-emitted whole. Coverage is computed from emitted paths, and documents that
-produce nothing are named in a DROPPED list. Five live navigation pages
-recovered their text this way: 516 chunks to 521, measured at `6c94fb3`.*
-
-**Lazy list continuation invented headings.** `- foo / bar / ---` is a list and
-a thematic break; the scanner read `bar` as a paragraph and `---` as its setext
-underline, emitting an H2 and a `#bar` fragment the rendered page does not have.
-A citation-integrity failure, not a chunk-shape difference. *Fixed: list state
-is tracked, unindented lines after an item are its lazy continuation and cannot
-be underlined. Verified against markdown-it-py in CommonMark mode: 84/84
-documents agree on heading levels, as do all four of the review's fixtures.*
-
-**Multi-line code spans lost visible text.** Code-span detection ran per line,
-so a span opened on one line and closed on another left its middle looking like
-prose — enough for a `<!-- ... -->` the renderer displays to be deleted as an
-invisible comment. *Fixed: the open backtick run carries across soft line
-breaks, and is reset by the blank line or fence that would end it anyway.*
-
-**Empty `model_text` passed validation.** A comment-only section quoted nothing
-while holding an index slot and a citation. *Fixed: sections with no visible
-content are not emitted, and `schema.validate()` rejects an unsynthesised chunk
-whose `model_text` is empty as a backstop.*
-
-**The merge regression still did not call the merge.** `test_merge_semantics()`
-built two chunks, recomputed the union and the OR locally, and asserted on its
-own arithmetic. The reviewer flipped the production OR back to the broken AND
-and the entire compiler-backed suite stayed green. *Fixed: two real compilation
-units go through `build()`, and flipping OR to AND now fails the suite — checked
-by doing it.*
-
-## Round 4 — the final review
-
-Four findings, three of them P1, none of them present in either pinned corpus.
-The pattern in Round 3 was *the check is pointed at the wrong object*; Round 4
-is narrower and meaner — **the fix was right and its edges were not**. Every
-one of the four is a boundary condition on a Round 3 repair: the right units,
-the ambiguous delimiter, the second container with the same rule, the tag that
-opens versus the tag that closes. A round that finds these is a round that has
-run out of structural faults, which is the argument for stopping.
-
-**Byte lengths were used as character offsets.** Round 3 fixed the comment
-stripper to preserve only what solc attached as documentation — and passed it
-`d_len` from the `src` field, which solc reports in *bytes*, to index a decoded
-Python string. Every non-ASCII character in a natspec block widened the
-permitted range by one position, and 120 accented characters was enough to push
-it past the declaration and into the function body, readmitting the exact
-mid-body injection Round 3 had closed. *Fixed: the documentation slice is
-decoded and its character length returned. Swept at 1, 40, 120 and 400
-multibyte characters, because the bug only bites once the drift exceeds the gap
-to the next comment.* (I28)
-
-**An unclosed delimiter is not a delimiter.** Round 3's multi-line code-span
-tracking treated any backtick run without a same-length closer on the line as
-opening a span to end of line. CommonMark does not: a run with no matching
-closer is literal text. A single stray or backslash-escaped backtick therefore
-masked the rest of its line, an HTML comment after it stopped being recognised
-as a comment, and its contents reached `model_text`. Text hidden from the
-reader arriving in the model is the dangerous direction, and this was the only
-finding in four rounds that pointed that way. *Fixed: a run opens a span only
-when a matching closer exists on the line or in the remainder of the block;
-backslash-escaped backticks do not open one. Where the reading is genuinely
-ambiguous it resolves toward not-code, so the residual failure strips visible
-text instead.* (M22)
-
-**Blockquotes continue lazily too.** Round 3 modelled lazy continuation for
-list items and stopped there. `> quoted` then `lazy continuation` then `---`
-produced a phantom H2 and a `#lazy-continuation` fragment the rendered page
-does not have — the same citation-integrity failure, one container over.
-*Fixed: list items and blockquotes share one container-paragraph state, since
-they share the rule.* (M21)
-
-**A closing tag is not an opening tag.** `HTML1_OPEN` matched `</?(script|...)`,
-so a lone `</script>` opened a raw-HTML block, cleared the paragraph it was
-sitting in and swallowed the setext heading that paragraph belonged to.
-*Fixed: the optional slash is gone; `HTML1_CLOSE` still terminates a block that
-is genuinely open.* (M14)
-
-**Hardening, not findings.** The chunker now resolves `solc --version`, prints
-it in every build, and refuses to proceed when `--expect-solc` names a
-different one — a review environment had silently moved to 0.8.36 and produced
-identical statistics. And `REVIEW.md` was still advertising the ABI name-multiset
-comparison and the code-span and lazy-list gaps as open, all three of which
-Round 3 or Round 4 closed. A runbook describing weaknesses the code no longer
-has misdirects the next reviewer as surely as one that omits real ones. (I29)
-
-## Known weak points after Round 4
-
-- **The anchor fit is measured against a moving target.** `verify_anchors.py`
-  compares the pinned corpus to the live site, but the site tracks `main`. At
-  `6c94fb3` this showed as `overview/faqs.md` serving 30 heading ids against the
-  pinned source's 3 — genuine drift, reported and skipped, leaving 462 of 465
-  verified. The `aleph-v0.2` promotion closed that gap and the count is now
-  494/494 with nothing skipped. Expect it to open again: drift detection working
-  is not the same as the denominator being stable, and a run finding *fewer*
-  pages verifiable means the docs have moved, not that the algorithm has.
-- **Whole-document chunks overlap nothing but exist at a different grain.** A
-  document that emits `#document` has no per-section chunks by definition, so
-  there is no overlap; but the grain is coarser than the rest of the corpus and
-  retrieval scoring has not been re-measured against it.
-- **Inline parsing is delimiter matching, not a parser.** Code-span
-  resolution honours backslash escapes and looks ahead to the end of the block
-  for a closer, which covers the constructs that hide text from a reader. It is
-  still not a full inline parser: link titles, autolinks and reference
-  definitions are not modelled, and where a reading is ambiguous it resolves
-  toward *not* code, so the failure direction is stripping visible text rather
-  than admitting hidden text.
-- **The compiler is recorded but not pinned by the chunker.** `--expect-solc`
-  gates a build on a version and `build()` prints whichever one it used; CI
-  pins a container digest. Nothing stops a developer building the corpus with
-  whatever `solc` is on their path if they do not pass the flag.
+See `REVIEW.md` for source refs, full-build reproduction, and review output
+expectations.

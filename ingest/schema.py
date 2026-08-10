@@ -5,9 +5,8 @@ schema.py — Project Aleph
 The one chunk shape. Every chunker emits this; the index, the retriever and the
 citation layer all read this and nothing else.
 
-Written before the markdown chunker exists, deliberately. Retrofitting a shared
-schema after two chunkers have grown their own is how you end up with a
-retrieval layer full of `if source_type == ...`.
+The shared schema keeps the retrieval layer independent of chunker-specific
+output shapes and avoids source-type branches for core retrieval behavior.
 
 DESIGN
 

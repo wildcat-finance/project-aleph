@@ -55,7 +55,7 @@ Then in `manifest.yaml`, on that source's `ref`:
 
 Paths are resolved relative to the manifest.
 
-## Currently
+## Pinned release key
 
 `release.asc` — `3BCD9EFDA6670A3F65AF679EB83B60AE16F5DD1A`,
 laurence.e.day (github-signer) <laurence@wildcat.finance>. Signs
