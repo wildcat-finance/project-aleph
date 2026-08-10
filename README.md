@@ -181,6 +181,12 @@ ingest/
     test_solidity.py          142 assertions
     test_markdown.py          113 assertions, no compiler needed
 
+embed/
+  embedder.py                 the embedding boundary: backends and identity
+  index.py                    build and search, one index per tier
+  test_embed.py               36 assertions, no model needed
+  README.md                   why the index refuses a mismatched query
+
 eval/
   golden-v1.yaml              125 questions, from real support transcripts
   labels.yaml                 retrieval ground truth for the 25 that matter
