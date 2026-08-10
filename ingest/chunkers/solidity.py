@@ -28,6 +28,7 @@ import fnmatch
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -332,8 +333,14 @@ def documented_span(node: dict, smap: SourceMap):
     """
     Return (path, text, line, doc_len) covering documentation *and* declaration
     as one contiguous slice, or None if they cannot be joined contiguously.
-    `doc_len` is how many leading characters of `text` the compiler considers
-    documentation, which is the only thing the comment stripper may preserve.
+    `doc_chars` is how many leading *characters* of `text` the compiler
+    considers documentation, which is the only thing the comment stripper may
+    preserve. Characters, not bytes: solc reports `src` spans in bytes, and
+    handing a byte length to a stripper indexing a decoded Python string
+    widens the permitted range by one position per non-ASCII character in the
+    documentation. 120 accented characters of natspec is enough to push the
+    range into the function body and re-admit exactly the mid-body injection
+    Round 3 closed.
 
     Concatenating the two separately-sliced ranges — which is what this used to
     do — silently drops whatever whitespace sat between them, so the result is
@@ -353,9 +360,12 @@ def documented_span(node: dict, smap: SourceMap):
         return None
     try:
         path, text = smap.slice_range(d_file, d_start, n_start + n_len)
+        # measured on the decoded documentation, in the same units the caller
+        # will index with
+        _, doc_text = smap.slice_range(d_file, d_start, d_start + d_len)
     except (KeyError, ValueError):
         return None
-    return path, text, smap.line_of(doc["src"]), d_len
+    return path, text, smap.line_of(doc["src"]), len(doc_text)
 
 
 def make_chunk(node, contract, smap, inherits) -> Chunk | None:
@@ -378,8 +388,8 @@ def make_chunk(node, contract, smap, inherits) -> Chunk | None:
     line = smap.line_of(node["src"])
     joined = documented_span(node, smap)
     if joined:
-        _, display, line, doc_len = joined
-        keep = ((0, doc_len),)
+        _, display, line, doc_chars = joined
+        keep = ((0, doc_chars),)
     else:
         display = text
         keep = ()
@@ -473,6 +483,41 @@ def contract_header(contract: dict, smap: SourceMap, inherits) -> Chunk | None:
 # --------------------------------------------------------------------------
 # driver
 # --------------------------------------------------------------------------
+
+_VERSION_RE = re.compile(r"Version:\s*(\S+)")
+
+
+def solc_version(solc: str) -> str:
+    """
+    The compiler's own account of itself, e.g. `0.8.25+commit.b61c2a91`.
+
+    A build is only reproducible against a named compiler, and the AST is the
+    compiler's output — a different solc can change chunk boundaries, natspec
+    attachment and the ABI the surface is checked against. During Round 4 a
+    review environment silently moved to 0.8.36 and every build stayed green.
+    CI pins a container digest, so this is defence in depth for everywhere
+    else, but a version that is never recorded cannot be checked afterwards.
+    """
+    r = subprocess.run([solc, "--version"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise ChunkError(f"{solc} --version failed: {r.stderr[:200]}")
+    m = _VERSION_RE.search(r.stdout)
+    if not m:
+        raise ChunkError(f"cannot parse a version out of: {r.stdout[:200]!r}")
+    return m.group(1)
+
+
+def require_solc_version(solc: str, expected: str | None) -> str:
+    """Resolve the compiler version, and refuse a mismatch when one is named."""
+    found = solc_version(solc)
+    if expected and not found.startswith(expected):
+        raise ChunkError(
+            f"compiler is {found}, expected {expected}\n"
+            f"  {solc}\n"
+            "  the AST is this compiler's output; a different one is a "
+            "different corpus")
+    return found
+
 
 def compile_ast(input_path: str, solc: str) -> dict:
     doc = json.load(open(input_path))
@@ -909,7 +954,8 @@ def dedupe(chunks: list[Chunk]) -> tuple[list[Chunk], int]:
 
 
 def build(inputs: list[str], solc: str, includes: list[str],
-          no_dedupe: bool = False) -> tuple[list[Chunk], int]:
+          no_dedupe: bool = False,
+          expect_solc: str | None = None) -> tuple[list[Chunk], int]:
     """
     The whole pipeline behind the CLI: chunk each compilation unit, merge,
     deduplicate, compose embeddings. Raises ChunkError for every condition
@@ -920,6 +966,10 @@ def build(inputs: list[str], solc: str, includes: list[str],
     """
     if not inputs:
         raise ChunkError("no compilation units given")
+    version = require_solc_version(solc, expect_solc)
+    print(f"  compiler      : {version}"
+          + (f"  (matches --expect-solc {expect_solc})" if expect_solc
+             else "  (unpinned — pass --expect-solc to gate on it)"))
 
     glob_hits: dict[str, int] = {g: 0 for g in includes}
     merged: dict[str, Chunk] = {}
@@ -985,11 +1035,15 @@ def main() -> int:
                     help="glob of source paths to chunk, e.g. 'src/**'")
     ap.add_argument("--out", help="JSONL output; stdout summary if omitted")
     ap.add_argument("--no-dedupe", action="store_true")
+    ap.add_argument("--expect-solc", metavar="VERSION",
+                    help="refuse to build unless solc reports this version, "
+                         "e.g. 0.8.25; the manifest pins it for the corpus")
     args = ap.parse_args()
 
     try:
         chunks, dropped = build(args.input, args.solc, args.include,
-                                no_dedupe=args.no_dedupe)
+                                no_dedupe=args.no_dedupe,
+                                expect_solc=args.expect_solc)
     except ChunkError as e:
         print(f"\nFATAL: {e}", file=sys.stderr)
         return 1

@@ -175,8 +175,8 @@ ingest/
   chunkers/
     solidity.py               Solidity → chunks, via the compiler's AST
     markdown.py               markdown → chunks, on heading boundaries
-    test_solidity.py          130 assertions
-    test_markdown.py          101 assertions, no compiler needed
+    test_solidity.py          142 assertions
+    test_markdown.py          113 assertions, no compiler needed
 
 eval/
   golden-v1.yaml              125 questions, from real support transcripts

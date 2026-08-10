@@ -195,20 +195,16 @@ the run rather than producing partial output.
   is treated as a real comment. No such construct exists in the pinned corpus,
   and the failure direction is stripping visible text, not leaking hidden
   text.
-- **Setext detection tracks paragraphs, not list items.** `- foo` then `bar`
-  then `---` is lazy continuation to CommonMark and the `---` closes a list;
-  this scanner reads `bar` as a fresh paragraph and makes it a heading. No
-  such construct exists in the pinned corpus.
-- **The anchor algorithm is fitted, not specified.** It reproduces all 465
+- **The anchor algorithm is fitted, not specified.** It reproduces all 494
   heading ids docs.wildcat.finance serves for the pinned commit — including
   the literal `undefined-N` ids GitBook emits for mention-only headings — but
   GitBook publishes no spec, so a renderer change can invalidate it silently.
   `chunkers/verify_anchors.py` re-checks the whole fit against the live site;
   run it when the docs platform changes and before touching `gitbook_id()`.
-- **The ABI cross-check compares name multisets, not full signatures.** It
-  catches missing or surplus entries — the actual failure class — but a
-  wrong parameter *type* in the listing with the right name would pass. Types
-  in the listing are human-oriented (`IHooks`, not `address`) by design.
+- **The ABI cross-check compares whole signatures.** Types are canonicalised
+  from the ABI's `internalType`, so the comparison reads in the same
+  human-oriented terms as the listing (`IHooks`, not `address`). What it does
+  not check is return types or mutability.
 
 ---
 
@@ -237,8 +233,9 @@ promises to answer "what can I call" excluded `constant` state variables, so
 `MaximumLoanTerm()` was absent from the FixedTermHooks surface. *Fixed:
 every public state variable is listed, tagged `[getter]`, `[getter, constant]`
 or `[getter, immutable]` — and the whole listing is now cross-checked against
-the compiler's ABI as a name multiset, fatally. The approximation is still
-hand-built; divergence is no longer silent.* (I19)
+the compiler's ABI, fatally — as a name multiset in Round 2, and as whole
+signatures since Round 4. The approximation is still hand-built; divergence is
+no longer silent.* (I19, I27)
 
 **Constructors were attributed to derived contracts.** Inheritance resolution
 treated them as inherited members, so four live constructor chunks claimed
@@ -340,11 +337,13 @@ Input: all five `deployments/mainnet/*/standard-input.json` at
 Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
 `manifest.yaml` for why only one external library file is in.
 
-Tests: `test_solidity.py --solc solc` — 130 assertions across I1–I28.
-`test_markdown.py` — 101 assertions across M1–M22, no compiler needed. Exit code
+Tests: `test_solidity.py --solc solc` — 142 assertions across I1–I29.
+`test_markdown.py` — 113 assertions across M1–M22, no compiler needed. Exit code
 is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions;
 I18–I23 and M13–M17 are Round 2; I24–I28 and M18–M22 are Round 3, and I9 was
 rewritten in Round 3 to exercise `build()` rather than a local copy of it.
+Round 4 added I29 and extended I28, M14, M21 and M22 in place, because its
+findings were narrower cases of invariants those tests already owned.
 ---
 
 # Round 3 — what a third review found
@@ -443,7 +442,62 @@ and the entire compiler-backed suite stayed green. *Fixed: two real compilation
 units go through `build()`, and flipping OR to AND now fails the suite — checked
 by doing it.*
 
-## Known weak points after Round 3
+## Round 4 — the final review
+
+Four findings, three of them P1, none of them present in either pinned corpus.
+The pattern in Round 3 was *the check is pointed at the wrong object*; Round 4
+is narrower and meaner — **the fix was right and its edges were not**. Every
+one of the four is a boundary condition on a Round 3 repair: the right units,
+the ambiguous delimiter, the second container with the same rule, the tag that
+opens versus the tag that closes. A round that finds these is a round that has
+run out of structural faults, which is the argument for stopping.
+
+**Byte lengths were used as character offsets.** Round 3 fixed the comment
+stripper to preserve only what solc attached as documentation — and passed it
+`d_len` from the `src` field, which solc reports in *bytes*, to index a decoded
+Python string. Every non-ASCII character in a natspec block widened the
+permitted range by one position, and 120 accented characters was enough to push
+it past the declaration and into the function body, readmitting the exact
+mid-body injection Round 3 had closed. *Fixed: the documentation slice is
+decoded and its character length returned. Swept at 1, 40, 120 and 400
+multibyte characters, because the bug only bites once the drift exceeds the gap
+to the next comment.* (I28)
+
+**An unclosed delimiter is not a delimiter.** Round 3's multi-line code-span
+tracking treated any backtick run without a same-length closer on the line as
+opening a span to end of line. CommonMark does not: a run with no matching
+closer is literal text. A single stray or backslash-escaped backtick therefore
+masked the rest of its line, an HTML comment after it stopped being recognised
+as a comment, and its contents reached `model_text`. Text hidden from the
+reader arriving in the model is the dangerous direction, and this was the only
+finding in four rounds that pointed that way. *Fixed: a run opens a span only
+when a matching closer exists on the line or in the remainder of the block;
+backslash-escaped backticks do not open one. Where the reading is genuinely
+ambiguous it resolves toward not-code, so the residual failure strips visible
+text instead.* (M22)
+
+**Blockquotes continue lazily too.** Round 3 modelled lazy continuation for
+list items and stopped there. `> quoted` then `lazy continuation` then `---`
+produced a phantom H2 and a `#lazy-continuation` fragment the rendered page
+does not have — the same citation-integrity failure, one container over.
+*Fixed: list items and blockquotes share one container-paragraph state, since
+they share the rule.* (M21)
+
+**A closing tag is not an opening tag.** `HTML1_OPEN` matched `</?(script|...)`,
+so a lone `</script>` opened a raw-HTML block, cleared the paragraph it was
+sitting in and swallowed the setext heading that paragraph belonged to.
+*Fixed: the optional slash is gone; `HTML1_CLOSE` still terminates a block that
+is genuinely open.* (M14)
+
+**Hardening, not findings.** The chunker now resolves `solc --version`, prints
+it in every build, and refuses to proceed when `--expect-solc` names a
+different one — a review environment had silently moved to 0.8.36 and produced
+identical statistics. And `REVIEW.md` was still advertising the ABI name-multiset
+comparison and the code-span and lazy-list gaps as open, all three of which
+Round 3 or Round 4 closed. A runbook describing weaknesses the code no longer
+has misdirects the next reviewer as surely as one that omits real ones. (I29)
+
+## Known weak points after Round 4
 
 - **The anchor fit is measured against a moving target.** `verify_anchors.py`
   compares the pinned corpus to the live site, but the site tracks `main`. At
@@ -457,6 +511,14 @@ by doing it.*
   document that emits `#document` has no per-section chunks by definition, so
   there is no overlap; but the grain is coarser than the rest of the corpus and
   retrieval scoring has not been re-measured against it.
-- **Code-span tracking is still line-oriented.** It carries an open run across
-  soft breaks, which is what CommonMark requires, but it is not a full inline
-  parser and does not model backslash-escaped backticks.
+- **Inline parsing is delimiter matching, not a parser.** Code-span
+  resolution honours backslash escapes and looks ahead to the end of the block
+  for a closer, which covers the constructs that hide text from a reader. It is
+  still not a full inline parser: link titles, autolinks and reference
+  definitions are not modelled, and where a reading is ambiguous it resolves
+  toward *not* code, so the failure direction is stripping visible text rather
+  than admitting hidden text.
+- **The compiler is recorded but not pinned by the chunker.** `--expect-solc`
+  gates a build on a version and `build()` prints whichever one it used; CI
+  pins a container digest. Nothing stops a developer building the corpus with
+  whatever `solc` is on their path if they do not pass the flag.

@@ -124,11 +124,21 @@ for code that does.
 Three places a third round should press. The anchor algorithm is *fitted* to
 the live renderer, 494/494 renderer artifacts included, not derived from a
 spec — GitBook can invalidate it silently, and `chunkers/verify_anchors.py`
-re-runs the whole fit on demand. The ABI cross-check
-compares name multisets, so a wrong parameter type with the right name passes.
-And the markdown scanner now knows most of CommonMark's block grammar but
-deliberately not all of it: multi-line inline code spans and list lazy
-continuation are documented gaps with no corpus instances behind them.
+re-runs the whole fit on demand.
+
+Two statements that stood here through Round 3 are now false and have been
+removed rather than softened: the ABI cross-check compares whole signatures,
+not name multisets, and multi-line code spans and lazy continuation are
+implemented rather than documented gaps. Round 4 caught both still being
+advertised as open. A runbook that describes weaknesses the code no longer has
+sends the next reviewer somewhere pointless, which costs as much as a missing
+warning.
+
+Where the markdown scanner still stops short of CommonMark is inline parsing:
+it resolves code-span delimiters with block-scoped lookahead and honours
+backslash escapes, but it is not a full inline parser, and where a reading is
+genuinely ambiguous it errs toward *not* code — which strips visible text
+rather than admitting hidden text.
 
 The markdown structural pass was rewritten again — a state machine over
 fences, comments, HTML blocks and paragraphs. Newest code in the tree, 78
@@ -179,8 +189,8 @@ worth more than one nobody tested.
 ```
 ingest/chunkers/solidity.py       primary subject of review
 ingest/chunkers/markdown.py       structural pass rewritten again in Round 2
-ingest/chunkers/test_solidity.py  130 assertions; add to it
-ingest/chunkers/test_markdown.py  101 assertions; add to it
+ingest/chunkers/test_solidity.py  142 assertions; add to it
+ingest/chunkers/test_markdown.py  113 assertions; add to it
 ingest/chunkers/verify_anchors.py the anchor fit, re-checkable against the live site
 ingest/schema.py                  the chunk shape both chunkers emit
 ingest/ADVERSARIAL.md             invariants and attack agenda — read first
