@@ -156,10 +156,22 @@ def _labelled_address(question: str, label: str,
 class Router:
     """Policy-first router. It never calls retrieval, live state, or a model."""
 
+    _content_safety = re.compile(
+        r"\bsuicid(?:e|al)\b|\bself[- ]?harm\b|"
+        r"\b(?:kill|hurt|shoot)\s+(?:myself|me)\b|"
+        r"\bblow\s+(?:my\s+)?(?:head|brains|shit)\s+off\b|"
+        r"\bn[ -]?word\b|\bhard[ -]?r\b|\bracial\s+slur\b", re.I)
     _unsafe = re.compile(
         r"system prompt|ignore (?:your|all|previous) instructions|what files|"
         r"last person|previous user|repeat exactly|as a wildcat employee|"
         r"guarantees? all deposits", re.I)
+    _historical_activity = re.compile(
+        r"\b(?:last|latest|most recent)\b.{0,100}"
+        r"\b(?:borrow(?:ed|ing)?|withdr(?:aw|ew|awn|awal)|"
+        r"repa(?:y|id|yment)|deposit(?:ed)?)\b|"
+        r"\bwhen\b.{0,100}\b(?:last|latest|most recent)\b.{0,100}"
+        r"\b(?:borrow(?:ed|ing)?|withdr(?:aw|ew|awn|awal)|"
+        r"repa(?:y|id|yment)|deposit(?:ed)?)\b", re.I)
     _advice = re.compile(
         r"should i (?:lend|invest)|trustworth|best repayment|best borrower|"
         r"repayment record|pattern of late|short an asset|guarantee.*apr|"
@@ -217,16 +229,43 @@ class Router:
         r"track loan history.*original deposit.*current balance|"
         r"findings from the audit.*resolved|do you have a discord|"
         r"checking on the platform every day", re.I)
+    _domain = re.compile(
+        r"wildcat|protocol|market|borrow|lender|withdr|deposit|repa(?:y|id)|"
+        r"interest|\bapr\b|rate|reserve|delinquen|penalt|claim|cycle|capacity|"
+        r"liquid|collateral|hook|fee|sanction|\bkyc\b|\bmla\b|access|wallet|"
+        r"transaction|token|asset|balance|debt|loan|pool|ethers|\bsdk\b|"
+        r"contract|on.?chain|subgraph|\bcsv\b|audit|security|bug|vulnerab|"
+        r"\bapi\b|address|whitelist|app|website|site|platform|history|"
+        r"notification|agreement|legal|entity|sign|admin|approval|discord|"
+        r"telegram|chain|0x[0-9a-f]{8,}|[A-Za-z_]\w*\([^)]*\)", re.I)
 
     @classmethod
     def known_gap(cls, question: str) -> str | None:
         return ("the pinned corpus does not document this recurring question"
                 if cls._known_gap.search(question) else None)
 
+    @staticmethod
+    def evidence_query(question: str, route: Route) -> str:
+        """Return a deterministic evidence query for a reviewed correction.
+
+        A false premise often names the mechanism that does *not* exist, so a
+        literal search can be least useful exactly when a correction is
+        required. The expansion states the protocol concepts that can support
+        the correction; it does not supply answer prose.
+        """
+        if (route.mode == RouteMode.CORRECT
+                and re.search(r"liquidat(?:e|ed|ion)", question, re.I)):
+            return ("Wildcat protocol does not liquidate lender positions or "
+                    "participate in liquidation")
+        return question
+
     def route(self, question: str) -> Route:
         if not question.strip():
             raise AnswerError("question is empty")
         entities = extract_entities(question)
+        if self._content_safety.search(question):
+            return Route(RouteMode.REFUSE, "content safety boundary", entities,
+                         refusal_reason="unsafe_or_abusive")
         if self._unsafe.search(question):
             return Route(RouteMode.REFUSE, "prompt/privacy boundary", entities,
                          refusal_reason="system_or_private_context")
@@ -240,6 +279,12 @@ class Router:
             return Route(RouteMode.REFUSE_POINT, "unsupported chain", entities,
                          destination="Wildcat support",
                          refusal_reason="unsupported_chain")
+        if self._historical_activity.search(question):
+            return Route(
+                RouteMode.REFUSE_POINT,
+                "historical transaction activity is not a current-state read",
+                entities, destination="Wildcat market CSV exporter",
+                refusal_reason="historical_activity_unavailable")
         if self._action.search(question):
             return Route(RouteMode.TRIAGE, "requested operational action", entities,
                          triage_kind="withdrawal_action")
@@ -271,6 +316,10 @@ class Router:
         if live:
             return Route(RouteMode.LIVE, "current public state", entities,
                          live_operation=self._operation(question))
+        if not self._domain.search(question):
+            return Route(RouteMode.REFUSE_POINT, "outside Wildcat scope", entities,
+                         destination="Wildcat support",
+                         refusal_reason="outside_answer_boundary")
         return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
 
     @staticmethod
@@ -308,17 +357,64 @@ class Router:
 class ExtractiveWriter:
     """Dependency-free safe writer: only emits corpus substrings."""
 
-    def __init__(self, max_claims: int = 3, max_chars: int = 700):
+    def __init__(self, max_claims: int = 2, max_chars: int = 800):
         self.max_claims = max_claims
         self.max_chars = max_chars
 
+    def _excerpt(self, text: str, question: str) -> str:
+        """Select one relevant, exact paragraph from a corpus chunk."""
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text)
+                      if part.strip()]
+        prose = [part for part in paragraphs if not part.lstrip().startswith(
+            ("#", "<figure", "```"))]
+        candidates = prose or paragraphs
+        stop = {"what", "when", "where", "which", "why", "how", "does",
+                "did", "the", "this", "that", "with", "from", "into",
+                "your", "have", "actually", "should", "position"}
+        terms = {term for term in re.findall(r"[a-z0-9_]+", question.lower())
+                 if len(term) >= 4 and term not in stop}
+
+        def score(part: str) -> tuple[int, int]:
+            lower = part.casefold()
+            matched = 0
+            for term in terms:
+                # A conservative stem lets liquidate/liquidation and similar
+                # forms meet without introducing a paraphrase.
+                stem = term[:6] if len(term) >= 7 else term
+                matched += lower.count(stem)
+            return matched, min(len(part), self.max_chars)
+
+        quote = max(candidates, key=score)
+        if len(quote) > self.max_chars:
+            boundary = max(quote.rfind(". ", 0, self.max_chars + 1),
+                           quote.rfind("\n", 0, self.max_chars + 1),
+                           quote.rfind(" ", 0, self.max_chars + 1))
+            if boundary < 1:
+                boundary = self.max_chars
+            quote = quote[:boundary + (1 if quote[boundary:boundary + 2]
+                                       == ". " else 0)].rstrip()
+        return quote
+
     def write(self, question: str, evidence: tuple[Evidence, ...],
               route: Route) -> Draft:
+        code_query = bool(re.search(
+            r"\b(?:contract|function|event|error|solidity|selector|abi|interface)\b|"
+            r"0x[0-9a-fA-F]{8}\b|[A-Za-z_]\w*\([^)]*\)", question))
+        ranked = sorted(
+            (item for item in evidence
+             if code_query or item.source_type != "solidity"),
+            key=lambda item: (-item.semantic_score, -item.score,
+                              item.tier, item.id))
         claims = []
-        for item in evidence:
+        seen = set()
+        for item in ranked:
             if item.synthesised or not item.display_text.strip():
                 continue
-            quote = item.display_text.strip()[:self.max_chars]
+            quote = self._excerpt(item.display_text.strip(), question)
+            fingerprint = re.sub(r"\s+", " ", quote).casefold()
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
             claims.append(DraftClaim(text=quote, evidence_id=item.id,
                                      supporting_quote=quote))
             if len(claims) == self.max_claims:
@@ -350,12 +446,15 @@ class AnswerEngine:
             return self._abstain(route, f"known corpus gap: {known_gap}")
 
         retrieval_response = None
+        evidence_query = question
         evidence: tuple[Evidence, ...] = ()
         if route.mode in (RouteMode.CORPUS, RouteMode.CORPUS_LIVE,
                           RouteMode.CORRECT):
             try:
+                evidence_query = self.router.evidence_query(question, route)
                 retrieval_response = self.retriever.search(RetrievalRequest(
-                    query=question, chain_id=route.entities.chain_id,
+                    query=evidence_query,
+                    chain_id=route.entities.chain_id,
                     protocol_version=route.entities.protocol_version,
                     version_explicit=route.entities.version_explicit,
                     tiers=("A", "B"), limit_per_tier=5))
@@ -363,8 +462,23 @@ class AnswerEngine:
                 return self._abstain(route, f"evidence unavailable: {error}")
             evidence = tuple(item for tier in retrieval_response.by_tier.values()
                              for item in tier if not item.synthesised)
+            floor = retrieval_response.minimum_semantic_score
+            if floor is not None:
+                evidence = tuple(item for item in evidence
+                                 if item.semantic_score >= floor)
             if not evidence:
-                return self._abstain(route, "no quotable evidence was retrieved")
+                return self._abstain(
+                    route, "no retrieved evidence met the evaluated relevance floor")
+            symbols = {name.casefold() for name in re.findall(
+                r"\b([A-Za-z_]\w*)\s*\([^)]*\)", question)}
+            if symbols:
+                searchable = "\n".join(
+                    f"{item.id} {item.breadcrumb} {item.model_text}".casefold()
+                    for item in evidence)
+                absent = sorted(name for name in symbols if name not in searchable)
+                if absent:
+                    return self._abstain(
+                        route, "named code symbol is absent from the pinned corpus")
 
         live_rendered = None
         if route.mode in (RouteMode.LIVE, RouteMode.CORPUS_LIVE,
@@ -384,7 +498,7 @@ class AnswerEngine:
         citations: list[Citation] = []
         claim_lines = []
         if evidence:
-            draft = self.writer.write(question, evidence, route)
+            draft = self.writer.write(evidence_query, evidence, route)
             if draft.abstain_reason:
                 return self._abstain(route, draft.abstain_reason)
             if not draft.claims:
@@ -491,9 +605,20 @@ class AnswerEngine:
             text = "I can't infer or speak for a borrower's plans or intentions."
         elif route.refusal_reason == "unsupported_chain":
             text = "This Aleph release supports Ethereum mainnet only."
+        elif route.refusal_reason == "unsafe_or_abusive":
+            text = ("I can't comply with hateful or self-harm coercion. If someone "
+                    "may be in immediate danger, contact local emergency services.")
+        elif route.refusal_reason == "historical_activity_unavailable":
+            text = ("This Aleph release can read current state but not transaction "
+                    "history, so I can't determine the latest borrow, repayment, "
+                    "deposit, or withdrawal.")
+        elif route.refusal_reason == "outside_answer_boundary":
+            text = "I can only answer questions within Aleph's Wildcat Protocol scope."
         if destination:
             text += f" The appropriate destination is {destination}."
-        text += " I can prepare a handoff if you choose; I will not contact anyone automatically."
+        if route.refusal_reason != "unsafe_or_abusive":
+            text += (" I can prepare a handoff if you choose; I will not contact "
+                     "anyone automatically.")
         return Answer(status="refused", mode=route.mode, text=text, route=route,
                       refusal_reason=route.refusal_reason)
 

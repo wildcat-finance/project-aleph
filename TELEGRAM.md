@@ -30,8 +30,14 @@ Private chats accept `/ask <question>` and plain text. Groups and supergroups
 accept:
 
 - `/ask@AlephBot <question>` or a delivered `/ask <question>` command;
-- a leading `@AlephBot` mention; and
 - a direct reply to an Aleph message.
+
+The adapter can parse a leading `@AlephBot` mention if Telegram delivers it,
+but that is not a reliable summon while Group Privacy is enabled. Telegram's
+[privacy-mode FAQ](https://core.telegram.org/bots/faq#what-messages-will-my-bot-get)
+guarantees commands explicitly addressed to the bot and replies; use those in
+groups. Do not disable privacy or grant administrator access merely to make a
+plain mention work.
 
 Ambient group text, commands addressed to another bot, channel posts, service
 updates, non-text messages, and messages from bots are ignored. Polling requests

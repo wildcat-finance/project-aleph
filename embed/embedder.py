@@ -106,9 +106,18 @@ def _l2_normalise(vectors):
     arr = np.asarray(vectors, dtype="float32")
     if arr.ndim == 1:
         arr = arr.reshape(1, -1)
-    norms = np.linalg.norm(arr, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    return arr / norms
+    if arr.ndim != 2 or not arr.size or not np.isfinite(arr).all():
+        raise EmbeddingError("embedding backend returned non-finite or empty vectors")
+    # Accumulate in float64. Some platform BLAS implementations can overflow
+    # float32 reductions despite finite unit-scale inputs; an embedding
+    # boundary must not turn that into a plausible vector.
+    norms = np.linalg.norm(arr.astype("float64"), axis=1, keepdims=True)
+    if not np.isfinite(norms).all() or np.any(norms <= 0):
+        raise EmbeddingError("embedding backend returned a zero or invalid vector")
+    normalised = arr / norms.astype("float32")
+    if not np.isfinite(normalised).all():
+        raise EmbeddingError("embedding normalization produced non-finite values")
+    return normalised
 
 
 # --------------------------------------------------------------------------

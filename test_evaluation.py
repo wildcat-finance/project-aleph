@@ -67,7 +67,11 @@ def run(tmp: pathlib.Path) -> None:
     check("v2.5 isolation and unsupported-chain refusal are executable checks",
           all(report["version_isolation"].values())
           and report["unsupported_chain_refused"]
-          and report["registry_discovery"])
+          and report["registry_discovery"]
+          and report["unsafe_content_refused"]
+          and report["historical_activity_refused"]
+          and report["missing_symbol_abstains"]
+          and report["off_topic_refused"])
 
     print("\nE2 — evaluation records are content-addressed and immutable")
     record = {

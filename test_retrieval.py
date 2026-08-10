@@ -209,6 +209,15 @@ def run(tmp: pathlib.Path) -> None:
           and all(item.tier == "B" for item in exact.by_tier["B"]))
     check("per-tier limits are enforced independently",
           len(exact.by_tier["A"]) <= 3 and len(exact.by_tier["B"]) <= 3)
+    fused_fixture = [
+        (0.9, "lexical-1", 4, 1, 10.0),
+        (0.8, "lexical-2", 3, 2, 9.0),
+        (0.7, "semantic-winner", 1, None, 0.0),
+    ]
+    selected = retrieval._select_fused_candidates(fused_fixture, 2)
+    check("a lexical pile-up cannot discard the semantic winner",
+          {item[1] for item in selected} == {"lexical-1", "semantic-winner"},
+          str(selected))
     check("always_cite policy cannot disappear from a response",
           exact.mandatory_source_paths == ("docs/Known Issues.md",)
           and exact.always_cite_candidates[0].path == "docs/Known Issues.md")

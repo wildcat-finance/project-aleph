@@ -239,8 +239,8 @@ The implementation provides:
 - startup checks that require long polling, an absent webhook, and enabled group
   privacy mode;
 - message-only `getUpdates` polling with an atomically persisted offset;
-- private questions plus group commands, mentions, and replies, while ambient
-  room text and commands for other bots are ignored;
+- private questions plus reliable group commands and replies, while ambient
+  room text is ignored and plain mentions remain subject to Telegram delivery;
 - message parsing, reply threading, length-aware formatting, and stable citation
   links;
 - an allowlisted handoff draft and preview followed by a separate explicit

@@ -53,6 +53,7 @@ class Evidence:
     id: str
     tier: str
     score: float
+    semantic_score: float
     semantic_rank: int | None
     lexical_rank: int | None
     lexical_score: float
@@ -87,6 +88,7 @@ class RetrievalResponse:
     by_tier: dict[str, tuple[Evidence, ...]]
     mandatory_source_paths: tuple[str, ...]
     always_cite_candidates: tuple[Evidence, ...]
+    minimum_semantic_score: float | None
 
 
 @dataclass(frozen=True)
@@ -238,6 +240,35 @@ def _lexical_scores(rows: list[dict], query: str) -> dict[str, float]:
     return scores
 
 
+def _select_fused_candidates(fused: list[tuple], limit: int) -> list[tuple]:
+    """Keep hybrid ordering without discarding the semantic winner.
+
+    Lexical fusion is valuable for signatures and addresses, but a noisy term
+    match can otherwise fill every limited result slot before the strongest
+    semantic result reaches the answer boundary. Reserve one slot per tier for
+    that winner and use fused order for the rest.
+    """
+    selected = list(fused[:limit])
+    semantic = sorted((item for item in fused if item[2] is not None),
+                      key=lambda item: (item[2], item[1]))
+    # Keep the fused winner and reserve at most two of the remaining slots for
+    # semantic winners. A five-result answer context therefore remains mostly
+    # hybrid while retaining enough semantic coverage for multi-part evidence.
+    semantic = semantic[:min(2, max(0, limit - 1))]
+    for winner in semantic:
+        if winner in selected:
+            continue
+        replaceable = next(
+            (item for item in reversed(selected)
+             if item != fused[0] and item not in semantic), None)
+        if replaceable is None:
+            break
+        selected.remove(replaceable)
+        selected.append(winner)
+    selected.sort(key=lambda item: (-item[0], item[1]))
+    return selected
+
+
 class Retriever:
     """Manifest-scoped hybrid search over main and optional prerelease releases."""
 
@@ -278,6 +309,24 @@ class Retriever:
             return row_version == version
         return row_version in (None, version)
 
+    @staticmethod
+    def _minimum_semantic_score(artifact: ReleaseArtifact) -> float | None:
+        """Return an evaluation-calibrated floor for the pinned real model.
+
+        A rank always has a winner, even for an unrelated question. The raw
+        cosine score is what lets the answer boundary distinguish a winner
+        from evidence that is actually close enough to quote. Stub indexes do
+        not use a production floor because their vectors are deliberately
+        meaningless and exist only to exercise the machinery.
+        """
+        identity = artifact.record.get("embedding") or {}
+        if (identity.get("backend") == "ollama"
+                and identity.get("model") == "bge-m3"
+                and identity.get("dimensions") == 1024
+                and identity.get("normalised") is True):
+            return 0.48
+        return None
+
     def search(self, request: RetrievalRequest) -> RetrievalResponse:
         request.validate()
         artifact, version = self._select(request)
@@ -292,13 +341,19 @@ class Retriever:
             if not rows:
                 results[tier] = ()
                 continue
-            semantic_hits = artifact.index.search(
-                vector, identity, tier=tier,
-                k=len(artifact.index.meta[tier]))
+            try:
+                semantic_hits = artifact.index.search(
+                    vector, identity, tier=tier,
+                    k=len(artifact.index.meta[tier]))
+            except IndexError_ as error:
+                raise RetrievalError(
+                    f"semantic index search failed: {error}") from error
             semantic_hits = [hit for hit in semantic_hits
                              if self._eligible(hit, version)]
             semantic_rank = {hit["id"]: rank for rank, hit in
                              enumerate(semantic_hits, 1)}
+            semantic_scores = {hit["id"]: float(hit["score"])
+                               for hit in semantic_hits}
             lexical_scores = _lexical_scores(rows, request.query)
             lexical_order = sorted(lexical_scores,
                                    key=lambda key: (-lexical_scores[key], key))
@@ -317,11 +372,14 @@ class Retriever:
                     score += 0.05 * lexical / max_lexical
                 fused.append((score, chunk_id, srank, lrank, lexical))
             fused.sort(key=lambda item: (-item[0], item[1]))
+            selected = _select_fused_candidates(
+                fused, request.limit_per_tier)
             results[tier] = tuple(
                 self._evidence(artifact, by_id[chunk_id], score,
+                               semantic_scores.get(chunk_id, 0.0),
                                srank, lrank, lexical)
                 for score, chunk_id, srank, lrank, lexical
-                in fused[:request.limit_per_tier])
+                in selected)
 
         all_returned = [item for tier in results.values() for item in tier]
         required = []
@@ -337,7 +395,7 @@ class Retriever:
                 best = max(rows, key=lambda row: (scores.get(row["id"], 0.0),
                                                   row["id"]))
                 required.append(self._evidence(
-                    artifact, best, 0.0, None, None,
+                    artifact, best, 0.0, 0.0, None, None,
                     scores.get(best["id"], 0.0)))
 
         prerelease = artifact.record.get("kind") == "prerelease"
@@ -349,14 +407,17 @@ class Retriever:
             deployment_status="not_deployed" if prerelease else "deployed",
             preamble=preamble, by_tier=results,
             mandatory_source_paths=artifact.always_cite_paths,
-            always_cite_candidates=tuple(required))
+            always_cite_candidates=tuple(required),
+            minimum_semantic_score=self._minimum_semantic_score(artifact))
 
     @staticmethod
     def _evidence(artifact: ReleaseArtifact, row: dict, score: float,
+                  semantic_score: float,
                   semantic_rank: int | None, lexical_rank: int | None,
                   lexical_score: float) -> Evidence:
         return Evidence(
             id=row["id"], tier=row["tier"], score=score,
+            semantic_score=semantic_score,
             semantic_rank=semantic_rank, lexical_rank=lexical_rank,
             lexical_score=lexical_score, kind=row["kind"],
             source_type=row["source_type"], path=row["path"],

@@ -251,6 +251,7 @@ def test_index_build(tmp: pathlib.Path) -> None:
 
 
 def test_search(tmp: pathlib.Path) -> None:
+    import numpy as np
     print("\nE5 — search ranks, scopes and refuses the wrong embedder")
     corpus = fake_corpus(tmp, build_id="def456")
     ix.build_index(str(corpus), str(tmp / "index"), "stub:test")
@@ -298,6 +299,28 @@ def test_search(tmp: pathlib.Path) -> None:
     except ix.IndexError_ as e4:
         raised = str(e4)
     check("an all-zero query vector is refused", "zeros" in raised, raised[:80])
+
+    raised = ""
+    invalid_query = np.zeros(index.identity.dimensions, dtype="float32")
+    invalid_query[0] = np.nan
+    try:
+        index.search(invalid_query, index.identity, k=1)
+    except ix.IndexError_ as error:
+        raised = str(error)
+    check("a non-finite query vector is refused before ranking",
+          "non-finite" in raised, raised[:100])
+
+    original = float(index.vectors["A"][0, 0])
+    index.vectors["A"][0, 0] = np.inf
+    raised = ""
+    try:
+        index.search(q, index.identity, tier="A", k=1)
+    except ix.IndexError_ as error:
+        raised = str(error)
+    finally:
+        index.vectors["A"][0, 0] = original
+    check("non-finite cosine output cannot become a ranked hit",
+          "non-finite" in raised, raised[:100])
 
 
 def test_corpus_integrity(tmp: pathlib.Path) -> None:
