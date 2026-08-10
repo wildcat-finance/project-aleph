@@ -10,8 +10,8 @@ SDK address watcher. It does not yet contain a user-facing agent.
 
 The shortest honest status is:
 
-> **Aleph has validated corpus retrieval and block-pinned live-state tools. It
-> must next route questions and assemble safe answers from those typed inputs.**
+> **Aleph has the complete answer path over fixture-backed state. It must next
+> turn the golden set into a blocking end-to-end promotion gate.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -38,6 +38,8 @@ The checked-in code already provides:
   manifest-visible mandatory sources, and byte-verified citation resolution;
 - pinned SDK address verification, health-gated gateway reads at one observed
   block, five narrow live operations, and deterministic numeric renderers;
+- policy-first routing over every golden handling mode, entity extraction,
+  evidence-supported claim assembly, refusals, and bounded triage payloads;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -146,16 +148,17 @@ contains public market facts only—no score, rank, reliability, risk, or inferr
 intent. `release.py --fetch-sdk` binds a successful address check into
 `address_assertions_hold`; without it, that gate remains `null`.
 
-### 4. Build the question router and answer engine
+### 4. Question router and answer engine — implemented
 
-Only after corpus evidence and live operations have stable contracts should a
-model decide how to answer a natural-language question.
+`agent.py` routes before calling retrieval, live state, or a language writer. It
+extracts chain, public version, market, lender, and borrower addresses first,
+then selects one reviewed handling mode.
 
-Build next:
+The implementation provides:
 
 - a router for the modes already represented in `eval/golden-v1.yaml`:
   `corpus`, `live`, `corpus+live`, premise correction, refusal, refusal with a
-  destination, and triage-and-handoff;
+  destination, triage-and-handoff, and the set's one partial-answer case;
 - entity and version extraction before retrieval or live queries;
 - answer assembly that keeps corpus explanation separate from deterministic live
   values;
@@ -167,14 +170,17 @@ Build next:
   and
 - a triage payload that collects only the details a human actually needs.
 
-The answer engine is not a general chatbot. Advice, borrower trust assessments,
-intent inference, unsupported chains, and unreleased behavior are refusals. A
-refusal should offer an explicit escalation action rather than paging someone
-automatically.
+The dependency-free `ExtractiveWriter` emits only exact corpus substrings. A
+future language writer plugs into the same typed contract: every claim must name
+an evidence ID and an exact supporting quote supplied to it. The engine verifies
+both against the loaded corpus before adding a commit-pinned citation. It then
+appends the deterministic live block without exposing it to the writer.
 
-**Complete when:** every factual sentence is backed by validated corpus evidence
-or a deterministic live result; unsupported questions decline consistently; and
-the same typed inputs produce the same non-model portions of the answer.
+Advice, borrower assessment, inferred intent, unsupported chains, private
+lender lists, and prompt/private-context extraction are refused. Handoffs are
+prepared but never sent without a separate explicit confirmation. The router's
+handling mode matches all 125 reviewed golden questions; answer-quality and
+claim-support scoring become the blocking stage-5 gate.
 
 ### 5. Build end-to-end evaluation and promotion gates
 
@@ -312,6 +318,7 @@ python3 embed/test_embed.py
 python3 test_release.py
 python3 test_retrieval.py
 python3 test_live.py
+python3 test_agent.py
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
@@ -328,6 +335,9 @@ retrieval.py                  scoped hybrid retrieval + citation resolver
 test_retrieval.py             scope, isolation, ranking and quote checks
 live.py                       SDK address gate, gateway reads and renderers
 test_live.py                  lag, block, address and numeric fixtures
+agent.py                      routing, refusals and answer assembly
+ANSWERING.md                  answer-path contracts and failure boundaries
+test_agent.py                 golden routing and assembly adversarial checks
 
 ingest/
   build.py                    manifest -> validated corpus build

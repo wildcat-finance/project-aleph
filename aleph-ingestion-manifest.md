@@ -243,9 +243,10 @@ evaluation before deployment.
 
 ## 10. Current limitations
 
-- The answer, live-state, deterministic-renderer, and Telegram layers are not
-  present in this repository. Citation resolution is implemented, but answer
-  assembly does not yet consume it.
+- Routing, answer assembly, live state, and deterministic rendering are
+  implemented. The default writer is extractive; a production language writer
+  and the blocking semantic claim-support evaluation are not yet configured.
+  Telegram remains downstream.
 - SDK address assertions are enforced by `live.AddressBook` and can be bound
   into a release with `release.py --fetch-sdk`. A release built without that
   artifact check keeps `address_assertions_hold: null`.
