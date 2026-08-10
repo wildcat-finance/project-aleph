@@ -122,7 +122,7 @@ lesson wearing new clothes: look for checks that cannot fail before looking
 for code that does.
 
 Three places a third round should press. The anchor algorithm is *fitted* to
-the live renderer, 465/465 renderer artifacts included, not derived from a
+the live renderer, 494/494 renderer artifacts included, not derived from a
 spec — GitBook can invalidate it silently, and `chunkers/verify_anchors.py`
 re-runs the whole fit on demand. The ABI cross-check
 compares name multisets, so a wrong parameter type with the right name passes.

@@ -239,7 +239,7 @@ the ones that need a human rather than a build step.
 - Round 3 of adversarial review. Rounds 1 and 2 found six and then thirteen
   findings across the chunkers, all fixed with regressions; the pattern both
   times was code reporting success while doing the wrong thing. The anchor
-  algorithm is fitted to the live renderer (465/465, artifacts included)
+  algorithm is fitted to the live renderer (494/494, artifacts included)
   rather than specified; `ingest/chunkers/verify_anchors.py` re-checks the
   fit on demand, which is the standing risk made re-testable.
 

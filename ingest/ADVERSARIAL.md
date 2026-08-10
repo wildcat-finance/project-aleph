@@ -325,17 +325,17 @@ check reading the wrong end of a pipeline.
 ```
 
 ```
-521 chunks from 63 document(s)
-  hierarchy     : 63/63 emitted document(s) placed (63 included)
-  synthesised   : 63  (not quotable as source)
-  nav hierarchy : 515 chunks placed in the SUMMARY tree
-  size          : median 491, p99 3793, max 9524
+545 chunks from 64 document(s)
+  hierarchy     : 64/64 emitted document(s) placed (64 included)
+  synthesised   : 64  (not quotable as source)
+  nav hierarchy : 539 chunks placed in the SUMMARY tree
+  size          : median 510, p99 3793, max 9524
   schema        : 0 problem(s)
 ```
 
 Input: all five `deployments/mainnet/*/standard-input.json` at
-`v2-protocol@v2.1.0` (`c7be403`), solc 0.8.25; `wildcat-docs@aleph-v0.1`
-(`6c94fb3`) with `SUMMARY.md` as hierarchy and excludes from `manifest.yaml`.
+`v2-protocol@v2.1.0` (`c7be403`), solc 0.8.25; `wildcat-docs@aleph-v0.2`
+(`21e7db2`) with `SUMMARY.md` as hierarchy and excludes from `manifest.yaml`.
 
 Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
 `manifest.yaml` for why only one external library file is in.
@@ -415,7 +415,7 @@ reported it as placed anyway. *Fixed: the size filter suppresses noise within a
 document, it does not erase one, so a document with nothing else surviving is
 emitted whole. Coverage is computed from emitted paths, and documents that
 produce nothing are named in a DROPPED list. Five live navigation pages
-recovered their text this way: 516 chunks to 521.*
+recovered their text this way: 516 chunks to 521, measured at `6c94fb3`.*
 
 **Lazy list continuation invented headings.** `- foo / bar / ---` is a list and
 a thematic break; the scanner read `bar` as a paragraph and `---` as its setext
@@ -446,11 +446,13 @@ by doing it.*
 ## Known weak points after Round 3
 
 - **The anchor fit is measured against a moving target.** `verify_anchors.py`
-  compares the pinned corpus to the live site, but the site tracks `main`. As of
-  this writing `overview/faqs.md` serves 30 heading ids against the pinned
-  source's 3 — genuine drift, reported and skipped, leaving 462 verified. Drift
-  detection working is not the same as the denominator being stable, and a
-  future run finding *fewer* pages verifiable is expected rather than alarming.
+  compares the pinned corpus to the live site, but the site tracks `main`. At
+  `6c94fb3` this showed as `overview/faqs.md` serving 30 heading ids against the
+  pinned source's 3 — genuine drift, reported and skipped, leaving 462 of 465
+  verified. The `aleph-v0.2` promotion closed that gap and the count is now
+  494/494 with nothing skipped. Expect it to open again: drift detection working
+  is not the same as the denominator being stable, and a run finding *fewer*
+  pages verifiable means the docs have moved, not that the algorithm has.
 - **Whole-document chunks overlap nothing but exist at a different grain.** A
   document that emits `#document` has no per-section chunks by definition, so
   there is no overlap; but the grain is coarser than the rest of the corpus and

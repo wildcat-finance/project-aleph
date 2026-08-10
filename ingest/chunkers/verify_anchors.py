@@ -4,7 +4,7 @@ verify_anchors.py — Project Aleph
 
 Checks that the anchor algorithm in markdown.py still reproduces every heading
 id the live documentation site serves. The algorithm is *fitted* to GitBook's
-renderer — 465/465 at `wildcat-docs@6c94fb3` — not derived from a spec, so a
+renderer — 494/494 at `wildcat-docs@21e7db2` — not derived from a spec, so a
 platform change can invalidate it silently. This is the check to run when that
 is suspected, and before shipping any change to `gitbook_id()`.
 

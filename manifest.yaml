@@ -46,9 +46,16 @@ embedding:
     8,192. The earlier concern that contract chunks with full natspec would
     exceed bge-m3's context was speculation and is wrong. The check stays in
     chunk_solidity.py to notice if that ever changes.
+  markdown_headroom: >
+    Measured at wildcat-docs@21e7db2, not assumed: 545 chunks across 64
+    documents, median 510 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
+    against a limit of 8,192. Prose sections are longer than Solidity chunks,
+    as expected, and still less than half the budget.
   revisit_when: >
-    Markdown chunking lands and long prose sections join the corpus, or a single
-    Solidity chunk starts approaching the limit. Neither is close today.
+    A single chunk of either kind starts approaching the limit, or the corpus
+    gains a source whose sections are longer than documentation prose. Neither
+    is close today, and both chunkers refuse to emit a chunk that exceeds the
+    limit rather than letting the embedder truncate it silently.
 
 sources:
 
@@ -149,18 +156,18 @@ sources:
     repo: wildcat-finance/wildcat-docs
     ref:
       kind: tag
-      tag: aleph-v0.1
-      commit: 6c94fb3
+      tag: aleph-v0.2
+      commit: 21e7db2
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
-      supersedes: aleph-v0 / d128fcf
+      supersedes: aleph-v0.1 / 6c94fb3
     notes: >
       Content is human-written. The llm-rewrite-clean branch added agent
       navigation files, not agent-generated prose, so a Tier B citation still
       means reviewed documentation. docs-tg-bot documents the separate
       wildcat-notifications event bot, not this project. Both branches since
       deleted; AGENTS.md/CLAUDE.md live on the default branch and stay excluded.
-      aleph-v0.1 is a lightweight tag: it pins the commit, but carries no
+      The aleph-v0.x tags are lightweight: they pin a commit, but carry no
       signature, so docs promotion has no cryptographic gate the way v2-protocol
       does. Ref immutability is by convention here — never move a tag, cut the
       next one.
@@ -169,6 +176,20 @@ sources:
       exclusion below is now belt-and-braces rather than the only defence), two
       pages recovered that had existed only in GitBook, and the ?ask
       documentation corrected.
+
+      Since aleph-v0.1: the FAQ rewritten and expanded from 4 headings to 31,
+      and a page added for the downloadable market CSV exporter. The FAQ
+      rewrite retires three anchors — the same questions survive under new
+      wording, so the content is intact but any citation held against the old
+      fragments will not resolve. That is what a docs promotion does, and it is
+      the reason answers name the corpus build that produced them.
+
+      The exporter ships as `using-wildcat/wildcat-market-csv.skill`, a zip
+      containing agent instructions, sitting outside `skills/**`. It is not
+      ingested because `include` is an allowlist of `**/*.md` and a `.skill`
+      file cannot match it — the allowlist is the control, not the exclude
+      list. It is named below anyway, so that broadening the include one day is
+      a decision rather than an accident.
     include:
       - "**/*.md"
     exclude:
@@ -178,6 +199,7 @@ sources:
       - "**/AGENTS.md"
       - "**/CLAUDE.md"
       - "skills/**"                # SKILL.md is the same class: written to be obeyed
+      - "**/*.skill"               # packaged skills: instruction bundles, wherever they sit
       - "miscellaneous/deprecated-documentation/**"
       # 17 of 82 files describe superseded V1 internals. They self-identify —
       # "this page has not been updated to reflect Wildcat V2" — but only in
