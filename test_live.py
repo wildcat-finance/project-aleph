@@ -14,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 
+import gateway_smoke
 import live
 
 FAILURES: list[str] = []
@@ -202,6 +203,17 @@ def run(tmp: pathlib.Path) -> None:
     check("every typed result propagates the observed block and release",
           all(result.block_number == 100 and result.gateway_release == "v2.0.30"
               for result in (market, registry, account, withdrawals, borrower)))
+    smoke_transport = FakeTransport()
+    smoke = gateway_smoke.check(
+        str(manifest), client=live.GatewayClient(
+            str(manifest), transport=smoke_transport, token="smoke-secret"))
+    check("the operator preflight performs one authenticated pinned query",
+          smoke["ok"] and smoke["block_number"] == 100
+          and smoke["gateway_release"] == "v2.0.30"
+          and len(smoke_transport.get_calls) == 1
+          and len(smoke_transport.post_calls) == 1)
+    check("the operator preflight report never contains its bearer token",
+          "smoke-secret" not in json.dumps(smoke))
     borrower_fields = set(borrower.value.__dataclass_fields__)
     check("borrower aggregation contains facts, never scores or rankings",
           not borrower_fields.intersection(

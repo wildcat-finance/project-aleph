@@ -272,6 +272,8 @@ The implementation provides:
 - a daily `sdk-watch.py` alarm that never rebuilds or edits the manifest;
 - one-shot active-release, model-runtime, gateway, Telegram, and evaluation
   monitoring suitable for a five-minute supervisor timer;
+- a credential-free gateway preflight report backed by one authenticated,
+  health-checked, block-pinned registry query;
 - structured audit records carrying corpus build ID, model identity, route,
   citations, live block, and refusal reason;
 - HMAC-only question fingerprints, no raw question/answer/address retention,
@@ -368,6 +370,9 @@ python3 promotion.py \
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
+
+# Authenticated Data Gateway preflight (source credentials into the environment)
+python3 gateway_smoke.py
 ```
 
 ## Repository map
@@ -380,6 +385,7 @@ test_release.py               release coherence and immutability checks
 retrieval.py                  scoped hybrid retrieval + citation resolver
 test_retrieval.py             scope, isolation, ranking and quote checks
 live.py                       SDK address gate, gateway reads and renderers
+gateway_smoke.py              authenticated block-pinned gateway preflight
 test_live.py                  lag, block, address and numeric fixtures
 agent.py                      routing, refusals and answer assembly
 ANSWERING.md                  answer-path contracts and failure boundaries

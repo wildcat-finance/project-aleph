@@ -72,6 +72,17 @@ pointer replacement leaves the prior release active.
 Restart the query unit after the pointer changes, then run `monitor.py`. The
 service loads and verifies the pointer before it creates network clients.
 
+Before an active release or Telegram credential exists, verify the dedicated
+Data Gateway credential independently from the repository root:
+
+```bash
+python3 gateway_smoke.py --manifest manifest.yaml
+```
+
+The command performs one authenticated registry query after the normal health
+gate, pins it to the checked block, and prints only release, block, head, and
+sample-count metadata. It never prints the credential or response contents.
+
 ## Roll back
 
 Rollback does not rebuild and does not delete the rejected release:
