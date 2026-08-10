@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -338,20 +339,24 @@ def test_commonmark_fences() -> None:
 
 
 def test_anchor_uniqueness() -> None:
-    print("\nM10 — anchors are unique and rendered")
+    print("\nM10 — anchors are unique and follow the renderer")
     dupe = [c for c in chunk_text(
-        f"# Overview\n\n{LONG}\n## Details\n\n{LONG}\n# Overview\n\n{LONG}")
+        f"# Page\n\n{LONG}\n## Overview\n\n{LONG}\n## Details\n\n{LONG}"
+        f"\n## Overview\n\n{LONG}")
         if not c.synthesised]
     anchors = [c.detail["anchor"] for c in dupe if c.detail.get("anchor")]
     check("no duplicate anchors in a document",
           len(anchors) == len(set(anchors)), str(anchors))
-    check("the second Overview is suffixed",
-          "overview-2" in anchors, str(anchors))
+    check("the second Overview is suffixed -1, the way GitBook numbers it",
+          "overview-1" in anchors and "overview-2" not in anchors, str(anchors))
+    h1 = [c for c in dupe if c.detail.get("heading_level") == 1][0]
+    check("a level-1 heading is the page title and gets no anchor",
+          h1.detail["anchor"] is None, str(h1.detail["anchor"]))
 
-    ent = [c for c in chunk_text(f"# Fees&#x20;And Charges\n\n{LONG}")
-           if not c.synthesised][0]
+    ent = [c for c in chunk_text(f"# T\n\n{LONG}\n## Fees&#x20;And Charges\n\n{LONG}")
+           if not c.synthesised and c.detail.get("heading_level") == 2][0]
     check("HTML entities are decoded before slugging",
-          "x20" not in ent.detail["anchor"], ent.detail["anchor"])
+          ent.detail["anchor"] == "fees-and-charges", str(ent.detail["anchor"]))
 
 
 def test_line_endings_and_indentation() -> None:
@@ -425,6 +430,193 @@ def test_summary_hierarchy(tmp: pathlib.Path) -> None:
           in chunks[0].breadcrumb, chunks[0].breadcrumb)
 
 
+def test_inline_comments() -> None:
+    print("\nM13 — inline comments corrupt neither headings nor code")
+    doc = f"# Visible <!-- hidden instruction --> title\n\n{LONG}"
+    chunks = [c for c in chunk_text(doc) if not c.synthesised]
+    check("a heading carrying an inline comment is still a heading",
+          [c.detail.get("heading") for c in chunks] == ["Visible title"],
+          str([c.detail.get("heading") for c in chunks]))
+    check("the comment is stripped from model_text",
+          "hidden instruction" not in chunks[0].model_text,
+          repr(chunks[0].model_text))
+    check("display_text still quotes the file byte-exactly",
+          "<!-- hidden instruction -->" in chunks[0].display_text,
+          repr(chunks[0].display_text))
+
+    code = (f"# H\n\nUse `<!-- keep me -->` to comment things out. {LONG}"
+            f"\nAnd this one is <!-- actually gone --> removed.\n")
+    c2 = [c for c in chunk_text(code) if not c.synthesised][0]
+    check("comment syntax inside inline code survives in model_text",
+          "`<!-- keep me -->`" in c2.model_text, repr(c2.model_text))
+    check("a real comment in the same section is still stripped",
+          "actually gone" not in c2.model_text, repr(c2.model_text))
+
+
+def test_raw_html_blocks() -> None:
+    print("\nM14 — hash lines inside raw HTML are not headings")
+    doc = (f"# Real\n\n{LONG}\n<div>\n# Not a Markdown heading\n"
+           f"some raw prose\n</div>\n\n## After\n\n{LONG}")
+    chunks = [c for c in chunk_text(doc) if not c.synthesised]
+    heads = [c.detail.get("heading") for c in chunks]
+    check("the div's hash line is not a heading",
+          "Not a Markdown heading" not in heads, str(heads))
+    after = [c for c in chunks if c.detail.get("heading") == "After"]
+    check("breadcrumbs after the block are intact",
+          after and after[0].detail["heading_path"] == ["Real", "After"],
+          str(after[0].detail["heading_path"] if after else heads))
+
+    script = (f"# H\n\n{LONG}\n<script>\nvar s = '# nope';\n</script>\n"
+              f"\n## Yes\n\n{LONG}")
+    heads2 = [c.detail.get("heading") for c in chunk_text(script)
+              if not c.synthesised]
+    check("script content is not structure", heads2 == ["H", "Yes"], str(heads2))
+
+
+def test_setext_paragraph_state() -> None:
+    print("\nM15 — setext needs a paragraph above it; a break alone is a break")
+    bq = f"# H\n\n{LONG}\n> quoted line\n---\n\n## Real\n\n{LONG}"
+    heads = [c.detail.get("heading") for c in chunk_text(bq) if not c.synthesised]
+    check("dashes after a blockquote are a break, not a heading",
+          heads == ["H", "Real"], str(heads))
+
+    lst = f"# H\n\n{LONG}\n- item one\n---\n\n## Tail\n\n{LONG}"
+    heads2 = [c.detail.get("heading") for c in chunk_text(lst) if not c.synthesised]
+    check("dashes after a list line are a break, not a heading",
+          heads2 == ["H", "Tail"], str(heads2))
+
+    multi = f"First line of the title\nSecond line of the title\n===\n\n{LONG}"
+    ml = [c for c in chunk_text(multi) if not c.synthesised]
+    check("a multi-line setext heading keeps all its lines",
+          [c.detail.get("heading") for c in ml]
+          == ["First line of the title Second line of the title"],
+          str([c.detail.get("heading") for c in ml]))
+    check("...and the chunk starts at the paragraph's first line",
+          ml and ml[0].line == 1, str(ml[0].line if ml else None))
+
+    # a dash underline directly after a paragraph IS a setext heading —
+    # that is the CommonMark rule the thematic-break fix must not break
+    st = f"Paragraph that becomes a title\n---\n\n{LONG}"
+    sh = [c for c in chunk_text(st) if not c.synthesised]
+    check("dashes directly under a paragraph still form a heading",
+          [(c.detail.get("heading"), c.detail.get("heading_level"))
+           for c in sh] == [("Paragraph that becomes a title", 2)],
+          str([c.detail.get("heading") for c in sh]))
+
+
+def test_renderer_anchor_algorithm() -> None:
+    print("\nM16 — anchors are what the renderer serves, fitted 465/465 live")
+    g = md.gitbook_id
+    check("link headings slug their labels",
+          md.gitbook_id(md.heading_text(
+              rb"[alpeh\_v](https://x.com/alpeh_v) \[Independent Security Review]"))
+          == "alpeh_v-independent-security-review",
+          md.gitbook_id(md.heading_text(
+              rb"[alpeh\_v](https://x.com/alpeh_v) \[Independent Security Review]")))
+    check("$ transliterates to usd and , hyphenates",
+          g("Code4rena [$100,000 Competitive Public Audit]")
+          == "code4rena-usd100-000-competitive-public-audit",
+          g("Code4rena [$100,000 Competitive Public Audit]"))
+    check("& becomes and", g("Withdrawal Expiry & Priority")
+          == "withdrawal-expiry-and-priority",
+          g("Withdrawal Expiry & Priority"))
+    check("apostrophes vanish without a separator",
+          g("I've placed a request, but I can't claim!")
+          == "ive-placed-a-request-but-i-cant-claim",
+          g("I've placed a request, but I can't claim!"))
+    check("dots and slashes follow the renderer",
+          g("File: src/HooksFactory.sol") == "file-src-hooksfactory.sol",
+          g("File: src/HooksFactory.sol"))
+    check("a leading digit is prefixed id-",
+          g("1) Policy Creation") == "id-1-policy-creation",
+          g("1) Policy Creation"))
+    faq = ("I'm a lender trying to deposit into a market from a Fireblocks "
+           "vault account, but my transactions are getting rejected?")
+    check("ids truncate at 100 and trim the stump",
+          g(faq) == "im-a-lender-trying-to-deposit-into-a-market-from-a-"
+                    "fireblocks-vault-account-but-my-transactions-are",
+          g(faq))
+
+    doc = f"# T\n\n{LONG}\n## Dup\n\ntiny\n\n## Dup\n\n{LONG}"
+    kept = [c for c in chunk_text(doc)
+            if not c.synthesised and c.detail.get("heading") == "Dup"]
+    check("a duplicate discarded by the size filter still holds its anchor",
+          len(kept) == 1 and kept[0].detail["anchor"] == "dup-1",
+          str([(c.detail.get("anchor")) for c in kept]))
+
+    mention = (f"# Nav\n\n{LONG}\n"
+               "## [the-scale-factor.md](the-scale-factor.md \"mention\")\n\n"
+               "## \\ [core-behaviour.md](core-behaviour.md \"mention\")\n\n"
+               f"## Ordinary\n\n{LONG}")
+    m = {c.detail.get("heading"): c.detail.get("anchor")
+         for c in chunk_text(mention) if not c.synthesised}
+    check("a mention-only heading gets the renderer's undefined id",
+          m.get("the-scale-factor.md") == "undefined", str(m))
+    check("...even behind GitBook's stray backslash, numbered as a duplicate",
+          "undefined-1" in m.values(), str(m))
+    check("ordinary headings are unaffected by the artifact rule",
+          m.get("Ordinary") == "ordinary", str(m))
+
+    doc5 = f"# T\n\n{LONG}\n##### Dup\n\n## Dup\n\n{LONG}"
+    five = [c for c in chunk_text(doc5) if not c.synthesised]
+    h2 = [c for c in five if c.detail.get("heading_level") == 2]
+    check("an H5 consumes its anchor without becoming a boundary",
+          not any(c.detail.get("heading_level") == 5 for c in five)
+          and h2 and h2[0].detail["anchor"] == "dup-1",
+          str([(c.detail.get("heading"), c.detail.get("heading_level"),
+                c.detail.get("anchor")) for c in five]))
+
+
+def test_summary_fail_loud(tmp: pathlib.Path) -> None:
+    print("\nM17 — a requested SUMMARY that cannot be read stops the build")
+    root = tmp / "d"
+    root.mkdir()
+    (root / "page.md").write_text(f"# T\n\n{LONG}", encoding="utf-8")
+
+    raised = ""
+    try:
+        md.chunk_tree(str(root), [], "SUMMARY.md")
+    except md.ChunkError as e:
+        raised = str(e)
+    check("missing requested summary raises",
+          "not found" in raised and "SUMMARY" in raised, raised[:120])
+
+    ok = True
+    try:
+        md.chunk_tree(str(root), [], None)
+    except md.ChunkError:
+        ok = False
+    check("no summary requested still builds, deliberately", ok)
+
+    (root / "SUMMARY.md").write_text(
+        "# ToC\n\n* [Elsewhere](somewhere/else.md)\n", encoding="utf-8")
+    raised2 = ""
+    try:
+        md.chunk_tree(str(root), ["SUMMARY.md"], "SUMMARY.md")
+    except md.ChunkError as e:
+        raised2 = str(e)
+    check("a hierarchy that places zero documents raises",
+          "zero" in raised2, raised2[:120])
+
+    script = str(HERE / "markdown.py")
+    root2 = tmp / "d2"
+    root2.mkdir()
+    (root2 / "p.md").write_text(f"# T\n\n{LONG}", encoding="utf-8")
+    out = tmp / "nope.jsonl"
+    r = subprocess.run([sys.executable, script, "--root", str(root2),
+                        "--exclude", "zz", "--out", str(out)],
+                       capture_output=True, text=True)
+    check("CLI: missing default SUMMARY exits 1", r.returncode == 1,
+          f"rc={r.returncode} stderr={r.stderr[:120]}")
+    check("CLI: nothing written on a failed build", not out.exists(), str(out))
+    r2 = subprocess.run([sys.executable, script, "--root", str(root2),
+                         "--exclude", "zz", "--summary", "",
+                         "--out", str(out)], capture_output=True, text=True)
+    check("CLI: --summary '' builds and writes",
+          r2.returncode == 0 and out.exists(),
+          f"rc={r2.returncode} stderr={r2.stderr[:120]}")
+
+
 # --------------------------------------------------------------------------
 
 def main() -> int:
@@ -439,8 +631,14 @@ def main() -> int:
     test_commonmark_fences()
     test_anchor_uniqueness()
     test_line_endings_and_indentation()
+    test_inline_comments()
+    test_raw_html_blocks()
+    test_setext_paragraph_state()
+    test_renderer_anchor_algorithm()
     with tempfile.TemporaryDirectory() as td:
         test_summary_hierarchy(pathlib.Path(td))
+    with tempfile.TemporaryDirectory() as td:
+        test_summary_fail_loud(pathlib.Path(td))
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
 

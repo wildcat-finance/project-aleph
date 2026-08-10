@@ -11,12 +11,19 @@ Chunks markdown on heading boundaries, emitting the shared schema.
 Solidity chunker, so a citation quotes what is actually in the file. Everything
 here works on bytes and slices by byte offset.
 
-Structure is resolved in one pass that tracks fences and HTML comments together,
-because they interact: a heading inside a fence is not a heading, and a heading
-inside an HTML comment is not a heading either. Establishing that with a regex
-over already-split chunks — which is what this did originally — lets a comment
-that spans a heading boundary deposit its contents into the model's context with
-the comment markers stranded in adjacent chunks.
+Structure is resolved by a single line-state machine that tracks code fences,
+HTML comments, raw HTML blocks and open paragraphs together, because they
+interact: a heading inside a fence is not a heading, a heading inside an HTML
+comment or a `<div>` block is not a heading either, and whether `---` is a
+heading underline or a thematic break depends on whether a paragraph is open
+above it. Round 1 established the single pass; Round 2 established that the
+pass has to know most of CommonMark's block grammar to be trustworthy.
+
+Anchors follow the GitBook renderer's algorithm, fitted against every heading
+id docs.wildcat.finance actually serves (465 of 465 reproduced at the pinned
+corpus commit, renderer artifacts included) rather than guessed from a slug
+library; `verify_anchors.py` re-checks the whole fit against the live site. A citation URL built
+from an anchor is a promise the same way a quoted byte range is.
 """
 
 from __future__ import annotations
@@ -37,12 +44,56 @@ sys.modules["aleph_schema"] = _schema
 _spec.loader.exec_module(_schema)
 Chunk = _schema.Chunk
 
+
+class ChunkError(Exception):
+    """Raised for conditions that must stop a build rather than warn."""
+
+
 # CommonMark allows up to three leading spaces before an ATX marker, and a
 # closing hash sequence only when it is preceded by a space.
 ATX = re.compile(rb"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 FENCE = re.compile(rb"^( {0,3})(`{3,}|~{3,})(.*)$")
 SETEXT = re.compile(rb"^ {0,3}(=+|-+)[ \t]*$")
 CLOSING_HASHES = re.compile(r"[ \t]+#+[ \t]*$")
+
+# A setext underline of dashes is also a valid thematic break; which one it is
+# depends on whether a paragraph is open, which is why the scanner tracks one.
+THEMATIC = re.compile(rb"^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$")
+BLOCKQUOTE = re.compile(rb"^ {0,3}>")
+LIST_ITEM = re.compile(rb"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)")
+TEMPLATE_LINE = re.compile(rb"^ {0,3}\{%")        # GitBook {% hint %} etc.
+INDENTED_CODE = re.compile(rb"^(?: {4}|\t)")
+
+# CommonMark HTML blocks. Type 1 runs to an explicit closing tag; types 3-5 to
+# their own terminators; types 6 and 7 to the next blank line. While one is
+# open, nothing inside it is a heading — Round 2 put `# Not a heading` inside
+# a <div> and it became one, corrupting every breadcrumb after it.
+HTML1_OPEN = re.compile(rb"^ {0,3}</?(script|pre|style|textarea)(?=[ \t>/]|$)", re.I)
+HTML1_CLOSE = re.compile(rb"</(?:script|pre|style|textarea)>", re.I)
+HTML_PI_OPEN = re.compile(rb"^ {0,3}<\?")
+HTML_DECL_OPEN = re.compile(rb"^ {0,3}<![A-Za-z]")
+HTML_CDATA_OPEN = re.compile(rb"^ {0,3}<!\[CDATA\[")
+HTML6_OPEN = re.compile(rb"^ {0,3}</?([A-Za-z][A-Za-z0-9-]*)(?=[ \t/>]|$)")
+HTML6_TAGS = {
+    b"address", b"article", b"aside", b"base", b"basefont", b"blockquote",
+    b"body", b"caption", b"center", b"col", b"colgroup", b"dd", b"details",
+    b"dialog", b"dir", b"div", b"dl", b"dt", b"fieldset", b"figcaption",
+    b"figure", b"footer", b"form", b"frame", b"frameset", b"h1", b"h2", b"h3",
+    b"h4", b"h5", b"h6", b"head", b"header", b"hr", b"html", b"iframe",
+    b"legend", b"li", b"link", b"main", b"menu", b"menuitem", b"nav",
+    b"noframes", b"ol", b"optgroup", b"option", b"p", b"param", b"search",
+    b"section", b"summary", b"table", b"tbody", b"td", b"tfoot", b"th",
+    b"thead", b"title", b"tr", b"track", b"ul",
+}
+_HTML1_TAGS = {b"script", b"pre", b"style", b"textarea"}
+# Type 7: one complete open or closing tag, alone on its line. It may not
+# interrupt a paragraph, which scan_structure enforces.
+_ATTR = (rb"[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*"
+         rb"(?:[ \t]*=[ \t]*(?:[^ \t\"'=<>`]+|'[^']*'|\"[^\"]*\"))?")
+HTML7_LINE = re.compile(
+    rb"^ {0,3}(?:<([A-Za-z][A-Za-z0-9-]*)(?:" + _ATTR + rb")*[ \t]*/?>"
+    rb"|</([A-Za-z][A-Za-z0-9-]*)[ \t]*>)[ \t]*$")
+CODE_SPAN = re.compile(rb"(`+)(.+?)\1")
 
 MAX_HEADING_LEVEL = 4          # H5/H6 stay inside their parent section
 
@@ -105,97 +156,199 @@ def split_frontmatter(blob: bytes) -> tuple[dict, int]:
 
 
 # --------------------------------------------------------------------------
-# structure scan — fences, HTML comments and headings in a single pass
+# structure scan — a line state machine over fences, comments, raw HTML,
+# paragraphs and headings
 # --------------------------------------------------------------------------
+
+def _code_span_ranges(line: bytes) -> list[tuple[int, int]]:
+    return [(m.start(), m.end()) for m in CODE_SPAN.finditer(line)]
+
+
+def _scan_comments(line: bytes, offset: int, in_comment: bool,
+                   comment_start: int, comments: list[tuple[int, int]],
+                   ) -> tuple[bytes, bool, int]:
+    """
+    Find HTML comments on one line, appending completed (start, end) byte
+    spans to `comments` and returning (structure_line, in_comment,
+    comment_start). structure_line is the input with comment bytes — and only
+    comment bytes — blanked, so `# Visible <!-- hidden --> title` is still an
+    ATX heading afterwards. Round 2 found the previous version blanking
+    everything up to a comment's close, which deleted the `# ` and turned the
+    heading into stray prose.
+
+    A `<!--` inside a single-line code span is literal text, per CommonMark
+    inline precedence, and is neither an opener nor stripped. A code span that
+    itself spans lines is not modelled; ADVERSARIAL.md carries that as a known
+    weak point.
+    """
+    buf = bytearray(line)
+    spans = _code_span_ranges(line) if not in_comment else []
+    pos, n = 0, len(line)
+    while True:
+        if in_comment:
+            end = line.find(b"-->", pos)
+            if end == -1:
+                for i in range(pos, n):
+                    buf[i] = 0x20
+                return bytes(buf), True, comment_start
+            comments.append((comment_start, offset + end + 3))
+            for i in range(pos, end + 3):
+                buf[i] = 0x20
+            in_comment, comment_start = False, -1
+            pos = end + 3
+            spans = _code_span_ranges(line)
+        else:
+            begin = line.find(b"<!--", pos)
+            while begin != -1 and any(a <= begin < b for a, b in spans):
+                begin = line.find(b"<!--", begin + 1)
+            if begin == -1:
+                return bytes(buf), False, -1
+            in_comment, comment_start = True, offset + begin
+            for i in range(begin, begin + 4):    # the opener is comment too
+                buf[i] = 0x20
+            pos = begin + 4
+
 
 def scan_structure(blob: bytes, start: int):
     """
     Return (headings, comment_spans).
 
-    headings: [(offset, level, raw_text)] for headings that are genuinely
-    headings — outside code fences, outside HTML comments.
-    comment_spans: [(start, end)] byte ranges of HTML comments outside fences,
-    so they can be removed by span rather than by a regex that cannot see
-    whether it is inside a code example.
+    headings: [(offset, level, text)] for every heading that is genuinely a
+    heading — outside fences, comments and raw HTML blocks — at every level 1
+    through 6. Callers decide which levels become chunk boundaries; anchors
+    must be counted over all of them, because the renderer numbers duplicates
+    over what it renders, not over what this chunker later keeps.
+
+    comment_spans: [(start, end)] byte ranges of HTML comments that a reader
+    of the rendered page cannot see, for removal from model_text by span.
+    Comments inside fenced code are visible example markup and are not
+    recorded; comments inside type 6/7 raw-HTML blocks are invisible in
+    exactly the way bare comments are, so they are.
     """
     headings: list[tuple[int, int, bytes]] = []
     comments: list[tuple[int, int]] = []
 
-    fence_char = b""
-    fence_len = 0
-    in_comment = False
-    comment_start = -1
-    prev_text: tuple[int, bytes] | None = None   # for setext
+    fence_char, fence_len = b"", 0
+    in_comment, comment_start = False, -1
+    html_end = None            # regex closing an explicit raw-HTML block
+    html_until_blank = False   # inside a type 6/7 block
+    para: list[tuple[int, bytes]] = []
 
     for offset, line in iter_lines(blob, start):
-        stripped = line.strip()
+        # -- a multi-line comment consumes everything until it closes -------
+        if in_comment:
+            _, in_comment, comment_start = _scan_comments(
+                line, offset, True, comment_start, comments)
+            continue
 
-        # --- fences -------------------------------------------------------
-        m = FENCE.match(line)
-        if m and not in_comment:
-            indent, marker, rest = m.group(1), m.group(2), m.group(3)
-            if not fence_char:
-                # opening fence; info string may not contain a backtick
-                if marker[:1] == b"`" and b"`" in rest:
-                    pass
-                else:
-                    fence_char, fence_len = marker[:1], len(marker)
-                    prev_text = None
-                    continue
-            elif (marker[:1] == fence_char and len(marker) >= fence_len
-                  and rest.strip() == b""):
-                # a closing fence must use the same character, be at least as
-                # long as the opener, and carry nothing but whitespace after it
-                fence_char, fence_len = b"", 0
-                prev_text = None
-                continue
+        # -- fenced code: only the closing fence matters ---------------------
         if fence_char:
-            prev_text = None
+            m = FENCE.match(line)
+            if (m and m.group(2)[:1] == fence_char
+                    and len(m.group(2)) >= fence_len
+                    and m.group(3).strip() == b""):
+                fence_char, fence_len = b"", 0
             continue
 
-        # --- HTML comments ------------------------------------------------
-        pos = 0
-        consumed_line = False
-        while True:
-            if in_comment:
-                end = line.find(b"-->", pos)
-                if end == -1:
-                    consumed_line = True
-                    break
-                in_comment = False
-                comments.append((comment_start, offset + end + 3))
-                pos = end + 3
-            else:
-                begin = line.find(b"<!--", pos)
-                if begin == -1:
-                    break
-                in_comment = True
-                comment_start = offset + begin
-                pos = begin + 4
-        if consumed_line or in_comment:
-            prev_text = None
+        # -- explicit raw HTML (types 1, 3, 4, 5): runs to its terminator ---
+        if html_end is not None:
+            if html_end.search(line):
+                html_end = None
             continue
-        if comments and comments[-1][1] > offset and pos > 0:
-            # a comment ended on this line; anything before it was inside
-            line = b" " * pos + line[pos:]
 
-        # --- headings -------------------------------------------------------
-        atx = ATX.match(line)
+        # -- type 6/7 raw HTML: runs to the next blank line ------------------
+        if html_until_blank:
+            if not line.strip():
+                html_until_blank = False
+                continue
+            # comments inside the block are still invisible text
+            _, in_comment, comment_start = _scan_comments(
+                line, offset, False, comment_start, comments)
+            continue
+
+        # -- normal state -----------------------------------------------------
+        sline, in_comment, comment_start = _scan_comments(
+            line, offset, False, comment_start, comments)
+
+        if not sline.strip():
+            para = []
+            continue
+
+        m = FENCE.match(sline)
+        if m:
+            marker, rest = m.group(2), m.group(3)
+            # an opening backtick fence may not contain a backtick in its info
+            if not (marker[:1] == b"`" and b"`" in rest):
+                fence_char, fence_len = marker[:1], len(marker)
+                para = []
+                continue
+
+        m = HTML1_OPEN.match(sline)
+        if m:
+            para = []
+            if not HTML1_CLOSE.search(sline, m.end()):
+                html_end = HTML1_CLOSE
+            continue
+        if HTML_CDATA_OPEN.match(sline):        # before DECL: <![ is not <!x
+            para = []
+            if b"]]>" not in sline:
+                html_end = re.compile(rb"\]\]>")
+            continue
+        if HTML_PI_OPEN.match(sline):
+            para = []
+            if b"?>" not in sline[sline.find(b"<?") + 2:]:
+                html_end = re.compile(rb"\?>")
+            continue
+        if HTML_DECL_OPEN.match(sline):
+            para = []
+            if b">" not in sline:
+                html_end = re.compile(rb">")
+            continue
+        m = HTML6_OPEN.match(sline)
+        if m and m.group(1).lower() in HTML6_TAGS:
+            para = []
+            html_until_blank = True
+            continue
+        m = HTML7_LINE.match(sline)
+        if m and not para:
+            tag = (m.group(1) or m.group(2) or b"").lower()
+            if tag not in _HTML1_TAGS:
+                html_until_blank = True
+                continue
+
+        atx = ATX.match(sline)
         if atx:
-            level = len(atx.group(1))
-            if level <= MAX_HEADING_LEVEL:
-                headings.append((offset, level, atx.group(2) or b""))
-            prev_text = None
+            headings.append((offset, len(atx.group(1)), atx.group(2) or b""))
+            para = []
             continue
 
-        st = SETEXT.match(line)
-        if st and prev_text is not None:
+        st = SETEXT.match(sline)
+        if st and para:
+            # An underline after an open paragraph is a heading — of the
+            # whole paragraph, not just its last line.
             level = 1 if st.group(1)[:1] == b"=" else 2
-            headings.append((prev_text[0], level, prev_text[1].strip()))
-            prev_text = None
+            text = b" ".join(l.strip() for _, l in para)
+            headings.append((para[0][0], level, text))
+            para = []
             continue
 
-        prev_text = (offset, line) if stripped else None
+        if THEMATIC.match(sline):
+            # `---` with no paragraph above it is a thematic break. The old
+            # scanner made it a heading of whatever non-paragraph line came
+            # before, including `> quoted text`.
+            para = []
+            continue
+
+        # a lone `===` with no paragraph above is just text, and falls through
+
+        if BLOCKQUOTE.match(sline) or LIST_ITEM.match(sline) \
+                or TEMPLATE_LINE.match(sline):
+            para = []
+            continue
+        if INDENTED_CODE.match(sline) and not para:
+            continue
+
+        para.append((offset, sline))
 
     if in_comment:
         # unterminated: everything from the opener onward is comment
@@ -230,24 +383,105 @@ def strip_comments_by_span(blob: bytes, chunk_start: int, chunk_end: int,
 # heading text and anchors
 # --------------------------------------------------------------------------
 
+_ESCAPE = re.compile(r"\\([!\"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])")
+_CODESPAN_TXT = re.compile(r"(`+)(.+?)\1")
+_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_REFLINK = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+_TAG = re.compile(r"</?[a-zA-Z][^>]*>")
+
+
+def render_inline(text: str) -> str:
+    """
+    The reader-visible text of an inline run: escapes resolved, code spans
+    unwrapped, links and images reduced to their labels, HTML tags removed,
+    entities decoded. This — not the raw markup — is what the renderer slugs,
+    which is why `[alpeh\\_v](https://x.com/alpeh_v)` must become `alpeh_v`
+    before an anchor is derived from it and not
+    `alpeh-vhttpsxcomalpeh-v`, which is what the live corpus carried.
+    """
+    text = _ESCAPE.sub(r"\1", text)
+    text = _CODESPAN_TXT.sub(r"\2", text)
+    text = _IMAGE.sub(r"\1", text)
+    text = _LINK.sub(r"\1", text)
+    text = _REFLINK.sub(r"\1", text)
+    text = _TAG.sub("", text)
+    return html.unescape(text)
+
+
 def heading_text(raw: bytes) -> str:
     """
-    Rendered heading text: entity-decoded, with a CommonMark closing hash
-    sequence removed only when it is actually one.
-
-    `&#x20;` appears in GitBook output and was previously slugged as the literal
-    characters `x20`, which produced 33 wrong anchors in the live corpus.
+    Rendered heading text, for breadcrumbs, indexes and anchors. Byte-exact
+    quoting is display_text's job; this one's job is to read the way the
+    published page reads.
     """
     text = raw.decode("utf-8", "replace").strip()
     text = CLOSING_HASHES.sub("", text)
-    if text.endswith("#") and not text.endswith(" #"):
-        pass                     # `# Name#` keeps its hash, per CommonMark
-    return html.unescape(text).strip()
+    return " ".join(render_inline(text).split())
 
 
-def slug(text: str) -> str:
-    s = re.sub(r"[^\w\s-]", "", text.lower()).strip()
-    return re.sub(r"[\s_]+", "-", s)
+# A heading that is nothing but a GitBook page-mention link renders with no
+# literal text at slug time, and GitBook's slugger emits the string
+# "undefined" for it — literally String(undefined), numbered like any other
+# duplicate. Seven live headings do this, all on one navigation page, one of
+# them behind a stray backslash-space the renderer also ignores. Matching the
+# renderer means matching its artifacts; a citation fragment that does not
+# say "undefined" does not resolve.
+MENTION_ONLY = re.compile(rb'^\s*(?:\\\s+)*\[[^\]]+\]\([^)"]*"mention"\)\s*$')
+
+
+def assign_anchors(headings) -> dict[int, str | None]:
+    """
+    Anchor per heading offset, exactly as the renderer assigns them: over
+    every rendered heading in order, duplicates suffixed -1, -2, ...; None
+    for level-1 headings (the page title carries no id) and for headings that
+    slug to nothing. The single authority — chunk_file and verify_anchors.py
+    both call this, so the corpus and the checker cannot drift apart.
+    """
+    anchor_of: dict[int, str | None] = {}
+    seen: dict[str, int] = {}
+    for off, level, raw in headings:
+        if level < 2:
+            anchor_of[off] = None
+            continue
+        if MENTION_ONLY.match(raw):
+            base = "undefined"
+        else:
+            text = heading_text(raw)
+            base = gitbook_id(text) if text else ""
+        if not base:
+            anchor_of[off] = None
+            continue
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        anchor_of[off] = base if n == 0 else f"{base}-{n}"
+    return anchor_of
+
+
+def gitbook_id(text: str) -> str:
+    """
+    The anchor the GitBook renderer derives from a heading's rendered text.
+
+    Fitted empirically against docs.wildcat.finance and verified against all
+    465 heading ids the site serves for the pinned corpus commit — not taken
+    from a slug library, because no library surveyed reproduces this exact
+    behaviour. The observed rules: lowercase; `&` -> `and`; `$` -> `usd`;
+    apostrophes vanish without a separator; every other run outside
+    `[a-z0-9_.]` collapses to one `-`; leading and trailing `-` are trimmed;
+    an id starting with a digit is prefixed `id-`; the result is cut at 100
+    characters and any `-` or `.` left dangling by the cut is trimmed.
+    Duplicates within a page are suffixed `-1`, `-2`, ... in render order —
+    the caller counts them, over every rendered heading, not merely over the
+    ones that survive chunking.
+    """
+    s = text.lower()
+    s = s.replace("&", "and").replace("$", "usd")
+    s = s.replace("'", "").replace("\u2019", "")
+    s = re.sub(r"[^a-z0-9_.]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    if s[:1].isdigit():
+        s = "id-" + s
+    return s[:100].rstrip("-.")
 
 
 # --------------------------------------------------------------------------
@@ -264,7 +498,6 @@ def parse_summary(path: pathlib.Path) -> dict[str, list[str]]:
 
     Without this a page knows its own headings and nothing else, so
     `day-to-day-usage/lenders.md` has no idea it sits under "Using Wildcat".
-    PIPELINE.md has promised this since the beginning and it was never built.
     """
     hierarchy: dict[str, list[str]] = {}
     stack: list[tuple[int, str]] = []
@@ -302,21 +535,38 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
     headings, comments = scan_structure(blob, body_start)
     ancestors = (hierarchy or {}).get(rel, [])
 
-    spans: list[tuple[int, int, int, str]] = []
-    if headings and headings[0][0] > body_start:
-        spans.append((body_start, headings[0][0], 0, ""))
-    elif not headings:
-        spans.append((body_start, len(blob), 0, ""))
-    for i, (off, level, raw) in enumerate(headings):
-        end = headings[i + 1][0] if i + 1 < len(headings) else len(blob)
-        spans.append((off, end, level, heading_text(raw)))
+    # Anchors are assigned over every rendered heading, in order, before any
+    # size filtering — the renderer numbers duplicates over what it renders,
+    # and it renders H5s and short sections too. Round 2 demonstrated both
+    # failure modes: anchors slugged from raw markup, and duplicate numbering
+    # that skipped headings the size filter later discarded.
+    anchor_of = assign_anchors(headings)
+
+    boundary = [(o, l, r) for o, l, r in headings if l <= MAX_HEADING_LEVEL]
+    spans: list[tuple[int, int, int, str, str | None]] = []
+    if boundary and boundary[0][0] > body_start:
+        spans.append((body_start, boundary[0][0], 0, "", None))
+    elif not boundary:
+        spans.append((body_start, len(blob), 0, "", None))
+    for i, (off, level, raw) in enumerate(boundary):
+        end = boundary[i + 1][0] if i + 1 < len(boundary) else len(blob)
+        spans.append((off, end, level, heading_text(raw), anchor_of[off]))
+
+    # Chunk IDs are counted over the same pre-filter span list, so which ID a
+    # section gets does not depend on whether its earlier namesake happened to
+    # clear the size filter.
+    seen_ids: dict[str, int] = {}
+    uids: list[str] = []
+    for start, end, level, text, anchor in spans:
+        base = f"{rel}#{anchor or (gitbook_id(text) or 'section') if text else 'intro'}"
+        n = seen_ids.get(base, 0)
+        seen_ids[base] = n + 1
+        uids.append(base if n == 0 else f"{base}-{n + 1}")
 
     chunks: list[Chunk] = []
     trail: dict[int, str] = {}
-    seen_ids: dict[str, int] = {}
-    seen_anchors: dict[str, int] = {}
 
-    for start, end, level, text in spans:
+    for (start, end, level, text, anchor), uid in zip(spans, uids):
         # The trail is updated BEFORE the size filter. Doing it after meant a
         # heading whose own body was too short never entered the trail, so its
         # descendants inherited their grandparent instead — 309 of 452 live
@@ -332,20 +582,6 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
 
         heading_path = [v for _, v in sorted(trail.items())]
         breadcrumb = " › ".join([rel] + ancestors + heading_path)
-
-        base = f"{rel}#{slug(text) if text else 'intro'}"
-        n = seen_ids.get(base, 0)
-        seen_ids[base] = n + 1
-        uid = base if n == 0 else f"{base}-{n + 1}"
-
-        # Anchors are deduplicated the same way, so a citation URL built from
-        # the second "Overview" does not navigate to the first.
-        anchor = slug(text) if text else None
-        if anchor:
-            a = seen_anchors.get(anchor, 0)
-            seen_anchors[anchor] = a + 1
-            if a:
-                anchor = f"{anchor}-{a + 1}"
 
         model = strip_comments_by_span(blob, start, end, comments)
 
@@ -415,18 +651,28 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
 def chunk_tree(root: str, excludes: list[str],
                summary: str | None = None) -> list[Chunk]:
     base = pathlib.Path(root)
-    hierarchy = {}
+    if not base.is_dir():
+        raise ChunkError(f"--root {root} is not a directory")
+
+    hierarchy: dict[str, list[str]] = {}
     if summary:
         sp = pathlib.Path(summary)
         if not sp.is_absolute():
             sp = base / summary
-        if sp.exists():
-            hierarchy = parse_summary(sp)
-            print(f"  {len(hierarchy)} document(s) placed from {sp.name}")
-        else:
-            print(f"  WARNING: {sp} not found; no cross-document hierarchy",
-                  file=sys.stderr)
+        if not sp.exists():
+            # Requested navigation that cannot be read is a broken build, not
+            # a degraded one. Round 2's version warned and carried on, so a
+            # typo'd path silently produced a corpus where no document knew
+            # where it sat. Building without a hierarchy is still possible —
+            # by saying so: --summary ''.
+            raise ChunkError(
+                f"{sp} not found — the SUMMARY hierarchy was requested and is "
+                "missing. Pass --summary '' to build without one, deliberately.")
+        hierarchy = parse_summary(sp)
+        print(f"  {len(hierarchy)} document(s) in {sp.name}")
+
     out: list[Chunk] = []
+    included: list[str] = []
     skipped = 0
     for path in sorted(base.rglob("*.md")):
         rel = str(path.relative_to(base))
@@ -434,8 +680,35 @@ def chunk_tree(root: str, excludes: list[str],
                for g in excludes):
             skipped += 1
             continue
+        included.append(rel)
         out.extend(chunk_file(path, base, hierarchy=hierarchy))
     print(f"  skipped {skipped} excluded file(s)")
+
+    if hierarchy:
+        placed = [r for r in included if r in hierarchy]
+        unplaced = [r for r in included if r not in hierarchy]
+        have = set(included)
+        dangling = [t for t in hierarchy if t not in have]
+        if not placed:
+            raise ChunkError(
+                "the SUMMARY hierarchy placed zero of the included documents "
+                "— wrong summary for this tree, or wrong --root")
+        print(f"  hierarchy     : {len(placed)}/{len(included)} included "
+              f"document(s) placed")
+        if unplaced:
+            print(f"  unplaced      : {len(unplaced)} included file(s) not in "
+                  "the SUMMARY nav — indexed without ancestry:")
+            for r in unplaced[:5]:
+                print(f"      {r}")
+        if dangling:
+            print(f"  dangling nav  : {len(dangling)} SUMMARY entr(ies) point "
+                  "at files that are excluded or missing:")
+            for t in dangling[:5]:
+                print(f"      {t}")
+
+    if not out:
+        raise ChunkError(f"zero chunks from {root} — refusing to call an "
+                         "empty corpus a successful build")
     return out
 
 
@@ -471,8 +744,8 @@ def main() -> int:
     ap.add_argument("--exclude", action="append", default=[],
                     help="additional glob or path prefix; repeatable")
     ap.add_argument("--summary", default="SUMMARY.md",
-                    help="GitBook nav to derive cross-document hierarchy from; "
-                         "pass '' to disable")
+                    help="GitBook nav to derive cross-document hierarchy from. "
+                         "Missing is fatal; pass '' to build without one")
     ap.add_argument("--out", help="JSONL output")
     args = ap.parse_args()
 
@@ -485,7 +758,11 @@ def main() -> int:
               "--root will be indexed, including any agent instruction files.",
               file=sys.stderr)
 
-    chunks = chunk_tree(args.root, excludes, args.summary or None)
+    try:
+        chunks = chunk_tree(args.root, excludes, args.summary or None)
+    except ChunkError as e:
+        print(f"\nFATAL: {e}", file=sys.stderr)
+        return 1
     problems = _schema.validate(chunks)
 
     docs = len({c.path for c in chunks})

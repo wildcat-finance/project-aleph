@@ -1,11 +1,12 @@
 # Adversarial review: the chunkers
 
-**Round 1 complete, both chunkers.** Sol 5.6 reviewed `chunkers/solidity.py` and
-`chunkers/markdown.py` at `47634bc` and found six issues in each, most of them
-live in the pinned corpora. All twelve are fixed;
-the invariants and tests below reflect the repaired state. What the round found
-is recorded at the bottom under *Round 1*, because a list of what a review caught
-is a better guide to where the next one should look than a list of what passed.
+**Rounds 1 and 2 complete, both chunkers.** Sol 5.6 reviewed both at `47634bc`
+and found six issues in each; a second review at `7b901bd` found five more in
+the Solidity chunker and five in the markdown chunker, plus two findings about
+the tests themselves. All are fixed; the invariants and tests below reflect the
+repaired state. What each round found is recorded at the bottom, because a list
+of what a review caught is a better guide to where the next one should look
+than a list of what passed.
 
 Read this before the code. It states what the chunkers promise, what breaks
 those promises, and what has and hasn't been checked.
@@ -185,35 +186,161 @@ the run rather than producing partial output.
 - **Only `src/**` is chunked.** Library code from `lib/` is present in the
   compilation input but excluded from output. Behaviour inherited from those
   libraries is therefore invisible to retrieval.
-- **Attacks 1–14 above are not all covered by tests.** `test_solidity.py`
-  covers I1–I5 with 24 assertions, all passing. The numbered attacks are the
-  review agenda and most are still open — particularly 4 (nested block
-  comments against solc's own lexer), 7 (U+2028 inside a line comment), and 9
-  (struct parameters collapsing to `struct` in signatures, which is a latent
-  collision nobody has hit yet).
+- **Attacks 1–14 above are not all covered by tests.** The numbered attacks
+  are the review agenda and several are still open — particularly 4 (nested
+  block comments against solc's own lexer) and 7 (U+2028 inside a line
+  comment). Attack 9 was closed by `canonical_type()`.
+- **Inline code spans are modelled per line, not per paragraph.** A CommonMark
+  code span can cross a soft line break; a comment marker inside one of those
+  is treated as a real comment. No such construct exists in the pinned corpus,
+  and the failure direction is stripping visible text, not leaking hidden
+  text.
+- **Setext detection tracks paragraphs, not list items.** `- foo` then `bar`
+  then `---` is lazy continuation to CommonMark and the `---` closes a list;
+  this scanner reads `bar` as a fresh paragraph and makes it a heading. No
+  such construct exists in the pinned corpus.
+- **The anchor algorithm is fitted, not specified.** It reproduces all 465
+  heading ids docs.wildcat.finance serves for the pinned commit — including
+  the literal `undefined-N` ids GitBook emits for mention-only headings — but
+  GitBook publishes no spec, so a renderer change can invalidate it silently.
+  `chunkers/verify_anchors.py` re-checks the whole fit against the live site;
+  run it when the docs platform changes and before touching `gitbook_id()`.
+- **The ABI cross-check compares name multisets, not full signatures.** It
+  catches missing or surplus entries — the actual failure class — but a
+  wrong parameter *type* in the listing with the right name would pass. Types
+  in the listing are human-oriented (`IHooks`, not `address`) by design.
+
+---
+
+# Round 2 — what a second review found
+
+Eleven code findings and two about the tests, reviewing `7b901bd` — the commit
+that closed Round 1. The pattern that survived a round of fixing: **fail-open
+defaults, and checks derived from the thing they check.** The embed rebuild
+recovered its input by parsing its own previous output; the fatal-condition
+tests re-enacted the production logic instead of calling it; empty selections
+and missing navigation were warnings. None of it crashed. All of it reported
+success.
+
+**Solidity**
+
+**Natspec could truncate the embedding.** `rebuild_embed_text()` recovered the
+base text by splitting on `\n\nexposed by: ` — a marker any natspec author can
+write. Everything after it, function body included, vanished from `embed_text`
+while `display_text` stayed intact and every check passed. *Fixed:
+`compose_embed_text()` derives the whole string from breadcrumb, kind,
+`model_text`, exposure and alias state. Nothing parses previous embed text,
+ever.* (I18)
+
+**Public constant getters were missing from surfaces.** The one chunk that
+promises to answer "what can I call" excluded `constant` state variables, so
+`MaximumLoanTerm()` was absent from the FixedTermHooks surface. *Fixed:
+every public state variable is listed, tagged `[getter]`, `[getter, constant]`
+or `[getter, immutable]` — and the whole listing is now cross-checked against
+the compiler's ABI as a name multiset, fatally. The approximation is still
+hand-built; divergence is no longer silent.* (I19)
+
+**Constructors were attributed to derived contracts.** Inheritance resolution
+treated them as inherited members, so four live constructor chunks claimed
+exposure by contracts that cannot call them, or anything. *Fixed: constructors
+carry no exposure and are excluded from the unreachable report — they run
+once, at deployment.* (I20)
+
+**Folded duplicates were unfindable under their folded names.** Dedupe recorded
+alias IDs in `detail.aliases` and nothing downstream indexed them: 46 live
+aliases, none retrievable. *Fixed: dedupe also records the alias breadcrumb,
+and composition appends "also declared as:" lines to `embed_text`.* (I21)
+
+**An empty selection was a successful build.** `--include 'typo/**'` produced
+zero chunks, a green summary and exit 0 — while PIPELINE.md §2 promised the
+opposite. *Fixed: a unit whose selection is empty, a pattern matching nothing
+across all units, and a zero-chunk corpus are all fatal. A pattern matched by
+only some units is fine; only one deployment input carries Ownable.sol.* (I22)
+
+**Markdown**
+
+**Inline comments corrupted headings and code.** A same-line comment blanked
+everything before its close, so `# Visible <!-- x --> title` stopped being a
+heading; and comment markers inside inline code spans were stripped out of
+`model_text`. *Fixed: only comment bytes are blanked, and a `<!--` inside a
+single-line code span is literal text.* (M13)
+
+**Raw HTML was invisible to the scanner.** A `#` line inside `<div>…</div>`
+became a heading and corrupted every breadcrumb after it. *Fixed: the scanner
+tracks all seven CommonMark HTML block types; types 1/3/4/5 run to their
+terminators, types 6/7 to the next blank line, and nothing inside is
+structure.* (M14)
+
+**Setext detection had no idea what a paragraph was.** `> quoted` followed by
+`---` produced a heading of the quote; a two-line setext heading kept only its
+last line. *Fixed: the scanner tracks open paragraphs. An underline heads the
+whole paragraph above it or, absent one, `---` is a thematic break.* (M15)
+
+**Anchors were slugged from raw markup and numbered over survivors.**
+`[alpeh\_v](https://x.com/alpeh_v)…` slugged URL and all; duplicate numbering
+skipped headings the size filter discarded, so citation fragments pointed at
+the wrong section. *Fixed: anchors come from rendered inline text through the
+renderer's own algorithm — fitted and verified against all 465 heading ids
+docs.wildcat.finance serves for the pinned commit, GitBook's literal
+`undefined-N` ids for mention-only headings included, because a fragment
+that does not say what the renderer says does not resolve — counted over every parsed
+heading, with `-1`/`-2` suffixes as GitBook numbers them and `None` for page
+titles, which get no id at all.* (M16)
+
+**A missing SUMMARY failed open.** A typo'd path was a warning and an
+exit 0 corpus with no hierarchy. *Fixed: requested-but-unreadable navigation
+is fatal, a hierarchy that places zero documents is fatal, and coverage is
+reported both ways — included files the nav omits, nav entries pointing at
+nothing. `--summary ''` remains the explicit opt-out.* (M17)
+
+**The tests**
+
+The fatal-condition tests re-enacted the merge loop and validated the
+re-enactment; markdown had no fixtures for any of the above. *Fixed: build()
+and chunk_tree() are the code the CLIs run and the code the tests call, plus
+subprocess-level checks that a failed build exits 1 and writes nothing.*
+(I15, I23, M17)
+
+`chunkers/verify_anchors.py` re-runs the whole fit against the live site —
+every SUMMARY page, every heading id, paired positionally against the pinned
+sources through the same `assign_anchors()` the chunker uses. Zero mismatches
+or the algorithm has been invalidated. It found two bugs the day it was
+written: the renderer's `undefined` artifact, and its author's exit-code
+check reading the wrong end of a pipeline.
 
 ---
 
 ## Current output, for reference
 
 ```
-991 chunks from 5 compilation unit(s)  (46 duplicates dropped)
-  id collisions : 0
-  oversize      : 0
-  synthesised   : 69  (not quotable as source)
-  inheritance   : 457 chunks attributed to a concrete contract
+962 chunks from 5 compilation unit(s)  (46 duplicate bodies folded, 46 alias id(s) kept)
+  schema        : 0 problem(s)
+  oversize      : 0  (p99 2340 chars, max 5062, limit 24000)
+  synthesised   : 68  (not quotable as source)
+  inheritance   : 460 chunks attributed to a concrete contract
   unreachable   : 0 public/external fns on contracts exposed by nothing
-  by kind       : Function=679, Error=104, Event=75, Struct=43, library=24,
-                  contract=19, Modifier=15, interface=13, surface=13,
-                  UserDefinedValueType=4, Enum=2
+  by kind       : Enum=2, Error=104, Event=75, Function=655, Modifier=15,
+                  Struct=39, UserDefinedValueType=4, contract=19,
+                  interface=13, library=23, surface=13
+```
+
+```
+516 chunks from 63 document(s)
+  hierarchy     : 63/63 included document(s) placed
+  synthesised   : 63  (not quotable as source)
+  nav hierarchy : 510 chunks placed in the SUMMARY tree
+  size          : median 498, p99 3793, max 9524
+  schema        : 0 problem(s)
 ```
 
 Input: all five `deployments/mainnet/*/standard-input.json` at
-`v2-protocol@v2.1.0` (`c7be403`), solc 0.8.25.
+`v2-protocol@v2.1.0` (`c7be403`), solc 0.8.25; `wildcat-docs@aleph-v0.1`
+(`6c94fb3`) with `SUMMARY.md` as hierarchy and excludes from `manifest.yaml`.
 
 Include set: `src/**` plus `lib/solady/src/auth/Ownable.sol`. See
 `manifest.yaml` for why only one external library file is in.
 
-Tests: `test_solidity.py --solc solc` — 74 assertions across I1–I17.
-`test_markdown.py` — 42 assertions across M1–M12, no compiler needed. Exit code
-is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions.
+Tests: `test_solidity.py --solc solc` — 100 assertions across I1–I23.
+`test_markdown.py` — 78 assertions across M1–M17, no compiler needed. Exit code
+is the failure count in both. I12–I17 and M7–M12 are Round 1 regressions;
+I18–I23 and M13–M17 are Round 2.

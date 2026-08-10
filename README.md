@@ -175,8 +175,8 @@ ingest/
   chunkers/
     solidity.py               Solidity → chunks, via the compiler's AST
     markdown.py               markdown → chunks, on heading boundaries
-    test_solidity.py          74 assertions
-    test_markdown.py          42 assertions, no compiler needed
+    test_solidity.py          100 assertions
+    test_markdown.py          81 assertions, no compiler needed
 
 eval/
   golden-v1.yaml              125 questions, from real support transcripts
@@ -236,9 +236,12 @@ the ones that need a human rather than a build step.
 
 **In flight**
 
-- Round 2 of adversarial review. Round 1 (Sol 5.6) found six issues in each
-  chunker, all fixed with regressions. The markdown parser was rewritten in the
-  process and has the thinnest cover of anything here.
+- Round 3 of adversarial review. Rounds 1 and 2 found six and then thirteen
+  findings across the chunkers, all fixed with regressions; the pattern both
+  times was code reporting success while doing the wrong thing. The anchor
+  algorithm is fitted to the live renderer (465/465, artifacts included)
+  rather than specified; `ingest/chunkers/verify_anchors.py` re-checks the
+  fit on demand, which is the standing risk made re-testable.
 
 **Needs a decision**
 

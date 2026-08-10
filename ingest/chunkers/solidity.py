@@ -354,8 +354,9 @@ def make_chunk(node, contract, smap, inherits) -> Chunk | None:
         display_text=display,
         model_text=model,
         # the embedding needs the context the body lacks: which contract, what
-        # it is called, what kind of thing it is
-        embed_text=f"{breadcrumb}\n{kind}\n\n{model}",
+        # it is called, what kind of thing it is. Composed again from final
+        # state after merging — see compose_embed_text().
+        embed_text=f"{embed_head(kind, breadcrumb)}\n\n{model}",
         warnings=warnings,
         detail={
             "contract": cname,
@@ -405,7 +406,7 @@ def contract_header(contract: dict, smap: SourceMap, inherits) -> Chunk | None:
         breadcrumb=breadcrumb,
         display_text=display,
         model_text=model,
-        embed_text=f"{breadcrumb}\ncontract declaration and state\n\n{model}",
+        embed_text=f"{embed_head(contract.get('contractKind', 'contract'), breadcrumb)}\n\n{model}",
         synthesised=True,
         detail={
             "contract": contract["name"],
@@ -427,7 +428,8 @@ def contract_header(contract: dict, smap: SourceMap, inherits) -> Chunk | None:
 
 def compile_ast(input_path: str, solc: str) -> dict:
     doc = json.load(open(input_path))
-    doc.setdefault("settings", {})["outputSelection"] = {"*": {"": ["ast"]}}
+    doc.setdefault("settings", {})["outputSelection"] = {
+        "*": {"": ["ast"], "*": ["abi"]}}
     doc["settings"].pop("libraries", None)
     r = subprocess.run([solc, "--standard-json"], input=json.dumps(doc),
                        capture_output=True, text=True)
@@ -442,14 +444,37 @@ def compile_ast(input_path: str, solc: str) -> dict:
     return doc, out
 
 
-def chunk(input_path: str, solc: str, includes: list[str]) -> list[Chunk]:
+def chunk(input_path: str, solc: str, includes: list[str],
+          glob_hits: dict[str, int] | None = None) -> list[Chunk]:
     doc, out = compile_ast(input_path, solc)
     ast_ids = {p: s["id"] for p, s in out["sources"].items()}
     smap = SourceMap(doc["sources"], ast_ids)
 
+    # Selection is fail-loud, per PIPELINE.md §2: a glob that matches nothing
+    # is an error, not an empty set. A silently-empty selection is how a
+    # renamed directory removes the corpus while every build stays green —
+    # Round 2 demonstrated it with `--include 'typo/**'`: 0 chunks, exit 0,
+    # empty JSONL written.
+    selected: set[str] = set()
+    for path in out["sources"]:
+        hit = False
+        for g in includes:
+            if fnmatch.fnmatch(path, g):
+                hit = True
+                if glob_hits is not None:
+                    glob_hits[g] = glob_hits.get(g, 0) + 1
+        if hit or not includes:
+            selected.add(path)
+    if includes and not selected:
+        roots = sorted({str(pathlib.PurePosixPath(x).parts[0]) for x in out["sources"]})
+        raise ChunkError(
+            f"include patterns selected nothing in {input_path}\n"
+            f"  patterns : {includes}\n"
+            f"  top-level paths present: {roots}")
+
     chunks: list[Chunk] = []
     for path, entry in out["sources"].items():
-        if includes and not any(fnmatch.fnmatch(path, g) for g in includes):
+        if path not in selected:
             continue
         ast = entry.get("ast")
         if not ast:
@@ -488,6 +513,10 @@ def chunk(input_path: str, solc: str, includes: list[str]) -> list[Chunk]:
                 f"  {c.breadcrumb} (line {c.line})\n"
                 "  signature generation is not distinguishing these")
         seen[c.id] = c
+    if not chunks:
+        raise ChunkError(
+            f"{input_path}: selection matched {len(selected)} source file(s) "
+            "but produced zero chunks — nothing chunkable in the selection")
     return chunks
 
 
@@ -530,6 +559,13 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
             for member in base.get("nodes", []):
                 if member["nodeType"] not in CHUNKABLE:
                     continue
+                # A constructor is neither inherited nor callable through a
+                # derived contract: it runs once, at the deployment of the
+                # contract that declares it. Attributing a base constructor to
+                # its derived contracts answers "what can I call on X" with
+                # something that cannot be called on X, or at all.
+                if member.get("kind") == "constructor":
+                    continue
                 sig = signature(member)
                 key = (node_path[base_id], f"{base['name']}.{sig}")
                 # Only functions and modifiers can be overridden. Two events
@@ -553,22 +589,44 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
     return chunks
 
 
-def rebuild_embed_text(chunks: list[Chunk]) -> None:
+def embed_head(kind: str, breadcrumb: str) -> str:
     """
-    Derive embed_text from final state, once, after all merging is done.
+    The context line(s) that sit above the body in embed_text. One authority:
+    the construction sites and compose_embed_text() both call this, so the
+    format cannot drift between them.
+    """
+    if kind == "surface":
+        return breadcrumb
+    if kind in ("contract", "interface", "library"):
+        return f"{breadcrumb}\ncontract declaration and state"
+    return f"{breadcrumb}\n{kind}"
 
-    Appending "exposed by:" during per-unit resolution and then guarding the
-    append with a substring check made the embedded text depend on which
-    compilation unit was processed first: a member exposed by two contracts
-    would carry whichever one its first unit knew about, and never both. The
-    metadata was right and the thing actually being embedded was wrong, which is
-    the worst arrangement of the two.
+
+def compose_embed_text(chunks: list[Chunk]) -> None:
+    """
+    Derive embed_text wholesale from structured state — breadcrumb, kind,
+    model_text, exposed_by, alias breadcrumbs — once, after all merging and
+    deduplication is done.
+
+    Round 1 replaced accumulate-and-guard with rebuild; Round 2 found that the
+    rebuild recovered the base text by splitting on a "\\n\\nexposed by: "
+    marker, which hands control of the embedding to anyone who can write that
+    marker into natspec: everything after it, function body included, vanished
+    from embed_text while display_text stayed intact and every check passed.
+    Nothing here parses previous embed_text. It is composed, never recovered.
     """
     for c in chunks:
-        base = c.embed_text.split("\n\nexposed by: ")[0]
+        parts = [f"{embed_head(c.kind, c.breadcrumb)}\n\n{c.model_text}"]
         exposed = c.detail.get("exposed_by") or []
-        c.embed_text = base + ("\n\nexposed by: " + ", ".join(exposed)
-                               if exposed else "")
+        if exposed:
+            parts.append("exposed by: " + ", ".join(exposed))
+        # Folded duplicates are findable only if the identity that was folded
+        # away is actually in the text being indexed. detail.aliases records
+        # it for machines; this line records it for retrieval.
+        alias_bc = c.detail.get("alias_breadcrumbs") or []
+        if alias_bc:
+            parts.append("also declared as:\n" + "\n".join(alias_bc))
+        c.embed_text = "\n\n".join(parts)
 
 
 def getter_params(var: dict) -> list[str]:
@@ -590,6 +648,37 @@ def getter_params(var: dict) -> list[str]:
             t = t.get("baseType") or {}
         else:
             return params
+
+
+def _abi_callable_names(out: dict, path: str, name: str) -> list[str] | None:
+    """
+    Name multiset of the externally callable surface, straight from the ABI:
+    functions by name, plus fallback/receive by kind. Events, errors and the
+    constructor are not callable on a deployed contract and are excluded.
+    Returns None when the ABI was not produced, so the caller can tell "no
+    check ran" apart from "the check passed".
+    """
+    entry = ((out.get("contracts") or {}).get(path) or {}).get(name)
+    if entry is None or "abi" not in entry:
+        return None
+    names: list[str] = []
+    for item in entry["abi"]:
+        if item.get("type") == "function":
+            names.append(item.get("name"))
+        elif item.get("type") in ("fallback", "receive"):
+            names.append(item["type"])
+    return names
+
+
+def _multiset_diff(a: list[str], b: list[str]) -> list[str]:
+    rest = list(b)
+    out = []
+    for x in a:
+        if x in rest:
+            rest.remove(x)
+        else:
+            out.append(x)
+    return out
 
 
 def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chunk]:
@@ -620,6 +709,7 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
             continue
         seen: set[str] = set()
         lines: list[str] = []
+        names: list[str] = []          # multiset, checked against the ABI
         for base_id in contract.get("linearizedBaseContracts", []):
             base = by_id.get(base_id)
             if base is None:
@@ -627,16 +717,24 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
             for m in base.get("nodes", []):
                 origin = "" if base_id == cid else f"   (from {base['name']})"
 
-                # Public state variables get a compiler-generated getter and are
-                # part of the callable surface; omitting them understates it.
+                # Every public state variable gets a compiler-generated
+                # external getter — constants and immutables included. Round 2
+                # found constants excluded here, so MaximumLoanTerm() was
+                # missing from the FixedTermHooks surface: the one place that
+                # promises to answer "what can I call" was understating it.
                 if m["nodeType"] == "VariableDeclaration":
-                    if m.get("visibility") != "public" or m.get("constant"):
+                    if m.get("visibility") != "public":
                         continue
                     sig = f"{m.get('name')}({','.join(getter_params(m))})"
                     if sig in seen:
                         continue
                     seen.add(sig)
-                    lines.append(f"  public {sig}   [getter]{origin}")
+                    names.append(m.get("name"))
+                    mut = m.get("mutability")
+                    tag = ("[getter, constant]" if mut == "constant"
+                           else "[getter, immutable]" if mut == "immutable"
+                           else "[getter]")
+                    lines.append(f"  public {sig}   {tag}{origin}")
                     continue
 
                 if m["nodeType"] != "FunctionDefinition":
@@ -653,9 +751,26 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
                 if sig in seen:
                     continue
                 seen.add(sig)
+                names.append(m.get("name") or m.get("kind"))
                 lines.append(f"  {m.get('visibility')} {sig}{origin}")
         if not lines:
             continue
+
+        # The listing above approximates what the compiler does; the ABI *is*
+        # what the compiler does. Comparing the two — as name multisets, so a
+        # missing overload counts — turns any future divergence between the
+        # approximation and the real surface into a stopped build instead of a
+        # wrong answer. This is the check that would have caught the missing
+        # constant getters.
+        abi_names = _abi_callable_names(out, path, contract["name"])
+        if abi_names is not None and sorted(names) != sorted(abi_names):
+            missing = _multiset_diff(abi_names, names)
+            extra = _multiset_diff(names, abi_names)
+            raise ChunkError(
+                f"surface for {contract['name']} disagrees with the ABI\n"
+                + (f"  in ABI but not listed : {sorted(missing)}\n" if missing else "")
+                + (f"  listed but not in ABI : {sorted(extra)}\n" if extra else "")
+                + "  the surface builder no longer models what solc generates")
         body = f"{contract['name']} callable surface\n\n" + "\n".join(sorted(lines))
         breadcrumb = f"{path} › {contract['name']} › callable surface"
         chunks.append(Chunk(
@@ -667,7 +782,7 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
             breadcrumb=breadcrumb,
             display_text=body,
             model_text=body,
-            embed_text=f"{breadcrumb}\n\n{body}",
+            embed_text=f"{embed_head('surface', breadcrumb)}\n\n{body}",
             synthesised=True,
             detail={
                 "contract": contract["name"],
@@ -702,8 +817,12 @@ def dedupe(chunks: list[Chunk]) -> tuple[list[Chunk], int]:
             dropped += 1
             # Keep the discarded identity rather than losing it: the body is the
             # same, but the ID and its contract context are not, and a query
-            # naming the dropped contract should still find something.
+            # naming the dropped contract should still find something. The
+            # breadcrumb is kept alongside the ID so compose_embed_text() can
+            # put the folded identity into the retrieval text without parsing
+            # the ID back apart — IDs are output, not input.
             prior.detail.setdefault("aliases", []).append(c.id)
+            prior.detail.setdefault("alias_breadcrumbs", []).append(c.breadcrumb)
             prior.detail["exposed_by"] = sorted(
                 set(prior.detail.get("exposed_by") or [])
                 | set(c.detail.get("exposed_by") or []))
@@ -711,6 +830,73 @@ def dedupe(chunks: list[Chunk]) -> tuple[list[Chunk], int]:
         seen[h] = c
         kept.append(c)
     return kept, dropped
+
+
+def build(inputs: list[str], solc: str, includes: list[str],
+          no_dedupe: bool = False) -> tuple[list[Chunk], int]:
+    """
+    The whole pipeline behind the CLI: chunk each compilation unit, merge,
+    deduplicate, compose embeddings. Raises ChunkError for every condition
+    that must stop a build. main() is a thin wrapper around this, and the
+    tests call this — the same function, not a re-enactment of it. Round 2's
+    finding was that the fatal-condition tests recreated the checks by hand
+    and would have kept passing however badly this code regressed.
+    """
+    if not inputs:
+        raise ChunkError("no compilation units given")
+
+    glob_hits: dict[str, int] = {g: 0 for g in includes}
+    merged: dict[str, Chunk] = {}
+    # Sorted, so the merge does not depend on the order inputs were listed.
+    for path in sorted(inputs):
+        for c in chunk(path, solc, includes, glob_hits=glob_hits):
+            prior = merged.get(c.id)
+            if prior is None:
+                merged[c.id] = c
+                continue
+            # Same member in another compilation unit. Inheritance resolves
+            # per unit, so a function can look unreachable in one build and
+            # be exposed by a concrete contract in another — the truth is
+            # the union. Anything else differing is a disagreement about
+            # source, which is fatal.
+            if prior.display_text != c.display_text:
+                raise ChunkError(
+                    f"conflicting source for {c.id} across compilation units\n"
+                    f"  {prior.path}:{prior.line} and {c.path}:{c.line}\n"
+                    "  two builds disagree about the same source. Keeping\n"
+                    "  either body would attach a plausible citation to\n"
+                    "  arbitrary code.")
+            prior.detail["exposed_by"] = sorted(
+                set(prior.detail.get("exposed_by") or [])
+                | set(c.detail.get("exposed_by") or []))
+            # OR, not AND: a member absent from one unit is not evidence
+            # that it is un-overridden there.
+            prior.detail["overridden"] = (
+                prior.detail.get("overridden") or c.detail.get("overridden"))
+
+    # Each pattern must have earned its keep somewhere across the units — a
+    # single unit legitimately lacking a file (only one input carries
+    # Ownable.sol) is fine; a pattern matching nothing anywhere is a typo.
+    unmatched = [g for g, n in glob_hits.items() if n == 0]
+    if unmatched:
+        raise ChunkError(
+            "include pattern(s) matched nothing in any compilation unit: "
+            + ", ".join(repr(g) for g in unmatched))
+
+    chunks = list(merged.values())
+    dropped = 0
+    if not no_dedupe:
+        chunks, dropped = dedupe(chunks)
+    chunks.sort(key=lambda c: c.id)
+
+    if not chunks:
+        raise ChunkError("zero chunks after merging — refusing to call an "
+                         "empty corpus a successful build")
+
+    # embed_text is derived last, from final state, so it cannot disagree with
+    # the metadata beside it.
+    compose_embed_text(chunks)
+    return chunks, dropped
 
 
 def main() -> int:
@@ -725,47 +911,12 @@ def main() -> int:
     ap.add_argument("--no-dedupe", action="store_true")
     args = ap.parse_args()
 
-    merged: dict[str, Chunk] = {}
     try:
-        # Sorted, so the merge does not depend on the order inputs were listed.
-        for path in sorted(args.input):
-            for c in chunk(path, args.solc, args.include):
-                prior = merged.get(c.id)
-                if prior is None:
-                    merged[c.id] = c
-                    continue
-                # Same member in another compilation unit. Inheritance resolves
-                # per unit, so a function can look unreachable in one build and
-                # be exposed by a concrete contract in another — the truth is
-                # the union. Anything else differing is a disagreement about
-                # source, which is fatal.
-                if prior.display_text != c.display_text:
-                    raise ChunkError(
-                        f"conflicting source for {c.id} across compilation units\n"
-                        f"  {prior.path}:{prior.line} and {c.path}:{c.line}\n"
-                        "  two builds disagree about the same source. Keeping\n"
-                        "  either body would attach a plausible citation to\n"
-                        "  arbitrary code.")
-                prior.detail["exposed_by"] = sorted(
-                    set(prior.detail.get("exposed_by") or [])
-                    | set(c.detail.get("exposed_by") or []))
-                # OR, not AND: a member absent from one unit is not evidence
-                # that it is un-overridden there.
-                prior.detail["overridden"] = (
-                    prior.detail.get("overridden") or c.detail.get("overridden"))
+        chunks, dropped = build(args.input, args.solc, args.include,
+                                no_dedupe=args.no_dedupe)
     except ChunkError as e:
         print(f"\nFATAL: {e}", file=sys.stderr)
         return 1
-
-    chunks = list(merged.values())
-    dropped = 0
-    if not args.no_dedupe:
-        chunks, dropped = dedupe(chunks)
-    chunks.sort(key=lambda c: c.id)
-
-    # embed_text is derived last, from final state, so it cannot disagree with
-    # the metadata beside it.
-    rebuild_embed_text(chunks)
 
     # Oversize is a property of length, not of "has any warning attached".
     oversize = [c for c in chunks if len(c.model_text) > OVERSIZE_CHARS]
@@ -783,7 +934,10 @@ def main() -> int:
               and c.kind == "Function"
               and c.detail.get("visibility") in ("external", "public")
               and c.detail.get("declared_in_kind") == "contract"
-              and not c.detail.get("overridden")]
+              and not c.detail.get("overridden")
+              # constructors now carry no exposure by design — they run once,
+              # at deployment — which is not the same as being unreachable
+              and not c.detail.get("signature", "").startswith("constructor(")]
 
     print(f"{len(chunks)} chunks from {len(args.input)} compilation unit(s)  "
           f"({dropped} duplicate bodies folded, {aliased} alias id(s) kept)")
