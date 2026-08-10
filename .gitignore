@@ -2,7 +2,23 @@
 __pycache__/
 *.pyc
 
-# build artefacts: chunk output and corpus indexes are reproducible from
-# manifest.yaml and never belong in git
+# Credentials. Nothing in this repository is secret and nothing here should
+# ever become secret — the gateway bearer token lives in the environment as
+# ALEPH_GATEWAY_TOKEN, and a .env is how that usually reaches a shell. If one
+# of these is ever committed anyway, rotate the credential rather than reason
+# about who might have seen it.
+.env
+.env.*
+*.env
+.envrc
+ingest/keys/*.gpg
+ingest/keys/*secret*
+
+# Build artefacts: chunk output, corpus indexes and the driver's working
+# clones are all reproducible from manifest.yaml and never belong in git.
+# .aleph-work holds full checkouts of every source, which is a lot of someone
+# else's repository to add by accident.
 *.jsonl
 chunks/
+corpus/
+.aleph-work/

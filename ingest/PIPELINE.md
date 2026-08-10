@@ -49,8 +49,22 @@ is not in the keyring, is a missing control: it aborts too, but
 `build.json` so a corpus built without attestation can never be mistaken for one
 built with it.
 
-As of this writing no `v2-protocol` tag is signed, so the main corpus requires
-that waiver. The tag-object and commit hashes the manifest names are asserted on
+A valid signature is not the whole claim. `git verify-tag` succeeds for any key
+in the keyring, so `ref.signer_fingerprint` pins *whose* signature is expected;
+a valid signature from a different key is refused and is not waivable, because
+it is a different assertion rather than a weaker one. When no fingerprint is
+pinned the build says so on every run.
+
+`v2-protocol` is pinned at `aleph-v2.1.0`, a signed tag on the same commit as
+the unsigned release tag `v2.1.0`. The release tag was annotated but carried no
+signature and `v2.0.0` is lightweight, so `require_signature` could not be met
+by any build of either — which the first run of this driver discovered. Rather
+than move `v2.1.0`, which nobody who had already fetched it would ever pick up,
+a second tag carries the signature. Same commit, same corpus, byte for byte.
+
+The signature is a designation rather than an authorship claim: it says Wildcat
+pins this commit as the v2.0 corpus source. Signed with the key at
+`ingest/keys/release.asc`, whose fingerprint the manifest pins. The tag-object and commit hashes the manifest names are asserted on
 every build regardless, and those need no key — the build is pinned to exact
 objects whether or not anyone has vouched for them.
 
@@ -73,6 +87,34 @@ the corpus while every build stays green. As of Round 2 the chunkers enforce thi
 themselves — a pattern matching nothing anywhere, a unit selecting nothing, an
 unreadable `SUMMARY.md`, or a zero-chunk corpus all exit 1 and write no output —
 so the promise no longer depends on the stage around them.
+
+---
+
+### Watched documents
+
+A source may pin the digest of individual files under `watch`. The ref already
+fixes what a build ingests, so this is not a reproducibility control — it is an
+alarm for the one moment reproducibility cannot help with: a person deciding
+whether to move the pin.
+
+A document Aleph quotes verbatim can be substantively revised between
+promotions, and an answer citing superseded terms is indistinguishable from a
+correct one. A mismatch is therefore reported loudly and recorded in
+`build.json` with both digests, feeding the `corpus_diff_reviewed` gate. It is
+deliberately not fatal: a promotion carrying a revision is legitimate, it must
+simply not pass unnoticed.
+
+`strip_frontmatter: true` hashes the document body alone, which is what a
+Markdown page needs: the watch is on the legal language, not on the GitBook
+`description:` above it. Without it, the PR that adds `effective_date` and
+`doc_version` would trip every watched page at once, and a check that cries
+wolf on its own maintenance is one people learn to ignore.
+
+Currently watched: all four documents under `legal/`. The Terms of Use is
+pinned on its plaintext, whose digest is both the agreement hash a lender signs
+in their wallet and the version identifier the page states about itself; the
+other three on their bodies. A substantive revision of all of them is
+expected.
 
 ---
 

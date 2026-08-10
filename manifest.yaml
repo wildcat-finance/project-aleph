@@ -64,18 +64,34 @@ sources:
     repo: wildcat-finance/v2-protocol
     ref:
       kind: annotated_tag
-      tag: v2.1.0
-      tag_object: 8aab396          # annotated tag object — NOT SIGNED, see below
-      commit: c7be403              # resolve only after signature verifies
-      # Kept true deliberately, and currently unmet: v2.1.0 is an annotated
-      # tag carrying no signature at all, and v2.0.0 is lightweight. The first
-      # build that actually ran `git verify-tag` — ingest/build.py, 2026-08 —
-      # found this. Until a tag is signed, every build of this source needs
-      # --allow-unverified-signature, which records the gap in build.json.
-      # The tag object and commit hashes above are still asserted on every
-      # build, so the corpus is pinned to exact objects; it is not attested to
-      # a signer, and the "trust boundary is the signature" argument in
-      # aleph-ingestion-manifest.md §5 does not currently hold.
+      # aleph-v2.1.0 rather than v2.1.0. The release tag is annotated but
+      # unsigned — the first build that actually ran `git verify-tag`,
+      # ingest/build.py, found that out — and v2.0.0 is lightweight, so
+      # require_signature could not be met by any build of either. Rather than
+      # move v2.1.0, which nobody who already fetched it would ever pick up,
+      # this is a second tag on the same commit whose only job is to carry a
+      # signature. Same object, same corpus, byte for byte.
+      tag: aleph-v2.1.0
+      tag_object: 1b9c50935a84d76a19138b1dd88e419add93e562
+      commit: c7be4039f8f383a9dda4e45f63331c17d63f9ed9
+      supersedes_tag: v2.1.0 / 8aab396      # same commit, unsigned
+      # Full hashes, not the seven-character prefixes this file used to carry.
+      # The driver matches on prefix, and a 28-bit prefix is findable by
+      # anyone able to write an object into the repository — which is the
+      # threat this pin exists to answer.
+      #
+      # signer_fingerprint pins *who*. `git verify-tag` succeeds for any key
+      # in the keyring, so a signature without a pinned fingerprint proves
+      # only that somebody signed something. signer_key_file is imported into
+      # an ephemeral keyring that verification sees and nothing else, so a key
+      # trusted by the machine running the build does not count.
+      #
+      # The signature is a designation, not an authorship claim: it says
+      # Wildcat pins this commit as the v2.0 corpus source. Signed by the CEO
+      # for that reason, with the key registered at github.com/settings/keys,
+      # so the same attestation carries a Verified badge for humans.
+      signer_fingerprint: "3BCD9EFDA6670A3F65AF679EB83B60AE16F5DD1A"
+      signer_key_file: "ingest/keys/release.asc"
       require_signature: true
     # The public name of this protocol, and the only one an answer may use.
     # The repository distinguishes a v2.1.0 *tag*; Wildcat does not publish a
@@ -171,7 +187,7 @@ sources:
     ref:
       kind: tag
       tag: aleph-v0.2
-      commit: 21e7db2
+      commit: 21e7db223e55ffc2c125186280368f8d3856d46f
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
       supersedes: aleph-v0.1 / 6c94fb3
@@ -225,6 +241,63 @@ sources:
       # enter the model's context, where they are indistinguishable from
       # instructions Wildcat intended Aleph to follow.
     metadata_required: [ doc_version, effective_date ]
+
+    # Documents whose bytes are pinned by digest as well as by ref.
+    #
+    # The ref already fixes what a build ingests, so this changes nothing about
+    # reproducibility. It exists to notice the moment a document Aleph quotes
+    # verbatim is substantively revised — at the next docs promotion, when
+    # somebody is deciding whether to move the pin. build.py reports a mismatch
+    # and records both digests in build.json, which is what the
+    # corpus_diff_reviewed gate is for. It is deliberately not fatal: a
+    # promotion that carries a revision is legitimate, it just must not pass
+    # unnoticed.
+    watch:
+      - path: "legal/wildcat-terms-of-use.txt"
+        sha256: "711a9e6707e6cf85166786461a0a45aa3b926b22b414abe8dfcc6c1afef020d1"
+        note: >
+          The agreement hash a lender signs in their wallet, and the version
+          identifier the Terms of Use page states in its own frontmatter.
+          A substantive revision of the Terms of Use is expected — flagged by
+          Laurence, 2026-08. When this digest stops matching, that revision has
+          landed: do not promote the docs pin until someone has read the diff
+          and decided what it means for answers already given. The last
+          substantive change was 2025-02-12 (GITBOOK-154, an explicit promise
+          to repay and a default condition in §6.2), hashed in GITBOOK-155.
+
+          Aleph cites this document verbatim, and an answer quoting superseded
+          terms is the failure this corpus exists to avoid. Where Aleph and the
+          ToU disagree the ToU is correct — which is only true if the ToU in
+          the index is the one in force.
+
+      # The remaining legal documents, all expected to change in the same
+      # round. These are Markdown with GitBook frontmatter above the text, so
+      # the digest covers the body alone: what is watched is the legal
+      # language, not the `description:` line, and certainly not the
+      # effective_date/doc_version keys that metadata_required is about to add.
+      - path: "legal/risk-disclosure-statement.md"
+        strip_frontmatter: true
+        sha256: "6421aaf1c2dcd976084226158d1db375a59def81820ac396ad26bb7e8bd2d9be"
+        note: >
+          States its own effective date as 16 January 2025. Presented to
+          lenders before they deposit, so a superseded version is a
+          disclosure Aleph makes on Wildcat's behalf that Wildcat no longer
+          makes.
+      - path: "legal/protocol-ui-privacy-policy.md"
+        strip_frontmatter: true
+        sha256: "7789cdd129a304486f786dd36e7cd1e063e912fd1285e075501a0166186b440e"
+        note: >
+          States its own effective date as 16 January 2025.
+      - path: "legal/master-loan-agreement.md"
+        strip_frontmatter: true
+        sha256: "d7a97cee53b36b5bbfc7787b21864ccfd62f8bb070dae338777aaed99fb9aca9"
+        note: >
+          Body unchanged since 2025-02-12 (GITBOOK-149, 2025-02-07 by commit
+          date). Watched on the same reasoning even though it was not named
+          in the revision round: the repository copy is what every borrower
+          offering an MLA generates from, so a change here changes the
+          agreements being offered, not merely a page describing them.
+          Remove this entry if that inference is wrong.
 
 live_state:
   # Not a corpus. Read at query time, never embedded, never cached into the index.
