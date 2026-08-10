@@ -38,6 +38,8 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import os
+import shutil
 import importlib.util
 import json
 import pathlib
@@ -65,8 +67,10 @@ class BuildError(Exception):
     """A condition that must stop a build rather than warn."""
 
 
-def _run(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def _run(args: list[str], cwd: pathlib.Path | None = None,
+         env: dict | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+                          env=(dict(os.environ, **env) if env else None))
 
 
 def _sha256(data: bytes) -> str:
@@ -77,7 +81,101 @@ def _sha256(data: bytes) -> str:
 # 1. acquire
 # --------------------------------------------------------------------------
 
-def resolve_ref(source: dict, repo: pathlib.Path, allow_unverified: bool) -> dict:
+def prepare_keyring(sources: list[dict], manifest_dir: pathlib.Path,
+                    workdir: pathlib.Path) -> tuple[dict, dict]:
+    """
+    An ephemeral keyring holding exactly the keys the manifest declares.
+
+    Verification runs against this and nothing else, so a build cannot be made
+    to pass by importing a key on the machine that runs it — which is what
+    would otherwise happen, since `git verify-tag` consults whatever keyring
+    the invoking user happens to have. Two independent conditions have to hold
+    for a signature to count: the key was shipped with the corpus definition,
+    and its fingerprint is the one the manifest names.
+
+    The declared fingerprint is checked against the key file at import time, so
+    a swapped key is caught before any tag is looked at. The manifest is the
+    authority; the file is only how the bytes travel.
+    """
+    declared = [(s, (s.get("ref") or {}).get("signer_key_file"))
+                for s in sources]
+    declared = [(s, k) for s, k in declared if k]
+    if not declared:
+        return {}, {}
+
+    if shutil.which("gpg") is None:
+        raise BuildError("a signer_key_file is declared but gpg is not "
+                         "installed; signatures cannot be verified")
+
+    home = workdir / "keyring"
+    if home.exists():
+        shutil.rmtree(home)
+    home.mkdir(parents=True, exist_ok=True)
+    home.chmod(0o700)
+    env = {"GNUPGHOME": str(home)}
+    report: dict = {}
+
+    for source, rel in declared:
+        path = pathlib.Path(rel)
+        if not path.is_absolute():
+            path = manifest_dir / rel
+        if not path.exists():
+            raise BuildError(
+                f"{source['id']}: signer_key_file {path} does not exist. "
+                "The corpus definition ships the key it trusts; without it "
+                "there is nothing to verify against.")
+        r = _run(["gpg", "--batch", "--quiet", "--import", str(path)], env=env)
+        if r.returncode != 0:
+            raise BuildError(f"{source['id']}: importing {path} failed: "
+                             f"{r.stderr[:200]}")
+        listing = _run(["gpg", "--list-keys", "--with-colons"], env=env).stdout
+        # Only primary keys. `--with-colons` emits an `fpr` record for every
+        # subkey too, and a modern `--quick-generate-key` produces an
+        # encryption subkey as a matter of course — recording those alongside
+        # the primary would list fingerprints that never sign anything as
+        # though they were signing identities.
+        fingerprints, primary = [], False
+        for line in listing.splitlines():
+            if line.startswith("pub:"):
+                primary = True
+            elif line.startswith(("sub:", "uid:")):
+                primary = False
+            elif line.startswith("fpr:") and primary:
+                fingerprints.append(line.split(":")[9])
+                primary = False
+        expected = ((source.get("ref") or {}).get("signer_fingerprint")
+                    or "").replace(" ", "").upper()
+        if expected and expected not in fingerprints:
+            raise BuildError(
+                f"{source['id']}: {path} does not contain the pinned key\n"
+                f"  manifest pins  {expected}\n"
+                f"  file provides  {fingerprints}\n"
+                "  The key file has been changed, or the manifest has.")
+        report[source["id"]] = {"key_file": str(rel),
+                                "fingerprints": fingerprints}
+        print(f"  [{source['id']}] keyring: imported {path.name} "
+              f"({len(fingerprints)} key(s))")
+    return env, report
+
+
+def _validsig_fingerprint(raw: str) -> str | None:
+    """
+    The primary key fingerprint from `git verify-tag --raw` output.
+
+    GnuPG's VALIDSIG status line ends with the *primary* fingerprint, which is
+    what a manifest should pin: GOODSIG carries only a short key id, and
+    KEY_CONSIDERED appears for keys that were merely looked at.
+    """
+    for line in raw.splitlines():
+        if "VALIDSIG" in line:
+            parts = line.split()
+            if len(parts) >= 3:
+                return parts[-1].upper()
+    return None
+
+
+def resolve_ref(source: dict, repo: pathlib.Path, allow_unverified: bool,
+                gpg_env: dict | None = None) -> dict:
     """
     Resolve one source to an immutable object, and say how much that resolution
     is worth.
@@ -130,10 +228,32 @@ def resolve_ref(source: dict, repo: pathlib.Path, allow_unverified: bool) -> dic
             # bad, but bad in a way a human can knowingly accept for a build.
             # Collapsing them would either block every build forever or wave
             # through the one case that must never be waved through.
-            v = _run(["git", "verify-tag", "--raw", tag], repo)
+            v = _run(["git", "verify-tag", "--raw", tag], repo, env=gpg_env)
             err = (v.stderr or "") + (v.stdout or "")
             if v.returncode == 0:
                 out["signature"] = "verified"
+                out["signed_by"] = _validsig_fingerprint(err)
+                # A valid signature by *someone* is not the claim the manifest
+                # is making. `git verify-tag` succeeds for any key that happens
+                # to be in the keyring, so without a pinned fingerprint this
+                # gate proves far less than it looks like it proves.
+                expected = (ref.get("signer_fingerprint") or "").replace(" ", "").upper()
+                if expected:
+                    if out["signed_by"] != expected:
+                        out["signature"] = "wrong_signer"
+                        raise BuildError(
+                            f"{source['id']}: {tag!r} is validly signed, but by "
+                            f"{out['signed_by']}\n"
+                            f"  manifest pins {expected}\n"
+                            "  A signature from an unexpected key is not a "
+                            "weaker signature, it is a different claim. Not "
+                            "waivable.")
+                    out["signer_pinned"] = True
+                else:
+                    out["signer_pinned"] = False
+                    print(f"  [{source['id']}] WARNING: signature is valid but "
+                          "no signer_fingerprint is pinned — any key in the "
+                          "keyring would satisfy this")
             elif "no signature found" in err.lower():
                 out["signature"] = "unsigned"
                 if not allow_unverified:
@@ -182,7 +302,8 @@ def resolve_ref(source: dict, repo: pathlib.Path, allow_unverified: bool) -> dic
 
 
 def acquire(source: dict, workdir: pathlib.Path, local: dict[str, str],
-            allow_unverified: bool) -> tuple[pathlib.Path, dict]:
+            allow_unverified: bool,
+            gpg_env: dict | None = None) -> tuple[pathlib.Path, dict]:
     sid = source["id"]
     if sid in local:
         repo = pathlib.Path(local[sid]).resolve()
@@ -202,7 +323,7 @@ def acquire(source: dict, workdir: pathlib.Path, local: dict[str, str],
             raise BuildError(f"{sid}: fetch failed: {r.stderr[:200]}")
         origin = url
 
-    resolution = resolve_ref(source, repo, allow_unverified)
+    resolution = resolve_ref(source, repo, allow_unverified, gpg_env)
     resolution["origin"] = origin
     r = _run(["git", "checkout", "--quiet", "--detach", resolution["commit"]], repo)
     if r.returncode != 0:
@@ -220,6 +341,51 @@ def acquire(source: dict, workdir: pathlib.Path, local: dict[str, str],
 # --------------------------------------------------------------------------
 # 2. filter
 # --------------------------------------------------------------------------
+
+def check_watched(source: dict, repo: pathlib.Path) -> list[dict]:
+    """
+    Compare the digest of every watched document against the manifest.
+
+    The ref already pins what gets ingested, so this is not a reproducibility
+    control — it is an alarm for the one moment reproducibility cannot help
+    with: somebody deciding whether to move the pin. A document Aleph quotes
+    verbatim can be substantively revised between promotions, and an answer
+    citing superseded terms is indistinguishable from a correct one.
+
+    `strip_frontmatter` hashes the document body alone. What is being watched
+    is the legal text, not the GitBook metadata above it, and pinning the whole
+    file would make every `description:` edit look like a revision — including
+    the one that adds `effective_date` and `doc_version`. A watch that cries
+    wolf on its own maintenance is a watch people learn to ignore.
+
+    Not fatal. A promotion carrying a revision is legitimate; it must simply
+    not pass unnoticed, so the result lands in build.json where the
+    corpus_diff_reviewed gate can see it.
+    """
+    results = []
+    for entry in source.get("watch") or []:
+        path = repo / entry["path"]
+        expected = (entry.get("sha256") or "").lower()
+        if not path.exists():
+            results.append({"path": entry["path"], "status": "missing",
+                            "expected": expected, "actual": None})
+            continue
+        raw = path.read_bytes()
+        if entry.get("strip_frontmatter"):
+            if raw.startswith(b"---"):
+                parts = raw.split(b"---", 2)
+                if len(parts) > 2:
+                    raw = parts[2].lstrip(b"\r\n")
+        actual = _sha256(raw)
+        results.append({
+            "path": entry["path"],
+            "status": "unchanged" if actual == expected else "CHANGED",
+            "expected": expected,
+            "actual": actual,
+            "scope": "body" if entry.get("strip_frontmatter") else "file",
+        })
+    return results
+
 
 def markdown_globs(source: dict) -> list[str]:
     """
@@ -423,12 +589,16 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
     workdir_p.mkdir(parents=True, exist_ok=True)
 
     print("acquire")
+    gpg_env, keyring = prepare_keyring(
+        sources, pathlib.Path(manifest_path).resolve().parent, workdir_p)
     repos, resolutions = {}, {}
     for s in sources:
-        repo, res = acquire(s, workdir_p, local, allow_unverified)
+        repo, res = acquire(s, workdir_p, local, allow_unverified, gpg_env)
         repos[s["id"]], resolutions[s["id"]] = repo, res
         sig = res["signature"]
-        mark = {"verified": "signature verified",
+        mark = {"verified": ("signature verified, signer pinned"
+                             if res.get("signer_pinned")
+                             else "signature valid, SIGNER NOT PINNED"),
                 "unsigned": "NOT ATTESTED (tag carries no signature) — waived",
                 "no_public_key": "NOT ATTESTED (no public key) — waived",
                 "not_required": "unsigned by design"}.get(sig, sig)
@@ -442,7 +612,20 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
     print("\nfilter + parse")
     all_chunks: list = []
     per_source: dict = {}
+    watched: dict = {}
     for s in sources:
+        found = check_watched(s, repos[s["id"]])
+        if found:
+            watched[s["id"]] = found
+            for w in found:
+                if w["status"] == "unchanged":
+                    print(f"  [{s['id']}] watch: {w['path']} unchanged")
+                else:
+                    print(f"  [{s['id']}] WATCH {w['status']}: {w['path']}")
+                    print(f"      pinned {w['expected'][:16]}… "
+                          f"actual {(w['actual'] or 'absent')[:16]}…")
+                    print("      a watched document has been revised — read "
+                          "the diff before promoting this pin")
         report = filter_report(s)
         got = chunk_source(s, repos[s["id"]], solc, report)
         namespace_ids(got, s["id"])
@@ -490,11 +673,14 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
     if unmet and allow_missing_metadata:
         waivers.append("metadata_required_unmet")
 
+    _verified = [r for r in resolutions.values()
+                 if r["signature"] == "verified"]
     record = {
         "build_id": build_id,
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "manifest_sha256": _sha256(manifest_bytes),
         "manifest_path": str(manifest_path),
+        "keyring": keyring or None,
         "index": "prerelease" if prerelease else "main",
         "tools": tools,
         "sources": {sid: {**resolutions[sid], **per_source[sid]}
@@ -509,12 +695,24 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
             "signature_verified": all(
                 r["signature"] in ("verified", "not_required")
                 for r in resolutions.values()),
+            # None, not True, when nothing was verified. `all()` over an
+            # empty sequence is True, which would have reported a pinned
+            # signer next to signature_verified=False — a gate passing
+            # vacuously reads exactly like a gate passing.
+            "signer_pinned": (
+                all(r.get("signer_pinned") for r in _verified)
+                if _verified else None),
             "metadata_required": not unmet,
             "schema_valid": True,
+            "watched_documents_unchanged": (
+                all(w["status"] == "unchanged"
+                    for ws in watched.values() for w in ws)
+                if watched else None),
             "address_assertions_hold": None,   # needs the SDK artefact
             "eval_not_regressed": None,        # needs an index
         },
         "waivers": waivers,
+        "watch": watched or None,
     }
 
     if against:

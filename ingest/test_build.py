@@ -142,6 +142,38 @@ def test_signatures(tmp: pathlib.Path) -> None:
             raised = str(e)
         check("resolving away from the named commit is fatal",
               "manifest names" in raised, raised[:100])
+
+        # pinning the signer: the right key passes, a valid signature from the
+        # wrong key is a different claim and is refused
+        fpr = subprocess.run(["gpg", "--list-keys", "--with-colons"],
+                             capture_output=True, text=True,
+                             env=dict(os.environ, **env)).stdout
+        fingerprint = next(l.split(":")[9] for l in fpr.splitlines()
+                           if l.startswith("fpr"))
+        pinned = {**src, "ref": {**src["ref"],
+                                 "signer_fingerprint": fingerprint}}
+        out = ab.resolve_ref(pinned, repo, allow_unverified=False)
+        check("a signature from the pinned key passes",
+              out["signature"] == "verified" and out.get("signer_pinned"),
+              str(out.get("signature")))
+        check("...and the fingerprint is recorded",
+              out.get("signed_by") == fingerprint, str(out.get("signed_by")))
+
+        wrong_fpr = {**src, "ref": {**src["ref"],
+                                    "signer_fingerprint": "0" * 40}}
+        raised = ""
+        try:
+            ab.resolve_ref(wrong_fpr, repo, allow_unverified=True)
+        except ab.BuildError as e:
+            raised = str(e)
+        check("a valid signature from an unpinned key is refused",
+              "manifest pins" in raised and "Not waivable" in raised,
+              raised[:140])
+
+        unpinned = ab.resolve_ref(src, repo, allow_unverified=False)
+        check("an unpinned signer is flagged rather than assumed good",
+              unpinned.get("signer_pinned") is False,
+              str(unpinned.get("signer_pinned")))
     finally:
         os.environ.pop("GNUPGHOME", None)
 
@@ -180,6 +212,252 @@ def test_signatures(tmp: pathlib.Path) -> None:
 # --------------------------------------------------------------------------
 # B3 — policy the manifest states and nothing enforced
 # --------------------------------------------------------------------------
+
+def test_keyring(tmp: pathlib.Path) -> None:
+    print("\nB7 — verification uses the shipped keyring, not the machine's")
+    home = tmp / "gnupg"
+    home.mkdir(mode=0o700)
+    env = {"GNUPGHOME": str(home)}
+
+    def genkey(name):
+        subprocess.run(["gpg", "--batch", "--passphrase", "",
+                        "--quick-generate-key", f"{name} <{name}@example.invalid>",
+                        "default", "default", "never"],
+                       capture_output=True, text=True,
+                       env=dict(os.environ, **env))
+        listing = subprocess.run(["gpg", "--list-keys", "--with-colons", name],
+                                 capture_output=True, text=True,
+                                 env=dict(os.environ, **env)).stdout
+        return next(l.split(":")[9] for l in listing.splitlines()
+                    if l.startswith("fpr"))
+
+    fpr_release = genkey("release")
+    fpr_rogue = genkey("rogue")
+    keyfile = tmp / "release.asc"
+    keyfile.write_bytes(subprocess.run(
+        ["gpg", "--armor", "--export", fpr_release], capture_output=True,
+        env=dict(os.environ, **env)).stdout)
+
+    # a tag signed by the rogue key — which is present on this machine
+    repo = make_repo(tmp / "kr", {"a.md": f"# A\n\n{LONG}\n"})
+    git(repo, "config", "user.signingkey", fpr_rogue)
+    git(repo, "tag", "-s", "-m", "signed by the wrong key", "v1.0.0",
+        env_extra=env)
+
+    manifest = tmp / "kr.yaml"
+    manifest.write_text(
+        "version: 1\nsources:\n  - id: alpha\n    tier: B\n    repo: x/alpha\n"
+        "    ref:\n      kind: tag\n      tag: v1.0.0\n"
+        "      require_signature: true\n"
+        f"      signer_fingerprint: '{fpr_release}'\n"
+        f"      signer_key_file: '{keyfile}'\n"
+        "    include: ['**/*.md']\n", encoding="utf-8")
+
+    # the ambient keyring has the rogue key; the shipped one does not
+    os.environ["GNUPGHOME"] = str(home)
+    try:
+        raised = ""
+        try:
+            ab.build(str(manifest), str(tmp / "k1"), "solc", str(tmp / "wk"),
+                     {"alpha": str(repo)}, False, True, False, None)
+        except ab.BuildError as e:
+            raised = str(e)
+        check("a key trusted by the machine but not shipped does not count",
+              "public key" in raised, raised[:140])
+
+        # now sign with the release key and it passes, no ambient help needed
+        git(repo, "config", "user.signingkey", fpr_release)
+        git(repo, "tag", "-s", "-f", "-m", "signed properly", "v1.0.0",
+            env_extra=env)
+        rec = ab.build(str(manifest), str(tmp / "k2"), "solc", str(tmp / "wk"),
+                       {"alpha": str(repo)}, False, True, False, None)
+        check("the shipped key verifies its own signature",
+              rec["gates"]["signature_verified"] is True, str(rec["gates"]))
+        check("and the signer is pinned, not merely valid",
+              rec["gates"]["signer_pinned"] is True, str(rec["gates"]))
+        check("no waiver was needed", rec["waivers"] == [], str(rec["waivers"]))
+        check("the build records which key file was trusted",
+              rec["keyring"]["alpha"]["fingerprints"] == [fpr_release],
+              str(rec.get("keyring")))
+
+        # A key that signs with a dedicated signing subkey — the ordinary
+        # shape of a GitHub-registered key. GnuPG reports the subkey as the
+        # signer and the primary last on the VALIDSIG line; the manifest pins
+        # the primary, so the two must not be confused.
+        subprocess.run(["gpg", "--batch", "--passphrase", "",
+                        "--quick-add-key", fpr_release, "default", "sign",
+                        "never"], capture_output=True,
+                       env=dict(os.environ, **env))
+        listing = subprocess.run(["gpg", "--list-keys", "--with-colons",
+                                  fpr_release], capture_output=True, text=True,
+                                 env=dict(os.environ, **env)).stdout
+        subkeys, insub = [], False
+        for line in listing.splitlines():
+            if line.startswith("sub:"):
+                insub = True
+            elif line.startswith("fpr:") and insub:
+                subkeys.append(line.split(":")[9])
+                insub = False
+        check("the release key now has a signing subkey", bool(subkeys),
+              str(subkeys))
+        if subkeys:
+            # The shipped public key must be re-exported after the subkey is
+            # added: a key file that predates the signing subkey cannot verify
+            # its signatures, and fails as "no public key" — which reads like a
+            # missing key rather than a stale one.
+            stale = ab.prepare_keyring
+            raised = ""
+            git(repo, "config", "user.signingkey", subkeys[-1] + "!")
+            git(repo, "tag", "-s", "-f", "-m", "signed by subkey", "v1.0.0",
+                env_extra=env)
+            try:
+                ab.build(str(manifest), str(tmp / "k3b"), "solc",
+                         str(tmp / "wk2b"), {"alpha": str(repo)}, False, True,
+                         False, None)
+            except ab.BuildError as e:
+                raised = str(e)
+            check("a key file predating the signing subkey does not verify",
+                  "public key" in raised, raised[:120])
+            keyfile.write_bytes(subprocess.run(
+                ["gpg", "--armor", "--export", fpr_release],
+                capture_output=True, env=dict(os.environ, **env)).stdout)
+            raw = git(repo, "verify-tag", "--raw", "v1.0.0",
+                      env_extra=env).stderr
+            check("the signature is made by the subkey",
+                  subkeys[-1] in raw.split("VALIDSIG")[1].split()[0]
+                  if "VALIDSIG" in raw else False, raw[:120])
+            check("...but the fingerprint pinned on is the primary",
+                  ab._validsig_fingerprint(raw) == fpr_release,
+                  str(ab._validsig_fingerprint(raw)))
+            rec = ab.build(str(manifest), str(tmp / "k4"), "solc",
+                           str(tmp / "wk3"), {"alpha": str(repo)}, False, True,
+                           False, None)
+            check("a subkey-signed tag satisfies the pin on its primary",
+                  rec["gates"]["signature_verified"] is True
+                  and rec["gates"]["signer_pinned"] is True, str(rec["gates"]))
+
+        # a key file that does not contain the pinned key is caught at import
+        other = tmp / "rogue.asc"
+        other.write_bytes(subprocess.run(
+            ["gpg", "--armor", "--export", fpr_rogue], capture_output=True,
+            env=dict(os.environ, **env)).stdout)
+        swapped = manifest.read_text().replace(str(keyfile), str(other))
+        (tmp / "kr2.yaml").write_text(swapped, encoding="utf-8")
+        raised = ""
+        try:
+            ab.build(str(tmp / "kr2.yaml"), str(tmp / "k3"), "solc",
+                     str(tmp / "wk2"), {"alpha": str(repo)}, False, True,
+                     False, None)
+        except ab.BuildError as e:
+            raised = str(e)
+        check("a swapped key file is caught before any tag is looked at",
+              "does not contain the pinned key" in raised, raised[:140])
+    finally:
+        os.environ.pop("GNUPGHOME", None)
+
+
+def test_watched_documents(tmp: pathlib.Path) -> None:
+    print("\nB8 — a watched document that changes is noticed, not blocked")
+    import hashlib
+    body = b"Terms of Use, version one. " + b"x" * 200
+    a = make_repo(tmp / "wsrc", {"doc.md": f"# Doc\n\n{LONG}\n",
+                                 "legal/tou.txt": body.decode()})
+    git(a, "tag", "-a", "-m", "t", "v1.0.0")
+    digest = hashlib.sha256((a / "legal" / "tou.txt").read_bytes()).hexdigest()
+
+    manifest = tmp / "w.yaml"
+    manifest.write_text(
+        "version: 1\nsources:\n  - id: alpha\n    tier: B\n    repo: x/alpha\n"
+        "    ref: {kind: tag, tag: v1.0.0}\n    include: ['**/*.md']\n"
+        "    watch:\n"
+        "      - path: 'legal/tou.txt'\n"
+        f"        sha256: '{digest}'\n", encoding="utf-8")
+
+    rec = ab.build(str(manifest), str(tmp / "w1"), "solc", str(tmp / "ww"),
+                   {"alpha": str(a)}, True, True, False, None)
+    check("an unchanged document reports unchanged",
+          rec["watch"]["alpha"][0]["status"] == "unchanged",
+          str(rec["watch"]))
+    check("...and the gate is true",
+          rec["gates"]["watched_documents_unchanged"] is True,
+          str(rec["gates"]["watched_documents_unchanged"]))
+
+    # the revision lands
+    (a / "legal" / "tou.txt").write_text(
+        "Terms of Use, version TWO, substantively revised. " + "y" * 200,
+        encoding="utf-8")
+    git(a, "add", "-A")
+    git(a, "commit", "-qm", "substantive ToU revision")
+    git(a, "tag", "-a", "-f", "-m", "t", "v1.0.0")
+
+    rec = ab.build(str(manifest), str(tmp / "w2"), "solc", str(tmp / "ww"),
+                   {"alpha": str(a)}, True, True, False, None)
+    w = rec["watch"]["alpha"][0]
+    check("a revised document is flagged CHANGED", w["status"] == "CHANGED",
+          str(w["status"]))
+    check("both digests are recorded, so the diff is reviewable",
+          w["expected"] == digest and w["actual"] != digest, str(w))
+    check("the gate goes false",
+          rec["gates"]["watched_documents_unchanged"] is False,
+          str(rec["gates"]["watched_documents_unchanged"]))
+    check("but the build still succeeds — a revision is not a fault",
+          rec["chunks"]["total"] > 0, str(rec["chunks"]["total"]))
+
+    # frontmatter is metadata, not the document: a watch scoped to the body
+    # must survive the very PR that adds effective_date and doc_version
+    fm = tmp / "fmsrc"
+    body = "# Terms\n\nThe operative legal text, unchanged.\n" + "z" * 200
+    b = make_repo(fm, {"doc.md": f"# Doc\n\n{LONG}\n",
+                       "legal/tou.md": f"---\ndescription: 'v1'\n---\n\n{body}"})
+    git(b, "tag", "-a", "-m", "t", "v1.0.0")
+    body_digest = hashlib.sha256(body.encode()).hexdigest()
+    fman = tmp / "fm.yaml"
+    fman.write_text(
+        "version: 1\nsources:\n  - id: alpha\n    tier: B\n    repo: x/alpha\n"
+        "    ref: {kind: tag, tag: v1.0.0}\n    include: ['**/*.md']\n"
+        "    watch:\n      - path: 'legal/tou.md'\n"
+        "        strip_frontmatter: true\n"
+        f"        sha256: '{body_digest}'\n", encoding="utf-8")
+    rec = ab.build(str(fman), str(tmp / "f1"), "solc", str(tmp / "fw"),
+                   {"alpha": str(fm)}, True, True, False, None)
+    check("a body-scoped watch matches on the body",
+          rec["watch"]["alpha"][0]["status"] == "unchanged"
+          and rec["watch"]["alpha"][0]["scope"] == "body",
+          str(rec["watch"]["alpha"][0]))
+
+    (fm / "legal" / "tou.md").write_text(
+        f"---\ndescription: 'v1'\neffective_date: \"2025-01-16\"\n"
+        f"doc_version: \"2025-01-16\"\n---\n\n{body}", encoding="utf-8")
+    git(fm, "add", "-A"); git(fm, "commit", "-qm", "add metadata")
+    git(fm, "tag", "-a", "-f", "-m", "t", "v1.0.0")
+    rec = ab.build(str(fman), str(tmp / "f2"), "solc", str(tmp / "fw"),
+                   {"alpha": str(fm)}, True, True, False, None)
+    check("adding frontmatter does not trip it",
+          rec["watch"]["alpha"][0]["status"] == "unchanged",
+          str(rec["watch"]["alpha"][0]["status"]))
+
+    (fm / "legal" / "tou.md").write_text(
+        f"---\ndescription: 'v1'\n---\n\n{body}\n\nAn added clause.",
+        encoding="utf-8")
+    git(fm, "add", "-A"); git(fm, "commit", "-qm", "revise the text")
+    git(fm, "tag", "-a", "-f", "-m", "t", "v1.0.0")
+    rec = ab.build(str(fman), str(tmp / "f3"), "solc", str(tmp / "fw"),
+                   {"alpha": str(fm)}, True, True, False, None)
+    check("...but changing the text does",
+          rec["watch"]["alpha"][0]["status"] == "CHANGED",
+          str(rec["watch"]["alpha"][0]["status"]))
+
+    # a watched path that disappears is also worth knowing about
+    (a / "legal" / "tou.txt").unlink()
+    git(a, "add", "-A")
+    git(a, "commit", "-qm", "removed")
+    git(a, "tag", "-a", "-f", "-m", "t", "v1.0.0")
+    rec = ab.build(str(manifest), str(tmp / "w3"), "solc", str(tmp / "ww"),
+                   {"alpha": str(a)}, True, True, False, None)
+    check("a watched document that vanishes is reported missing",
+          rec["watch"]["alpha"][0]["status"] == "missing",
+          str(rec["watch"]["alpha"][0]["status"]))
+
 
 def test_policy(tmp: pathlib.Path) -> None:
     print("\nB3 — stated policy is enforced, not merely stated")
@@ -327,6 +605,9 @@ def test_gates(tmp: pathlib.Path) -> None:
           rec["gates"]["address_assertions_hold"] is None
           and rec["gates"]["eval_not_regressed"] is None,
           str(rec["gates"]))
+    check("signer_pinned is null when no signature was verified, not true",
+          rec["gates"]["signer_pinned"] is None,
+          str(rec["gates"]["signer_pinned"]))
     written = json.load(open(pathlib.Path(tmp / "g3" / rec["build_id"]
                                           / "build.json")))
     check("the record on disk carries the waivers",
@@ -393,7 +674,9 @@ def main() -> int:
     ap.parse_args()
 
     test_build_id()
-    for fn in (test_signatures, test_policy, test_merge_and_provenance,
+    for fn in (test_signatures, test_keyring, test_watched_documents,
+               test_policy,
+               test_merge_and_provenance,
                test_gates, test_filter_and_diff):
         td = tempfile.mkdtemp()
         try:
