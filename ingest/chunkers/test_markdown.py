@@ -514,7 +514,7 @@ def test_setext_paragraph_state() -> None:
 
 
 def test_renderer_anchor_algorithm() -> None:
-    print("\nM16 — anchors are what the renderer serves, fitted 465/465 live")
+    print("\nM16 — anchors are what the renderer serves, fitted 494/494 live")
     g = md.gitbook_id
     check("link headings slug their labels",
           md.gitbook_id(md.heading_text(
