@@ -3,9 +3,9 @@ __pycache__/
 *.pyc
 
 # Credentials. Nothing in this repository is secret and nothing here should
-# ever become secret — the gateway bearer token lives in the environment as
-# ALEPH_GATEWAY_TOKEN, and a .env is how that usually reaches a shell. If one
-# of these is ever committed anyway, rotate the credential rather than reason
+# ever become secret — service credentials live in the environment as
+# ALEPH_GATEWAY_TOKEN and ALEPH_TELEGRAM_TOKEN, and a .env is how they usually
+# reach a shell. If one is ever committed anyway, rotate it rather than reason
 # about who might have seen it.
 .env
 .env.*
@@ -24,3 +24,4 @@ corpus/
 index/
 artifacts/
 .aleph-work/
+state/

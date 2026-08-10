@@ -5,13 +5,13 @@ Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
 This repository contains the evidence and answer path: reproducible ingestion,
 tiered retrieval, typed live-state reads, policy-first routing, citable answer
-assembly, and blocking product evaluation. It does not yet contain the Telegram
-interface or production service wrapper.
+assembly, blocking product evaluation, and a long-polling Telegram adapter. It
+does not yet contain the production service composition or deployment wrapper.
 
 The shortest honest status is:
 
-> **Aleph has a promotion-gated answer path over immutable evidence and
-> fixture-backed live state. The next dependency is the Telegram adapter.**
+> **Aleph has a promotion-gated answer path and a tested Telegram interface.
+> The next dependency is production activation and operations.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -44,6 +44,8 @@ The checked-in code already provides:
   version isolation, exact claim-support checks, and immutable reports;
 - approval that binds the exact evaluation to a new release identity only when
   every manifest gate is `true`;
+- a privacy-mode, long-polling Telegram adapter with durable offsets, bounded
+  admission, threaded replies, exact answer splitting, and confirmed handoffs;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -219,29 +221,35 @@ Approval does not activate a release. It produces the only artifact stage 7 may
 later activate, retaining the candidate, live fixture hash, tool hashes, per-case
 results, and evaluation identity needed for reproduction.
 
-### 6. Add the Telegram adapter — build next
+### 6. Telegram adapter — implemented
 
 Telegram is an interface over the tested answer engine, not the place where
 retrieval or policy should live.
 
-Build next:
+`telegram.py` implements the interface without moving retrieval or policy into
+the transport. `TELEGRAM.md` states its runtime and privacy boundaries.
 
-- long-polling with `getUpdates`, avoiding a public webhook and inbound TLS
-  surface;
-- group privacy mode so Aleph receives commands and mentions rather than every
-  room message;
+The implementation provides:
+
+- startup checks that require long polling, an absent webhook, and enabled group
+  privacy mode;
+- message-only `getUpdates` polling with an atomically persisted offset;
+- private questions plus group commands, mentions, and replies, while ambient
+  room text and commands for other bots are ignored;
 - message parsing, reply threading, length-aware formatting, and stable citation
   links;
-- explicit escalation and triage handoff controls;
+- an allowlisted handoff draft and preview followed by a separate explicit
+  `/confirm_handoff`, with the default destination disabled;
 - rate limits and bounded concurrency; and
 - user-facing failure messages for unavailable live data, unsupported questions,
   and internal errors.
 
-**Complete when:** Telegram integration tests prove that the adapter passes typed
-requests and renders typed responses without changing their evidence, figures,
-refusal state, or citations.
+`test_telegram.py` passes real fixture-backed answer-engine output through the
+adapter. It checks unchanged citation text, topic/reply identity, exact
+reconstruction of split answers, send-failure checkpoint behavior, bounded
+admission, fixed internal-error text, and the no-confirmation/no-handoff rule.
 
-### 7. Add production deployment and operations
+### 7. Add production deployment and operations — build next
 
 The final stage turns a tested artifact into a service without weakening its
 replay and rollback guarantees.
@@ -331,6 +339,7 @@ python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
 python3 test_evaluation.py
+python3 test_telegram.py
 
 # After building both main and prerelease evidence releases:
 python3 eval/product_eval.py \
@@ -363,6 +372,9 @@ ANSWERING.md                  answer-path contracts and failure boundaries
 test_agent.py                 golden routing and assembly adversarial checks
 promotion.py                  all-gates-true evaluated release approval
 test_evaluation.py            product gate and approval adversarial checks
+telegram.py                   privacy-mode long-polling interface adapter
+TELEGRAM.md                   Telegram delivery and handoff boundaries
+test_telegram.py              parsing, delivery, offset and handoff integration
 
 ingest/
   build.py                    manifest -> validated corpus build

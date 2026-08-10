@@ -43,6 +43,7 @@ python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
 python3 test_evaluation.py
+python3 test_telegram.py
 ```
 
 The Solidity suite skips compiler-backed cases unless `--solc` is supplied.

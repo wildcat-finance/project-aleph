@@ -249,7 +249,8 @@ gate is exactly `true`.
 - Routing, answer assembly, live state, deterministic rendering, and blocking
   extractive claim-support evaluation are implemented. A production language
   writer remains blocked until a separately pinned semantic verifier exists.
-  Telegram remains downstream.
+  The Telegram transport is implemented; production composition remains
+  downstream.
 - SDK address assertions are enforced by `live.AddressBook` and can be bound
   into a release with `release.py --fetch-sdk`. A release built without that
   artifact check keeps `address_assertions_hold: null`.
