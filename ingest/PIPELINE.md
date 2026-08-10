@@ -72,10 +72,27 @@ signature and no owning contract. Instead, compile to AST and emit one chunk per
 semantic unit:
 
 ```bash
-solc --standard-json < build-input.json    # reuse deployments/**/standard-input.json
-                                           # where available — same settings as the
-                                           # verified deployment
+python3 ingest/chunkers/solidity.py \
+  $(for d in deployments/mainnet/*/; do echo --input $d/standard-input.json; done) \
+  --include 'src/**' --out chunks.jsonl
 ```
+
+Use `--solc ingest/solc-container` in CI: the pinned `ethereum/solc` image with
+no network, no capabilities, read-only root and a non-root user. A local
+`solc-select` binary is fine for development, but only the pinned digest gives a
+byte-identical AST across machines.
+
+**Pass every deployment input, not one.** Inheritance resolves within a single
+compilation unit, so a contract deployed separately — the hooks instances, for
+instance — is invisible to the market's build. Merging unions the exposures.
+
+Implemented in `ingest/chunkers/solidity.py`. Input is the deployment's
+`standard-input.json` — full source set plus the exact compiler settings behind
+the verified bytecode, so chunks describe deployed code by construction rather
+than by hope. Compilation errors abort the run.
+
+Review brief and invariants: `ingest/ADVERSARIAL.md`. Tests:
+`ingest/chunkers/test_solidity.py`, which gates on exit code.
 
 One chunk per: contract, function, modifier, struct, event, error, state variable
 group. Each chunk carries:
@@ -94,6 +111,14 @@ grouping. Do not produce overlapping chunks; overlap inflates retrieval scores f
 whatever happens to sit in the overlap.
 
 ### Markdown — heading boundaries and breadcrumbs
+
+```bash
+python3 ingest/chunkers/markdown.py --root wildcat-docs --manifest manifest.yaml \
+  --out docs.jsonl
+```
+
+Pass `--manifest`. The exclude list lives there, and a list retyped at every
+invocation is a list that will one day omit `AGENTS.md`.
 
 Split on heading boundaries, not length. Each chunk keeps its heading path in
 metadata:

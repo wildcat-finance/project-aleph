@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#
+# solc-container — Project Aleph
+#
+# A drop-in replacement for `solc` that runs the pinned official image with
+# everything it doesn't need taken away. Reads stdin, writes stdout, so it
+# satisfies chunk_solidity.py's --solc without any code change:
+#
+#     python3 ingest/chunk_solidity.py --solc ingest/solc-container ...
+#
+# WHY THIS EXISTS — the honest version.
+#
+# The security argument is weaker than it looks. Ingestion is from signed tags
+# only, so anyone who can put malicious Solidity in front of this compiler can
+# already sign a tag, and at that point they have better options than a solc
+# exploit. The trust boundary is the signature, not the sandbox.
+#
+# The reproducibility argument is the strong one. A pinned image digest means
+# the AST is byte-identical on a laptop, in CI and on a replacement machine in
+# two years, which is the whole premise of "the same manifest produces the same
+# corpus". solc-select on a developer's machine does not give you that.
+#
+# The confinement is then nearly free, so it is worth having as defence in
+# depth. Of the flags below, --network none carries most of the value: solc has
+# no legitimate need for a socket, and a compiler that cannot reach the network
+# cannot exfiltrate anything even if it is compromised.
+#
+# Digest resolved 2026-08-10. Update deliberately, never by moving the tag.
+
+set -euo pipefail
+
+SOLC_IMAGE="${SOLC_IMAGE:-ethereum/solc@sha256:231d46593eae6105dbb9a1225d318c9605a4e353e10371fe28ccce291be8ea35}"
+RUNTIME="${CONTAINER_RUNTIME:-docker}"
+
+if ! command -v "$RUNTIME" >/dev/null 2>&1; then
+  echo "solc-container: $RUNTIME not found." >&2
+  echo "  Install it, set CONTAINER_RUNTIME=podman, or pass --solc solc to use" >&2
+  echo "  a local binary (solc-select install 0.8.25 && solc-select use 0.8.25)." >&2
+  exit 127
+fi
+
+exec "$RUNTIME" run --rm -i \
+  --network none \
+  --read-only \
+  --user 65534:65534 \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --memory 2g \
+  --pids-limit 128 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  "$SOLC_IMAGE" "$@"

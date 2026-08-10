@@ -10,8 +10,12 @@ version: 1
 
 policy:
   scope:
-    chains: [1, 9745]              # Ethereum mainnet, Plasma mainnet
-    testnets: excluded             # not ingested, not queried, not answerable
+    chains: [1]                    # Ethereum mainnet only
+    # Everything else — other mainnets and every testnet — is out of scope:
+    # not ingested, not queried, not answerable. A market answer drawn from the
+    # wrong chain is indistinguishable from a right one until someone acts on it.
+    other_chains: excluded
+    testnets: excluded
   branches: never                  # every source resolves to an immutable ref
   rebuild: full                    # no incremental indexing, ever
   self_ingestion: forbidden        # this repo is never a source for Aleph
@@ -36,11 +40,15 @@ embedding:
     set. Decisive factor was non-statistical: bge-m3 performs as documented,
     whereas qwen 0.6b only performs with its documented instruct prefix REMOVED,
     which breaks silently on repackaging. See eval/RUNBOOK.md §6a.
+  context_headroom: >
+    Measured after Solidity chunking, not assumed: 962 chunks at v2.1.0, median
+    175 chars, p99 2,292, max 5,062 — roughly 1,700 tokens against a limit of
+    8,192. The earlier concern that contract chunks with full natspec would
+    exceed bge-m3's context was speculation and is wrong. The check stays in
+    chunk_solidity.py to notice if that ever changes.
   revisit_when: >
-    Solidity enters the corpus. bge-m3's 8K context is comfortable for prose but
-    contract chunks carrying full natspec can exceed it, and truncation is
-    silent. Assert chunk length at ingest; if it bites, qwen's 32K becomes the
-    reason to re-run this.
+    Markdown chunking lands and long prose sections join the corpus, or a single
+    Solidity chunk starts approaching the limit. Neither is close today.
 
 sources:
 
@@ -68,9 +76,52 @@ sources:
       - "scripts/**"
       - "lib/**"                   # git submodules
       - ".github/**"
-    verification_only:             # fetched, never chunked, never embedded
-      - "deployments/mainnet/**/standard-input.json"
+    verification_only:             # not chunked as markdown; see solidity_chunking
       - "deployments/mainnet/deployments.json"
+
+    # Solidity is chunked from the deployment verification inputs rather than
+    # from the working tree: they carry the full source set and the exact
+    # compiler settings behind the verified bytecode, so chunks describe
+    # deployed code by construction. Pass every input — inheritance resolves
+    # within one compilation unit, and the hooks instances are deployed
+    # separately from the market.
+    solidity_chunking:
+      tool: ingest/chunk_solidity.py
+      inputs: "deployments/mainnet/*/standard-input.json"
+      solc: "0.8.25"               # matches foundry.toml at this tag
+      solc_image: "ethereum/solc@sha256:231d46593eae6105dbb9a1225d318c9605a4e353e10371fe28ccce291be8ea35"
+      solc_runner: ingest/solc-container
+      # Containerised for reproducibility first, confinement second. A pinned
+      # image digest makes the AST byte-identical on a laptop, in CI, and on a
+      # replacement machine years from now — which is the premise of "same
+      # manifest, same corpus". solc-select does not give that.
+      #
+      # The security case is real but smaller than it looks: ingestion is from
+      # signed tags only, so anyone able to put hostile Solidity in front of
+      # this compiler can already sign a tag and has better options than a solc
+      # exploit. The trust boundary is the signature. Given that, confinement
+      # is defence in depth rather than the control — but it costs nothing, and
+      # --network none carries most of the value, since a compiler that cannot
+      # open a socket cannot exfiltrate whatever it just parsed.
+      include:
+        - "src/**"
+        - "lib/solady/src/auth/Ownable.sol"
+      # Note the distinction from the `exclude: lib/**` above. That rule is
+      # about ingesting unpinned submodules from the working tree. Library code
+      # arriving *inside* a standard-input.json is pinned by construction — it
+      # is part of the verified bytecode. Only three external files appear
+      # across all five inputs, and only one carries answerable behaviour:
+      #   Ownable.sol      18 chunks exposed by WildcatArchController —
+      #                    owner(), transferOwnership, ownership events. This
+      #                    is where "who controls the archcontroller" lives.
+      #   EnumerableSet    29 chunks, zero exposure (used via `using for`,
+      #                    not inherited), generic and widely known. Excluded.
+      #   LibBit           bit arithmetic, no answerable behaviour. Excluded.
+      #
+      # src/libraries/ is the largest single bucket in the tree — 154 functions
+      # against 89 in src/access and 70 in src/market. MarketStateLib, FeeMath,
+      # WithdrawalLib and MathUtils are where liquidityRequired(), the scale
+      # factor and the delinquency maths actually live. Covered by src/**.
     always_cite:
       - "docs/Known Issues.md"     # volunteered, not merely retrievable
 
@@ -98,19 +149,26 @@ sources:
     repo: wildcat-finance/wildcat-docs
     ref:
       kind: tag
-      tag: aleph-v0
-      commit: d128fcf
+      tag: aleph-v0.1
+      commit: 6c94fb3
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
+      supersedes: aleph-v0 / d128fcf
     notes: >
       Content is human-written. The llm-rewrite-clean branch added agent
       navigation files, not agent-generated prose, so a Tier B citation still
       means reviewed documentation. docs-tg-bot documents the separate
       wildcat-notifications event bot, not this project. Both branches since
       deleted; AGENTS.md/CLAUDE.md live on the default branch and stay excluded.
-      aleph-v0 is a lightweight tag: it pins the commit, but carries no signature,
-      so docs promotion has no cryptographic gate the way v2-protocol does. Ref
-      immutability is by convention here — never move the tag, cut aleph-v1.
+      aleph-v0.1 is a lightweight tag: it pins the commit, but carries no
+      signature, so docs promotion has no cryptographic gate the way v2-protocol
+      does. Ref immutability is by convention here — never move a tag, cut the
+      next one.
+
+      Since aleph-v0: the deprecated V1 tree is unpublished at source (so the
+      exclusion below is now belt-and-braces rather than the only defence), two
+      pages recovered that had existed only in GitBook, and the ?ask
+      documentation corrected.
     include:
       - "**/*.md"
     exclude:
@@ -119,6 +177,13 @@ sources:
       - "CLAUDE.md"
       - "**/AGENTS.md"
       - "**/CLAUDE.md"
+      - "skills/**"                # SKILL.md is the same class: written to be obeyed
+      - "miscellaneous/deprecated-documentation/**"
+      # 17 of 82 files describe superseded V1 internals. They self-identify —
+      # "this page has not been updated to reflect Wildcat V2" — but only in
+      # prose a retriever will happily ignore. A fifth of the docs corpus
+      # answering confidently about behaviour that no longer exists is a worse
+      # failure than having no answer.
       # These are prose whose entire purpose is to direct an agent's behaviour.
       # They may inform the ingestion pipeline as structure hints; they must never
       # enter the model's context, where they are indistinguishable from
@@ -129,7 +194,7 @@ live_state:
   # Not a corpus. Read at query time, never embedded, never cached into the index.
   transport: wildcat-data-gateway
   status: public_staging           # no production SLA — fail closed, never fall back
-  rpc: "https://rpc.wildcat.finance/{chainId}"
+  rpc: "https://rpc.wildcat.finance/1"       # Ethereum mainnet only
   graph: "https://graph.wildcat.finance/{network}/{release}"
   health: "https://graph.wildcat.finance/health"     # unauthenticated
   auth:
@@ -137,7 +202,6 @@ live_state:
     env: ALEPH_GATEWAY_TOKEN       # dedicated to Aleph, not the frontend's
   pinned_releases:
     mainnet: "v2.0.30"             # v2.0.26 also live — pin, never auto-select
-    plasma-mainnet: "v2.0.30"
   required_in_every_answer:
     - "_meta { block { number } }"
   lag_gate:
