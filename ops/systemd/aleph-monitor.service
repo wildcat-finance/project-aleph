@@ -12,6 +12,7 @@ EnvironmentFile=/etc/aleph/telegram.env
 EnvironmentFile=-/etc/aleph/model.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/monitor.py --manifest /opt/aleph/manifest.yaml --artifacts /srv/aleph/artifacts --pointer /srv/aleph/active-release.json --prerelease /srv/aleph/artifacts/releases/REPLACE_V25_RELEASE_ID/release.json
+TimeoutStartSec=2min
 NoNewPrivileges=true
 CapabilityBoundingSet=
 DevicePolicy=closed

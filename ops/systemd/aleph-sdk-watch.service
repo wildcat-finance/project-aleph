@@ -9,6 +9,7 @@ Group=aleph-query
 WorkingDirectory=/opt/aleph
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/sdk-watch.py --pinned 3.1.17 --json
+TimeoutStartSec=2min
 SuccessExitStatus=0 2
 NoNewPrivileges=true
 CapabilityBoundingSet=

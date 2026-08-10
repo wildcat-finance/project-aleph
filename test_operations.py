@@ -239,14 +239,19 @@ def run(tmp: pathlib.Path) -> None:
         "ProtectKernelTunables=true", "ProtectProc=invisible",
         "RemoveIPC=true", "RestrictNamespaces=true",
         "RestrictSUIDSGID=true", "SystemCallArchitectures=native",
-        "UMask=0077",
+        "TimeoutStartSec=2min", "UMask=0077",
     }
-    for name in ("aleph.service", "aleph-monitor.service",
-                 "aleph-sdk-watch.service"):
+    for name in ("aleph-monitor.service", "aleph-sdk-watch.service"):
         lines = set((pathlib.Path("ops/systemd") / name).read_text().splitlines())
         check(f"{name} retains the production sandbox",
               required_hardening <= lines,
               str(sorted(required_hardening - lines)))
+    query_required = required_hardening - {"TimeoutStartSec=2min"}
+    query_lines = set((pathlib.Path("ops/systemd") / "aleph.service").read_text(
+        ).splitlines())
+    check("aleph.service retains the production sandbox",
+          query_required <= query_lines,
+          str(sorted(query_required - query_lines)))
 
 
 def main() -> int:
