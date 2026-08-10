@@ -5,8 +5,12 @@ re-evaluate it when the corpus or model artifact changes.
 
 The harness is diagnostic, not a production gate. It compares models over a
 Markdown corpus, reports retrieval disagreements and concentration, and computes
-recall for labelled questions. It does not use the ingestion pipeline's full
-corpus or chunk schema.
+recall for labelled questions. It remains useful for model comparison, but it
+does not use the ingestion pipeline's full corpus or chunk schema.
+
+`eval/retrieval_eval.py` is the release-level retrieval check. It loads a real
+immutable corpus/index release, applies chain/version/tier policy and hybrid
+ranking, and evaluates the same labels against the chunks the product retrieves.
 
 ## Recorded decision
 
@@ -129,7 +133,7 @@ format or packaging issue is understood.
 retrieved chunk. The labels are intentionally small and high-value. Changes to
 them should reflect evidence review, not tuning to make a model score higher.
 
-## Pin and build the selected artifact
+## Build and evaluate the selected release
 
 The manifest records:
 
@@ -140,22 +144,27 @@ The manifest records:
 - context limit; and
 - query-prefix behavior.
 
-`embed/index.py` records the actual runtime identity in `index.json` and refuses
-queries from a different identity. It does not automatically load the expected
-digest from `manifest.yaml`, so verify the digest before building a release
-index:
+`release.py` reads the complete expected identity from `manifest.yaml` and
+refuses a runtime mismatch before publishing the candidate:
 
 ```bash
 ollama list
 
-python3 embed/index.py build \
-  --corpus corpus/<build_id> \
-  --embedder ollama:bge-m3 \
-  --out index
+python3 release.py --manifest manifest.yaml \
+  --solc ingest/solc-container --artifacts artifacts
 ```
 
-Inspect `index/<build_id>/index.json` and confirm its `embedder.digest` matches
-the manifest pin.
+Run the retrieval labels against the resulting `release.json`:
+
+```bash
+python3 eval/retrieval_eval.py \
+  --manifest manifest.yaml \
+  --release artifacts/releases/<release_id>/release.json \
+  --embedder ollama:bge-m3
+```
+
+The command exits with the failure count and can write the complete evidence
+report with `--json <path>`.
 
 ## When to rerun
 

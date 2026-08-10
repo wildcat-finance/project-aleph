@@ -64,6 +64,21 @@ def _without_created(record: dict) -> dict:
     return {key: value for key, value in record.items() if key != "created"}
 
 
+def compute_release_id(record: dict) -> str:
+    """Recompute the identifier from the security-relevant release fields."""
+    basis = {
+        "corpus_build_id": record["corpus"]["build_id"],
+        "index_namespace": record["index"]["namespace"],
+        "index_artifacts": record["index"]["artifacts"],
+        "embedding": record["embedding"],
+        "review": record["review"],
+        "gates": record["gates"],
+        "prerelease": record["kind"] == "prerelease",
+        "release_tool": record["tools"]["release.py"],
+    }
+    return hashlib.sha256(_canonical(basis)).hexdigest()[:20]
+
+
 def _publish_release(root: pathlib.Path, record: dict) -> dict:
     releases = root / "releases"
     releases.mkdir(parents=True, exist_ok=True)
@@ -164,20 +179,9 @@ def build_release(manifest_path: str = "manifest.yaml",
     promotable = all(gates.get(gate) is True for gate in required_gates)
 
     release_tool = _sha256(HERE / "release.py")
-    identity_basis = {
-        "corpus_build_id": corpus_record["build_id"],
-        "index_namespace": index_namespace,
-        "index_artifacts": index_record["artifacts"],
-        "embedding": expected_identity.to_dict(),
-        "review": review,
-        "gates": gates,
-        "prerelease": prerelease,
-        "release_tool": release_tool,
-    }
-    release_id = hashlib.sha256(_canonical(identity_basis)).hexdigest()[:20]
     relative = lambda path: str(path.relative_to(root))
     record = {
-        "release_id": release_id,
+        "release_id": "",
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "kind": "prerelease" if prerelease else "main",
         "manifest": {"path": str(manifest_path_obj),
@@ -202,6 +206,7 @@ def build_release(manifest_path: str = "manifest.yaml",
         "waivers": corpus_record.get("waivers") or [],
         "tools": {"release.py": release_tool, **index_tools},
     }
+    record["release_id"] = compute_release_id(record)
     return _publish_release(root, record)
 
 

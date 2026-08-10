@@ -10,8 +10,8 @@ SDK address watcher. It does not yet contain a user-facing agent.
 
 The shortest honest status is:
 
-> **Aleph can publish a coherent evidence release. It must next implement the
-> retrieval policy that turns a scoped request into validated evidence.**
+> **Aleph can publish and retrieve validated evidence. It must next implement
+> block-numbered live-state tools and deterministic numeric renderers.**
 
 The remaining work is ordered below by dependency. Later stages should not begin
 by inventing around a missing earlier boundary.
@@ -34,6 +34,8 @@ The checked-in code already provides:
 - a canonical release record that enforces the manifest embedding identity,
   records corpus-diff review state, and exposes every promotion gate;
 - exact cosine search with strict full index/query embedder identity checks;
+- typed mainnet/version/tier-scoped hybrid retrieval, isolated v2.5 handling,
+  manifest-visible mandatory sources, and byte-verified citation resolution;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
@@ -87,34 +89,32 @@ Downstream gates remain visible rather than being guessed: the current release
 is not promotable while `address_assertions_hold` and `eval_not_regressed` are
 `null`.
 
-### 2. Build scoped retrieval and citation resolution
+### 2. Scoped retrieval and citation resolution — implemented
 
-`embed/index.py` returns nearest chunks, but it does not implement the retrieval
-policy required by the manifest.
+`retrieval.py` loads an immutable release and exposes typed `RetrievalRequest`,
+`RetrievalResponse`, `Evidence`, and `Citation` objects. It refuses an artifact
+whose manifest, corpus, index record, payload hash, embedding identity, or chunk
+count does not match the release.
 
-Build next:
+The implementation provides:
 
-- a retrieval API whose request explicitly carries chain, public protocol
+- a retrieval API whose request carries chain, public protocol
   version, requested tiers, and result limits;
 - Tier A and Tier B searches that remain separate through ranking;
-- lexical matching for contract names, function signatures, addresses, and
-  exact protocol vocabulary, combined with semantic results within each tier;
+- BM25-style lexical matching and exact identifier/address bonuses fused with
+  semantic results independently within each tier;
 - v2.0 as the default deployed corpus and an isolated v2.5 path that activates
   only when the user explicitly names v2.5;
 - enforcement of `always_cite`, prerelease preambles, deployment status, and
   source-version filters;
 - a citation resolver that turns a hit into a stable source path and Markdown
   anchor or Solidity location; and
-- a hard prohibition on quoting chunks marked `synthesised: true`.
+- a hard prohibition on quoting chunks marked `synthesised: true`, plus a
+  corpus-byte comparison before every quote.
 
-Retrieval should return typed evidence objects, not answer prose. Each object
-must carry enough provenance for a later citation validator to prove that the
-quoted bytes came from the named corpus build.
-
-**Complete when:** retrieval labels run against the actual built corpus rather
-than the evaluation harness's simplified Markdown splitter; exact identifiers
-are findable; v2.5 cannot bleed into a general question; and every returned quote
-resolves to byte-exact source.
+`eval/retrieval_eval.py` runs `eval/labels.yaml` through this actual retriever,
+not through the model-comparison splitter. Retrieval returns evidence only; it
+does not generate answer prose.
 
 ### 3. Build live-state tools and deterministic renderers
 
@@ -306,6 +306,7 @@ python3 ingest/chunkers/test_solidity.py --solc ingest/solc-container
 python3 ingest/test_build.py
 python3 embed/test_embed.py
 python3 test_release.py
+python3 test_retrieval.py
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
@@ -318,6 +319,8 @@ manifest.yaml                 executable corpus and runtime policy
 aleph-ingestion-manifest.md   rationale and current limitations
 release.py                    manifest -> immutable corpus/index release
 test_release.py               release coherence and immutability checks
+retrieval.py                  scoped hybrid retrieval + citation resolver
+test_retrieval.py             scope, isolation, ranking and quote checks
 
 ingest/
   build.py                    manifest -> validated corpus build
@@ -341,6 +344,7 @@ eval/
   golden-v1.yaml              125 questions and expected handling modes
   labels.yaml                 retrieval labels for consequential questions
   embed_compare.py            Markdown-only model comparison harness
+  retrieval_eval.py           labels against an immutable release retriever
   RUNBOOK.md                  recorded model decision and rerun procedure
 
 sdk-watch.py                  mainnet SDK deployment-map change detector

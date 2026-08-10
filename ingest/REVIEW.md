@@ -39,6 +39,7 @@ python3 ingest/chunkers/test_solidity.py
 python3 ingest/test_build.py
 python3 embed/test_embed.py
 python3 test_release.py
+python3 test_retrieval.py
 ```
 
 The Solidity suite skips compiler-backed cases unless `--solc` is supplied.

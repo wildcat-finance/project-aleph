@@ -209,6 +209,13 @@ Exact cosine search is intentional at the current corpus size. Tier matrices are
 only a few megabytes; an approximate index would introduce a new recall boundary
 without measurable benefit.
 
+`retrieval.py` applies the runtime policy around those matrices. Every request
+names its chain, version, tiers, and limits. Lexical and semantic ranks are fused
+within a tier but never across tiers. Deployed v2.0 is the default; the isolated
+v2.5 release is loaded only for an explicit v2.5 request and carries a mandatory
+unaudited, undeployed preamble. Citation resolution compares the indexed quote
+with the named corpus bytes and refuses synthesized retrieval aids as quotes.
+
 ## 9. Evaluation
 
 `eval/golden-v1.yaml` contains 125 questions clustered from support traffic.
@@ -227,8 +234,9 @@ evaluation before deployment.
 
 ## 10. Current limitations
 
-- The answer, citation-rendering, live-state, deterministic-renderer, and
-  Telegram layers are not present in this repository.
+- The answer, live-state, deterministic-renderer, and Telegram layers are not
+  present in this repository. Citation resolution is implemented, but answer
+  assembly does not yet consume it.
 - SDK address assertions exist in the manifest but are not evaluated by the
   corpus builder; `address_assertions_hold` is recorded as `null`.
 - Corpus diffs carry pending, unchanged, or named-reviewer approval state in an

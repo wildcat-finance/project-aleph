@@ -259,6 +259,11 @@ class Index:
         if not manifest_path.exists():
             raise IndexError_(f"{manifest_path} not found")
         self.manifest = json.loads(manifest_path.read_text())
+        artifacts = self.manifest.get("artifacts") or {}
+        for name, declared_hash in artifacts.items():
+            path = self.dir / name
+            if not path.is_file() or _sha256(path) != declared_hash:
+                raise IndexError_(f"{path}: missing or modified index artifact")
         self.identity = Identity.from_dict(self.manifest["embedder"])
         self.vectors: dict[str, "np.ndarray"] = {}
         self.meta: dict[str, list[dict]] = {}
