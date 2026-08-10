@@ -59,6 +59,10 @@ CONTAINERS = {"ContractDefinition"}
 OVERSIZE_CHARS = 24_000
 
 
+class ChunkError(Exception):
+    """Raised for conditions that must stop a build rather than warn."""
+
+
 # --------------------------------------------------------------------------
 # source handling — byte offsets, not character offsets
 # --------------------------------------------------------------------------
@@ -93,9 +97,26 @@ class SourceMap:
         return path, blob[start:end].decode("utf-8")
 
     def line_of(self, src: str) -> int:
+        """
+        1-based line number. Counts LF, CRLF and lone CR, because solc accepts
+        all three and a citation that says line 1 for every node in a CR-only
+        file is worse than no line number at all.
+        """
         start_s, _, file_s = src.split(":")
         _, blob = self.by_index[int(file_s)]
-        return blob[: int(start_s)].count(b"\n") + 1
+        head = blob[: int(start_s)]
+        return len(head.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n"))
+
+    def span(self, src: str) -> tuple[int, int, int]:
+        """(start, length, file_index) as integers."""
+        a, b, c = src.split(":")
+        return int(a), int(b), int(c)
+
+    def slice_range(self, file_idx: int, start: int, end: int) -> tuple[str, str]:
+        path, blob = self.by_index[file_idx]
+        if start < 0 or end > len(blob) or start >= end:
+            raise ValueError(f"range {start}:{end} out of bounds for {path}")
+        return path, blob[start:end].decode("utf-8")
 
 
 # --------------------------------------------------------------------------
@@ -139,10 +160,15 @@ def strip_comments(code: str, keep_natspec: bool = True) -> str:
 
         if code.startswith("//", i):
             is_natspec = code.startswith("///", i)
-            j = code.find("\n", i)
-            j = n if j == -1 else j
+            # solc accepts LF, CRLF and lone CR. Stopping only at LF eats the
+            # rest of a CR-only file from the first line comment onward.
+            nl, cr = code.find("\n", i), code.find("\r", i)
+            cands = [x for x in (nl, cr) if x != -1]
+            j = min(cands) if cands else n
             if is_natspec and keep_natspec:
                 out.append(code[i:j])
+            else:
+                out.append(" ")     # never weld the comment's neighbours together
             i = j
             continue
 
@@ -153,8 +179,13 @@ def strip_comments(code: str, keep_natspec: bool = True) -> str:
             if is_natspec and keep_natspec:
                 out.append(code[i:j])
             else:
-                # preserve line count so reported line numbers stay usable
-                out.append("\n" * code[i:j].count("\n"))
+                # A block comment can sit between two tokens with no other
+                # separator — `uint256/* x */value` is valid Solidity — so it
+                # must leave whitespace behind, not nothing. Newlines are
+                # preserved so line numbers stay usable.
+                removed = code[i:j]
+                nl = removed.count("\n")
+                out.append("\n" * nl if nl else " ")
             i = j
             continue
 
@@ -214,6 +245,14 @@ def param_types(node: dict) -> list[str]:
             for p in params]
 
 
+# Solidity permits overloading on all of these, so a bare name is not a unique
+# identifier for any of them. Only functions and modifiers can be *overridden*;
+# the rest are merely inherited, which matters in resolve_inheritance().
+PARAMETERISED = {"FunctionDefinition", "EventDefinition",
+                 "ErrorDefinition", "ModifierDefinition"}
+OVERRIDABLE = {"FunctionDefinition", "ModifierDefinition"}
+
+
 def signature(node: dict) -> str:
     kind = node.get("kind")
     name = node.get("name") or ""
@@ -222,6 +261,7 @@ def signature(node: dict) -> str:
             name = "constructor"
         elif kind in ("fallback", "receive"):
             name = kind
+    if node["nodeType"] in PARAMETERISED:
         return f"{name}({','.join(param_types(node))})"
     return name
 
@@ -244,6 +284,34 @@ def natspec_of(node: dict, smap: SourceMap) -> str:
     return doc.get("text", "")
 
 
+def documented_span(node: dict, smap: SourceMap):
+    """
+    Return (path, text, line) covering documentation *and* declaration as one
+    contiguous slice, or None if they cannot be joined contiguously.
+
+    Concatenating the two separately-sliced ranges — which is what this used to
+    do — silently drops whatever whitespace sat between them, so the result is
+    not a substring of the file it cites. It still looked verbatim, which is the
+    failure this whole design exists to avoid. If a single span cannot be taken,
+    the caller keeps the declaration alone and leaves the natspec in `detail`.
+    """
+    doc = node.get("documentation")
+    if not isinstance(doc, dict) or not doc.get("src"):
+        return None
+    try:
+        d_start, d_len, d_file = smap.span(doc["src"])
+        n_start, n_len, n_file = smap.span(node["src"])
+    except (ValueError, KeyError):
+        return None
+    if d_file != n_file or d_start + d_len > n_start:
+        return None
+    try:
+        path, text = smap.slice_range(d_file, d_start, n_start + n_len)
+    except (KeyError, ValueError):
+        return None
+    return path, text, smap.line_of(doc["src"])
+
+
 def make_chunk(node, contract, smap, inherits) -> Chunk | None:
     try:
         path, text = smap.slice(node["src"])
@@ -257,10 +325,16 @@ def make_chunk(node, contract, smap, inherits) -> Chunk | None:
     ckind = contract.get("contractKind") if contract else None
     doc = natspec_of(node, smap)
 
-    # The natspec node sits immediately above the declaration and its src range
-    # is separate, so `text` does not include it. Prepend for display, and keep
-    # it in model_text — it is the best documentation most functions have.
-    display = (doc + "\n" + text) if doc else text
+    # Take documentation and declaration as one contiguous slice where possible,
+    # so display_text remains byte-exact source. Where it is not possible, the
+    # declaration alone is quoted and the natspec stays in `detail` — a smaller
+    # chunk is better than an unquotable one.
+    line = smap.line_of(node["src"])
+    joined = documented_span(node, smap)
+    if joined:
+        _, display, line = joined
+    else:
+        display = text
     model = strip_comments(display, keep_natspec=True)
 
     breadcrumb = " › ".join(x for x in (path, cname, sig) if x)
@@ -275,7 +349,7 @@ def make_chunk(node, contract, smap, inherits) -> Chunk | None:
         kind=kind,
         source_type="solidity",
         path=path,
-        line=smap.line_of(node["src"]),
+        line=line,
         breadcrumb=breadcrumb,
         display_text=display,
         model_text=model,
@@ -358,13 +432,13 @@ def compile_ast(input_path: str, solc: str) -> dict:
     r = subprocess.run([solc, "--standard-json"], input=json.dumps(doc),
                        capture_output=True, text=True)
     if r.returncode != 0:
-        sys.exit(f"solc failed: {r.stderr[:400]}")
+        raise ChunkError(f"solc failed: {r.stderr[:400]}")
     out = json.loads(r.stdout)
     errors = [e for e in out.get("errors", []) if e.get("severity") == "error"]
     if errors:
-        for e in errors[:5]:
-            print(e.get("formattedMessage", "")[:300], file=sys.stderr)
-        sys.exit(f"{len(errors)} compilation error(s) — refusing to chunk")
+        detail = "\n".join(e.get("formattedMessage", "")[:300] for e in errors[:5])
+        raise ChunkError(
+            f"{len(errors)} compilation error(s) — refusing to chunk\n{detail}")
     return doc, out
 
 
@@ -400,6 +474,20 @@ def chunk(input_path: str, solc: str, includes: list[str]) -> list[Chunk]:
 
     chunks = resolve_inheritance(out, chunks)
     chunks += surface_chunks(out, includes, smap)
+
+    # Within one compilation unit an ID must be unique. Checking after the
+    # cross-unit merge is too late: the merge is dict-keyed, so a duplicate is
+    # silently absorbed and the collision count reports zero.
+    seen: dict[str, Chunk] = {}
+    for c in chunks:
+        prior = seen.get(c.id)
+        if prior is not None:
+            raise ChunkError(
+                f"duplicate id within one compilation unit: {c.id}\n"
+                f"  {prior.breadcrumb} (line {prior.line})\n"
+                f"  {c.breadcrumb} (line {c.line})\n"
+                "  signature generation is not distinguishing these")
+        seen[c.id] = c
     return chunks
 
 
@@ -434,7 +522,7 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
     for cid, contract in by_id.items():
         if contract.get("contractKind") != "contract" or contract.get("abstract"):
             continue                      # only concrete contracts have a surface
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for base_id in contract.get("linearizedBaseContracts", []):
             base = by_id.get(base_id)
             if base is None:
@@ -444,10 +532,16 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
                     continue
                 sig = signature(member)
                 key = (node_path[base_id], f"{base['name']}.{sig}")
-                if sig in seen:
-                    overridden.add(key)   # a more derived contract won
+                # Only functions and modifiers can be overridden. Two events
+                # with the same signature in a hierarchy are a redeclaration,
+                # not a shadowing, and marking one "overridden" hides it from
+                # the unreachable report for the wrong reason.
+                shadow_key = (member["nodeType"], sig)
+                if shadow_key in seen:
+                    if member["nodeType"] in OVERRIDABLE:
+                        overridden.add(key)
                     continue
-                seen.add(sig)
+                seen.add(shadow_key)
                 exposure.setdefault(key, []).append(contract["name"])
 
     for c in chunks:
@@ -456,11 +550,46 @@ def resolve_inheritance(out: dict, chunks: list[Chunk]) -> list[Chunk]:
         key = (c.path, f'{c.detail["contract"]}.{c.detail["signature"]}')
         c.detail["exposed_by"] = sorted(set(exposure.get(key, [])))
         c.detail["overridden"] = key in overridden
-        if c.detail["exposed_by"]:
-            # the embedding must carry it too, or the metadata is invisible to
-            # the thing doing the retrieving
-            c.embed_text += "\n\nexposed by: " + ", ".join(c.detail["exposed_by"])
     return chunks
+
+
+def rebuild_embed_text(chunks: list[Chunk]) -> None:
+    """
+    Derive embed_text from final state, once, after all merging is done.
+
+    Appending "exposed by:" during per-unit resolution and then guarding the
+    append with a substring check made the embedded text depend on which
+    compilation unit was processed first: a member exposed by two contracts
+    would carry whichever one its first unit knew about, and never both. The
+    metadata was right and the thing actually being embedded was wrong, which is
+    the worst arrangement of the two.
+    """
+    for c in chunks:
+        base = c.embed_text.split("\n\nexposed by: ")[0]
+        exposed = c.detail.get("exposed_by") or []
+        c.embed_text = base + ("\n\nexposed by: " + ", ".join(exposed)
+                               if exposed else "")
+
+
+def getter_params(var: dict) -> list[str]:
+    """
+    Parameter list of the compiler-generated getter for a public state variable.
+    Mappings take a key per level; arrays take a uint256 index. Anything else
+    takes none.
+    """
+    params: list[str] = []
+    t = var.get("typeName") or {}
+    while True:
+        kind = t.get("nodeType")
+        if kind == "Mapping":
+            params.append(canonical_type(
+                ((t.get("keyType") or {}).get("typeDescriptions") or {}).get("typeString")))
+            t = t.get("valueType") or {}
+        elif kind == "ArrayTypeName":
+            params.append("uint256")
+            t = t.get("baseType") or {}
+        else:
+            return params
 
 
 def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chunk]:
@@ -496,7 +625,27 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
             if base is None:
                 continue
             for m in base.get("nodes", []):
+                origin = "" if base_id == cid else f"   (from {base['name']})"
+
+                # Public state variables get a compiler-generated getter and are
+                # part of the callable surface; omitting them understates it.
+                if m["nodeType"] == "VariableDeclaration":
+                    if m.get("visibility") != "public" or m.get("constant"):
+                        continue
+                    sig = f"{m.get('name')}({','.join(getter_params(m))})"
+                    if sig in seen:
+                        continue
+                    seen.add(sig)
+                    lines.append(f"  public {sig}   [getter]{origin}")
+                    continue
+
                 if m["nodeType"] != "FunctionDefinition":
+                    continue
+                # A constructor is not callable on a deployed contract, and a
+                # base contract's constructor is not callable at all. Listing
+                # them answers "what can I call" incorrectly in one direction
+                # while the missing getters answer it incorrectly in the other.
+                if m.get("kind") == "constructor":
                     continue
                 if m.get("visibility") not in ("external", "public"):
                     continue
@@ -504,7 +653,6 @@ def surface_chunks(out: dict, includes: list[str], smap: SourceMap) -> list[Chun
                 if sig in seen:
                     continue
                 seen.add(sig)
-                origin = "" if base_id == cid else f"   (from {base['name']})"
                 lines.append(f"  {m.get('visibility')} {sig}{origin}")
         if not lines:
             continue
@@ -543,12 +691,22 @@ def dedupe(chunks: list[Chunk]) -> tuple[list[Chunk], int]:
     the same trivial getter. Duplicates inflate retrieval scores for whatever
     happens to be duplicated, so keep the first and record the rest.
     """
+    # Sorted, so which duplicate survives does not depend on the order inputs
+    # happened to be passed on the command line.
     seen: dict[str, Chunk] = {}
     kept, dropped = [], 0
-    for c in chunks:
+    for c in sorted(chunks, key=lambda x: x.id):
         h = c.content_hash
-        if h in seen:
+        prior = seen.get(h)
+        if prior is not None:
             dropped += 1
+            # Keep the discarded identity rather than losing it: the body is the
+            # same, but the ID and its contract context are not, and a query
+            # naming the dropped contract should still find something.
+            prior.detail.setdefault("aliases", []).append(c.id)
+            prior.detail["exposed_by"] = sorted(
+                set(prior.detail.get("exposed_by") or [])
+                | set(c.detail.get("exposed_by") or []))
             continue
         seen[h] = c
         kept.append(c)
@@ -568,66 +726,57 @@ def main() -> int:
     args = ap.parse_args()
 
     merged: dict[str, Chunk] = {}
-    for path in args.input:
-        for c in chunk(path, args.solc, args.include):
-            prior = merged.get(c.id)
-            if prior is None:
-                merged[c.id] = c
-                continue
-            # Same member seen in another compilation unit. Inheritance is
-            # resolved per unit, so a function can look unreachable in one build
-            # and be exposed by a concrete contract in another — the truth is
-            # the union. Everything else should be byte-identical; if it isn't,
-            # two builds disagree about the same source and that is a bug worth
-            # surfacing rather than silently picking a winner.
-            if prior.display_text != c.display_text:
-                prior.warnings.append(
-                    f"conflicting text for {c.id} across compilation units")
-            prior.detail["exposed_by"] = sorted(
-                set(prior.detail["exposed_by"]) | set(c.detail["exposed_by"]))
-            # OR, not AND. A member absent from one compilation unit is not
-            # evidence that it is un-overridden there — it is evidence of
-            # nothing. Union semantics: overridden somewhere is overridden.
-            prior.detail["overridden"] = (
-                prior.detail["overridden"] or c.detail["overridden"])
+    try:
+        # Sorted, so the merge does not depend on the order inputs were listed.
+        for path in sorted(args.input):
+            for c in chunk(path, args.solc, args.include):
+                prior = merged.get(c.id)
+                if prior is None:
+                    merged[c.id] = c
+                    continue
+                # Same member in another compilation unit. Inheritance resolves
+                # per unit, so a function can look unreachable in one build and
+                # be exposed by a concrete contract in another — the truth is
+                # the union. Anything else differing is a disagreement about
+                # source, which is fatal.
+                if prior.display_text != c.display_text:
+                    raise ChunkError(
+                        f"conflicting source for {c.id} across compilation units\n"
+                        f"  {prior.path}:{prior.line} and {c.path}:{c.line}\n"
+                        "  two builds disagree about the same source. Keeping\n"
+                        "  either body would attach a plausible citation to\n"
+                        "  arbitrary code.")
+                prior.detail["exposed_by"] = sorted(
+                    set(prior.detail.get("exposed_by") or [])
+                    | set(c.detail.get("exposed_by") or []))
+                # OR, not AND: a member absent from one unit is not evidence
+                # that it is un-overridden there.
+                prior.detail["overridden"] = (
+                    prior.detail.get("overridden") or c.detail.get("overridden"))
+    except ChunkError as e:
+        print(f"\nFATAL: {e}", file=sys.stderr)
+        return 1
+
     chunks = list(merged.values())
-    for c in chunks:
-        if c.detail["exposed_by"] and "exposed by:" not in c.embed_text:
-            c.embed_text += "\n\nexposed by: " + ", ".join(c.detail["exposed_by"])
     dropped = 0
     if not args.no_dedupe:
         chunks, dropped = dedupe(chunks)
+    chunks.sort(key=lambda c: c.id)
 
-    ids = [c.id for c in chunks]
-    collisions = len(ids) - len(set(ids))
-    synth = sum(1 for c in chunks if c.synthesised)
-    oversize = [c for c in chunks if c.warnings]
+    # embed_text is derived last, from final state, so it cannot disagree with
+    # the metadata beside it.
+    rebuild_embed_text(chunks)
 
-    conflicts = [c for c in chunks
-                 if any("conflicting text" in w for w in c.warnings)]
-    print(f"{len(chunks)} chunks from {len(args.input)} compilation unit(s)  "
-          f"({dropped} duplicates dropped)")
-    if conflicts:
-        print(f"  !! {len(conflicts)} chunk(s) differ between units — investigate")
-        for c in conflicts[:3]:
-            print(f"      {c.id}")
-    print(f"  id collisions : {collisions}" + ("  <-- BUG" if collisions else ""))
+    # Oversize is a property of length, not of "has any warning attached".
+    oversize = [c for c in chunks if len(c.model_text) > OVERSIZE_CHARS]
     sizes = sorted(len(c.model_text) for c in chunks)
     p99 = sizes[int(0.99 * len(sizes))] if sizes else 0
-    # "oversize: 0" is only meaningful next to the headroom. Report the largest
-    # chunk so a reader can tell whether the limit is comfortably clear or one
-    # bad commit away.
-    print(f"  oversize      : {len(oversize)}  "
-          f"(p99 {p99} chars, max {sizes[-1] if sizes else 0}, "
-          f"limit {OVERSIZE_CHARS})")
-    print(f"  synthesised   : {synth}  (not quotable as source)")
-    for c in oversize[:5]:
-        print(f"    {len(c.model_text):>7} chars  {c.breadcrumb}")
+    synth = sum(1 for c in chunks if c.synthesised)
     exposed = sum(1 for c in chunks if c.detail.get("exposed_by"))
-    # Interface and library members have no concrete contract by construction,
-    # so excluding them is the difference between a useful signal and noise. A
-    # non-empty list here means a `contract` whose functions nothing inherits —
-    # dead code, or a resolution bug.
+    aliased = sum(len(c.detail.get("aliases") or []) for c in chunks)
+
+    problems = _schema.validate(chunks, oversize_chars=OVERSIZE_CHARS)
+
     orphan = [c for c in chunks
               if c.detail.get("contract") and not c.synthesised
               and not c.detail.get("exposed_by")
@@ -635,6 +784,17 @@ def main() -> int:
               and c.detail.get("visibility") in ("external", "public")
               and c.detail.get("declared_in_kind") == "contract"
               and not c.detail.get("overridden")]
+
+    print(f"{len(chunks)} chunks from {len(args.input)} compilation unit(s)  "
+          f"({dropped} duplicate bodies folded, {aliased} alias id(s) kept)")
+    print(f"  schema        : {len(problems)} problem(s)"
+          + ("  <-- FATAL" if problems else ""))
+    for pr in problems[:5]:
+        print(f"      {pr}")
+    print(f"  oversize      : {len(oversize)}  "
+          f"(p99 {p99} chars, max {sizes[-1] if sizes else 0}, "
+          f"limit {OVERSIZE_CHARS})")
+    print(f"  synthesised   : {synth}  (not quotable as source)")
     print(f"  inheritance   : {exposed} chunks attributed to a concrete contract")
     print(f"  unreachable   : {len(orphan)} public/external fns on contracts "
           f"exposed by nothing" + ("  <-- check" if orphan else ""))
@@ -645,12 +805,15 @@ def main() -> int:
         kinds[c.kind] = kinds.get(c.kind, 0) + 1
     print("  by kind       : " + ", ".join(f"{k}={v}" for k, v in sorted(kinds.items())))
 
-    if args.out:
+    if args.out and not problems and not oversize:
         with open(args.out, "w") as f:
             for c in chunks:
                 f.write(json.dumps(c.to_dict()) + "\n")
         print(f"  written       : {args.out}")
-    return 1 if collisions else 0
+    elif args.out:
+        print("  NOT WRITTEN   : refusing to emit a corpus that fails its own checks")
+
+    return 1 if (problems or oversize) else 0
 
 
 if __name__ == "__main__":

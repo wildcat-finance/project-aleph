@@ -43,8 +43,8 @@ cd v2-protocol && git verify-tag v2.1.0 && git rev-parse v2.1.0^{}
 ## Reproduce
 
 ```bash
-python3 ingest/chunkers/test_solidity.py --solc "$SOLC"   # 47 assertions
-python3 ingest/chunkers/test_markdown.py                  # 21 assertions, no compiler needed
+python3 ingest/chunkers/test_solidity.py --solc "$SOLC"   # 74 assertions
+python3 ingest/chunkers/test_markdown.py                  # 42 assertions, no compiler needed
 
 python3 ingest/chunkers/solidity.py --solc "$SOLC" \
   $(for d in v2-protocol/deployments/mainnet/*/; do echo --input $d/standard-input.json; done) \
@@ -96,6 +96,24 @@ trailing data location. Fully qualified struct names survive as `Foo.Bar` —
 find a case where the same struct is imported by different paths in two
 compilation units and produces two different IDs for one function.
 
+## Round 1 is done, both chunkers
+
+Sol 5.6 reviewed both at `47634bc` and found six issues in each. All twelve are
+fixed with regressions — see the Round 1 sections of `ADVERSARIAL.md`.
+
+Two patterns worth carrying into a second round. Most findings were the tool
+*reporting success while doing the wrong thing*, not crashing: a corpus that
+builds clean and cites the wrong bytes. And in both chunkers the worst finding
+was invisible because a test had been written in a way that could not fail — the
+Solidity citation check subtracted the natspec before searching for it, and the
+markdown suite asserted on heading text without ever checking ancestry against a
+fixture that had a short parent. **Look for checks that cannot fail before
+looking for code that does.**
+
+The markdown parser was rewritten rather than patched: it is now a single
+structural pass over bytes rather than a regex per concern. That is new code
+with 42 assertions behind it, which is thinner cover than the Solidity side.
+
 ## Known weak points, stated up front
 
 - `--include` uses `fnmatch`, where `src/**` is not shell globstar semantics. An
@@ -138,9 +156,9 @@ worth more than one nobody tested.
 
 ```
 ingest/chunkers/solidity.py       primary subject of review
-ingest/chunkers/markdown.py       secondary; newer, less exercised
-ingest/chunkers/test_solidity.py  47 assertions; add to it
-ingest/chunkers/test_markdown.py  21 assertions; add to it
+ingest/chunkers/markdown.py       rewritten after Round 1; least exercised
+ingest/chunkers/test_solidity.py  74 assertions; add to it
+ingest/chunkers/test_markdown.py  42 assertions; add to it
 ingest/schema.py                  the chunk shape both chunkers emit
 ingest/ADVERSARIAL.md             invariants and attack agenda — read first
 ingest/solc-container             pinned, network-less solc

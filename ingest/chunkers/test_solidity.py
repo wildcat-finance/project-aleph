@@ -188,16 +188,19 @@ def test_chunks(solc: str, tmp: pathlib.Path) -> None:
           {c.detail["signature"] for c in fns} == {"get(uint256)", "get(uint256,address)"},
           str({c.detail["signature"] for c in fns}))
 
-    # I1: every non-synthesised chunk is verbatim
-    bad = []
-    for c in chunks:
-        if c.synthesised:
-            continue
-        doc = c.detail.get("natspec") or ""
-        body = c.display_text[len(doc) + 1:] if doc else c.display_text
-        if body not in OVERLOAD_FIXTURE:
-            bad.append(c.id)
-    check("non-synthesised chunks are byte-exact", not bad, str(bad[:3]))
+    # I1: every non-synthesised chunk is verbatim — the WHOLE display_text,
+    # searched as-is. The earlier version of this check stripped the natspec
+    # prefix off before searching, which is precisely the arithmetic that let a
+    # non-contiguous concatenation pass as byte-exact for months.
+    bad = [c.id for c in chunks
+           if not c.synthesised and c.display_text not in OVERLOAD_FIXTURE]
+    check("display_text is a verbatim substring of source", not bad, str(bad[:3]))
+    documented = [c for c in chunks
+                  if not c.synthesised and c.detail.get("natspec")]
+    check("documented chunks exist in the fixture", len(documented) >= 2,
+          "fixture is not exercising the natspec path")
+    check("documented chunks include their natspec in display_text",
+          all("@notice" in c.display_text for c in documented))
 
     # I2: exactly the assembled chunks are flagged — container headers and
     # callable surfaces. Anything else flagged means a sliced chunk is claiming
@@ -348,6 +351,165 @@ def test_schema(solc: str, tmp: pathlib.Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# I12–I15 — findings from the first adversarial review
+# --------------------------------------------------------------------------
+
+COLLIDE_FIXTURE = (
+    "// SPDX-License-Identifier: MIT\n"
+    "pragma solidity ^0.8.25;\n"
+    "contract Probe {\n"
+    "  event Ping(uint256 x);\n"
+    "  event Ping(address x);\n"
+    "  error Nope(uint256 a);\n"
+    "}\n"
+)
+
+
+def test_compile_errors_raise(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI17 — compilation failure is catchable, not a process exit")
+    inp = {"language": "Solidity",
+           "sources": {"src/Bad.sol": {"content": "contract {"}},
+           "settings": {"outputSelection": {"*": {"": ["ast"]}}}}
+    f = tmp / "bad.json"
+    f.write_text(json.dumps(inp))
+    try:
+        cs.chunk(str(f), solc, ["src/**"])
+        check("bad source raises ChunkError", False, "no exception")
+    except cs.ChunkError:
+        check("bad source raises ChunkError", True)
+    except SystemExit:
+        check("bad source raises ChunkError", False,
+              "sys.exit in library code — a caller cannot handle it")
+
+
+def test_overloaded_non_functions(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI12 — overloaded events and errors")
+    inp = {"language": "Solidity",
+           "sources": {"src/Probe.sol": {"content": COLLIDE_FIXTURE}},
+           "settings": {"outputSelection": {"*": {"": ["ast"]}}}}
+    f = tmp / "collide.json"
+    f.write_text(json.dumps(inp))
+    chunks = cs.chunk(str(f), solc, ["src/**"])
+    ids = [c.id for c in chunks]
+    check("no duplicate ids", len(ids) == len(set(ids)), str(sorted(ids)))
+    events = sorted(c.detail["signature"] for c in chunks if c.kind == "Event")
+    check("event signatures carry parameter types",
+          events == ["Ping(address)", "Ping(uint256)"], str(events))
+    errors = sorted(c.detail["signature"] for c in chunks if c.kind == "Error")
+    # solc forbids overloading errors — "Identifier already declared" — so this
+    # only checks that the parameter types reach the signature.
+    check("error signatures carry parameter types",
+          errors == ["Nope(uint256)"], str(errors))
+    check("neither event is marked overridden",
+          not any(c.detail.get("overridden") for c in chunks if c.kind == "Event"),
+          "events cannot be overridden in Solidity")
+
+
+def test_comment_separator() -> None:
+    print("\nI13 — comment removal never welds tokens")
+    for src, want in [("uint256/* s */value = 1;", "uint256 value"),
+                      ("return/* s */value;", "return value"),
+                      ("a/*x*/+/*y*/b", "a + b")]:
+        got = cs.strip_comments(src)
+        check(f"{src} keeps a separator", want in got, repr(got))
+    cr = "function f() public {\r  uint x = 1; // c\r  return x;\r}"
+    out = cs.strip_comments(cr)
+    check("CR-only line endings terminate a line comment",
+          "return x" in out, repr(out))
+
+
+def test_surface_accuracy(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI14 — callable surface matches what is callable")
+    src = (
+        "// SPDX-License-Identifier: MIT\n"
+        "pragma solidity ^0.8.25;\n"
+        "contract Base { constructor(uint256 a) { x = a; } uint256 public x; }\n"
+        "contract Sub is Base {\n"
+        "  mapping(address => mapping(address => uint256)) public allowance;\n"
+        "  uint256[] public items;\n"
+        "  uint256 internal hidden;\n"
+        "  constructor() Base(1) {}\n"
+        "  function go() external pure returns (uint256) { return 2; }\n"
+        "}\n"
+    )
+    inp = {"language": "Solidity", "sources": {"src/S.sol": {"content": src}},
+           "settings": {"outputSelection": {"*": {"": ["ast"]}}}}
+    f = tmp / "surface.json"
+    f.write_text(json.dumps(inp))
+    surf = [c for c in cs.chunk(str(f), solc, ["src/**"])
+            if c.kind == "surface" and c.detail["contract"] == "Sub"]
+    check("Sub has a surface", len(surf) == 1, str(len(surf)))
+    if not surf:
+        return
+    body = surf[0].display_text
+    check("constructors excluded", "constructor" not in body, repr(body))
+    check("mapping getter has both keys",
+          "allowance(address,address)" in body, repr(body))
+    check("array getter takes an index", "items(uint256)" in body, repr(body))
+    check("inherited public var getter present", "x()" in body, repr(body))
+    check("internal state excluded", "hidden" not in body, repr(body))
+    check("declared function present", "go()" in body, repr(body))
+
+
+def test_fatal_conditions(solc: str, tmp: pathlib.Path) -> None:
+    print("\nI15 — conditions that must stop a build")
+    base = ("// SPDX-License-Identifier: MIT\npragma solidity ^0.8.25;\n"
+            "contract C {{ function f() external pure returns (uint256) "
+            "{{ return {}; }} }}\n")
+    paths = []
+    for i, v in enumerate(("1", "2")):
+        inp = {"language": "Solidity",
+               "sources": {"src/C.sol": {"content": base.format(v)}},
+               "settings": {"outputSelection": {"*": {"": ["ast"]}}}}
+        f = tmp / f"conflict-{i}.json"
+        f.write_text(json.dumps(inp))
+        paths.append(str(f))
+
+    merged, raised = {}, False
+    try:
+        for pth in sorted(paths):
+            for c in cs.chunk(pth, solc, ["src/**"]):
+                prior = merged.get(c.id)
+                if prior is not None and prior.display_text != c.display_text:
+                    raise cs.ChunkError("conflict")
+                merged.setdefault(c.id, c)
+    except cs.ChunkError:
+        raised = True
+    check("conflicting source across units raises", raised,
+          "two units disagreed and the build continued")
+
+    # oversize is a property of length, not of carrying any warning at all
+    big = cs.Chunk(id="b", kind="Function", source_type="solidity", path="p",
+                   line=1, breadcrumb="b", display_text="x",
+                   model_text="x" * (cs.OVERSIZE_CHARS + 1), embed_text="x")
+    small = cs.Chunk(id="s", kind="Function", source_type="solidity", path="p",
+                     line=1, breadcrumb="s", display_text="x", model_text="x",
+                     embed_text="x", warnings=["some unrelated warning"])
+    oversize = [c for c in (big, small) if len(c.model_text) > cs.OVERSIZE_CHARS]
+    check("oversize counts length, not warnings",
+          [c.id for c in oversize] == ["b"], str([c.id for c in oversize]))
+
+
+def test_embed_text_determinism() -> None:
+    print("\nI16 — embed_text is derived, not accumulated")
+    c = cs.Chunk(id="x", kind="Function", source_type="solidity", path="p",
+                 line=1, breadcrumb="b", display_text="t", model_text="t",
+                 embed_text="body", detail={"exposed_by": ["A"]})
+    cs.rebuild_embed_text([c])
+    once = c.embed_text
+    c.detail["exposed_by"] = ["A", "B"]
+    cs.rebuild_embed_text([c])
+    check("rebuild replaces rather than appends",
+          c.embed_text == "body\n\nexposed by: A, B", repr(c.embed_text))
+    check("no residue from the earlier value",
+          c.embed_text.count("exposed by:") == 1, repr(c.embed_text))
+    c.detail["exposed_by"] = []
+    cs.rebuild_embed_text([c])
+    check("empty exposure leaves the body clean", c.embed_text == "body",
+          repr(c.embed_text))
+
+
+# --------------------------------------------------------------------------
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -356,7 +518,9 @@ def main() -> int:
 
     test_canonical_types()
     test_stripper()
+    test_comment_separator()
     test_merge_semantics()
+    test_embed_text_determinism()
 
     if args.solc:
         import tempfile
@@ -367,6 +531,10 @@ def main() -> int:
                 test_chunks(args.solc, tmp)
                 test_inheritance(args.solc, tmp)
                 test_schema(args.solc, tmp)
+                test_compile_errors_raise(args.solc, tmp)
+                test_overloaded_non_functions(args.solc, tmp)
+                test_surface_accuracy(args.solc, tmp)
+                test_fatal_conditions(args.solc, tmp)
             except (RuntimeError, FileNotFoundError) as e:
                 check("compiler tests ran", False, str(e)[:200])
     else:

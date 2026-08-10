@@ -129,8 +129,10 @@ a successful prompt injection is a rejected intent.
 Solidity is chunked through the compiler's AST — one chunk per contract,
 function, modifier, event, error or struct, with natspec attached and inheritance
 resolved, built from the deployment verification inputs so chunks describe
-deployed code by construction. Markdown chunks on heading boundaries. Both emit
-one shared schema, so the retriever never branches on source type.
+deployed code by construction. Markdown chunks on heading boundaries, with each
+document placed in the GitBook navigation tree so a section knows where it sits
+and not merely what it is called. Both emit one shared schema, so the retriever
+never branches on source type.
 
 Postgres with pgvector for the index, chat log and audit trail. Hybrid BM25 +
 embeddings — the corpus is small, and exotic retrieval buys nothing here.
@@ -173,8 +175,8 @@ ingest/
   chunkers/
     solidity.py               Solidity → chunks, via the compiler's AST
     markdown.py               markdown → chunks, on heading boundaries
-    test_solidity.py          47 assertions
-    test_markdown.py          21 assertions, no compiler needed
+    test_solidity.py          74 assertions
+    test_markdown.py          42 assertions, no compiler needed
 
 eval/
   golden-v1.yaml              125 questions, from real support transcripts
@@ -234,8 +236,9 @@ the ones that need a human rather than a build step.
 
 **In flight**
 
-- Adversarial review of `ingest/chunkers/solidity.py` — briefed in
-  `ingest/REVIEW.md`, with Sol 5.6.
+- Round 2 of adversarial review. Round 1 (Sol 5.6) found six issues in each
+  chunker, all fixed with regressions. The markdown parser was rewritten in the
+  process and has the thinnest cover of anything here.
 
 **Needs a decision**
 
