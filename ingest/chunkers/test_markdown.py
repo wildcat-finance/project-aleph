@@ -481,6 +481,16 @@ def test_raw_html_blocks() -> None:
               if not c.synthesised]
     check("script content is not structure", heads2 == ["H", "Yes"], str(heads2))
 
+    # A *closing* type-1 tag is inline text. Treating it as a block opener
+    # cleared the paragraph it sat in, and the setext heading vanished.
+    h, _ = md.scan_structure(b"Title\n</script>\n===\n", 0)
+    check("a closing script tag does not open a block",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(1, "Title")], str(h))
+    h, _ = md.scan_structure(
+        b"<script>\nvar s = '# nope';\n</script>\n\n## Yes\n", 0)
+    check("...but it still closes one that is open",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(2, "Yes")], str(h))
+
 
 def test_setext_paragraph_state() -> None:
     print("\nM15 — setext needs a paragraph above it; a break alone is a break")
@@ -727,6 +737,20 @@ def test_lazy_list_continuation() -> None:
     h, _ = md.scan_structure(b"1. one\ntwo\n===\n", 0)
     check("ordered lists continue lazily too", h == [], str(h))
 
+    # a blockquote holds an open paragraph on exactly the same terms
+    h, _ = md.scan_structure(b"> quoted\nlazy continuation\n---\n", 0)
+    check("`> quoted / lazy continuation / ---` produces no heading",
+          h == [], str([(l, md.heading_text(r)) for _, l, r in h]))
+    sec = [c for c in chunk_text(
+        f"# Page\n\n{LONG}\n\n> quoted\nlazy continuation\n---\n\n{LONG}")
+        if not c.synthesised]
+    check("...and no phantom fragment to cite",
+          [c.detail.get("anchor") for c in sec] == [None],
+          str([c.detail.get("anchor") for c in sec]))
+    h, _ = md.scan_structure(b"> quoted\n\nbar\n---\n", 0)
+    check("a paragraph after the blockquote still setexts",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(2, "bar")], str(h))
+
 
 def test_multiline_code_span() -> None:
     print("\nM22 — a code span that crosses lines is still code")
@@ -745,6 +769,29 @@ def test_multiline_code_span() -> None:
     model2 = md.strip_comments_by_span(blob2, 0, len(blob2), c2)
     check("a real comment after the span is still stripped",
           "really a comment" not in model2 and "tail" in model2, repr(model2))
+
+    # A backtick run with no matching closer is literal text, not a delimiter.
+    # Treating it as one masked the rest of the line, so an HTML comment after
+    # it stopped being recognised and its contents reached the model.
+    for name, doc in [
+        ("unmatched",
+         b"# H\nUnmatched ` delimiter before <!-- HIDDEN --> ordinary prose.\n"),
+        ("backslash-escaped",
+         b"# H\nEscaped \\` delimiter before <!-- HIDDEN --> ordinary prose.\n"),
+        ("unmatched, closer past a blank line",
+         b"open ` here\n\nlater ` tick <!-- HIDDEN --> tail\n"),
+    ]:
+        _, spans = md.scan_structure(doc, 0)
+        model = md.strip_comments_by_span(doc, 0, len(doc), spans)
+        check(f"{name}: the comment is still found and removed",
+              "HIDDEN" not in model, repr(model))
+        check(f"{name}: the visible prose survives",
+              "ordinary prose" in model or "tail" in model, repr(model))
+
+    h, _ = md.scan_structure(b"Unmatched ` here\n# Real Heading\n", 0)
+    check("an unmatched delimiter does not swallow the next heading",
+          [(l, md.heading_text(r)) for _, l, r in h] == [(1, "Real Heading")],
+          str(h))
 
 
 # --------------------------------------------------------------------------

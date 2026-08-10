@@ -68,7 +68,10 @@ INDENTED_CODE = re.compile(rb"^(?: {4}|\t)")
 # their own terminators; types 6 and 7 to the next blank line. While one is
 # open, nothing inside it is a heading — Round 2 put `# Not a heading` inside
 # a <div> and it became one, corrupting every breadcrumb after it.
-HTML1_OPEN = re.compile(rb"^ {0,3}</?(script|pre|style|textarea)(?=[ \t>/]|$)", re.I)
+# An *opening* tag only. A lone `</script>` does not begin a type-1 block —
+# it is inline text, and treating it as a block opener silently swallowed the
+# paragraph it was sitting in. HTML1_CLOSE still terminates an open block.
+HTML1_OPEN = re.compile(rb"^ {0,3}<(script|pre|style|textarea)(?=[ \t>/]|$)", re.I)
 HTML1_CLOSE = re.compile(rb"</(?:script|pre|style|textarea)>", re.I)
 HTML_PI_OPEN = re.compile(rb"^ {0,3}<\?")
 HTML_DECL_OPEN = re.compile(rb"^ {0,3}<![A-Za-z]")
@@ -160,56 +163,96 @@ def split_frontmatter(blob: bytes) -> tuple[dict, int]:
 # paragraphs and headings
 # --------------------------------------------------------------------------
 
-TICK_RUN = re.compile(rb"`+")
+def _tick_runs(line: bytes) -> list[tuple[int, int, bool]]:
+    """
+    Every backtick run as (start, end, escaped), where `escaped` marks a run
+    whose first backtick is preceded by an odd number of backslashes. Such a
+    backtick is literal text and cannot begin a delimiter; the rest of the run,
+    if any, still can.
+    """
+    runs: list[tuple[int, int, bool]] = []
+    i, n = 0, len(line)
+    while i < n:
+        if line[i:i + 1] != b"`":
+            i += 1
+            continue
+        j = i
+        while j < n and line[j:j + 1] == b"`":
+            j += 1
+        back, k = 0, i - 1
+        while k >= 0 and line[k:k + 1] == b"\\":
+            back += 1
+            k -= 1
+        runs.append((i, j, back % 2 == 1))
+        i = j
+    return runs
 
 
-def _code_span_ranges(line: bytes, open_ticks: int = 0
+def _code_span_ranges(line: bytes, open_ticks: int = 0, lookahead: bytes = b""
                       ) -> tuple[list[tuple[int, int]], int]:
     """
     Byte ranges of inline code on this line, and the length of any backtick run
     still open at end of line.
 
-    CommonMark closes a code span on a backtick run of exactly the opening
-    length, and a span may cross soft line breaks. Round 2 matched spans within
-    a line only, so a span opened on one line and closed on another left its
-    middle lines looking like ordinary prose — enough for a `<!-- ... -->`
-    inside a multi-line code span to be treated as an invisible comment and
-    deleted from `model_text`, when the renderer shows it as visible text.
+    CommonMark closes a code span on a run of exactly the opening length, and a
+    span may cross soft line breaks — but a run with no matching closer *is not
+    a delimiter at all*, it is a literal backtick. Round 3's version assumed any
+    unclosed run opened a span running to end of line, so a stray or
+    backslash-escaped backtick masked the rest of the line and any HTML comment
+    after it stopped being recognised as a comment. That is the dangerous
+    direction: text the reader never sees reaching `model_text`.
+
+    `lookahead` is the remainder of the current block, so a closer on a later
+    line of the same paragraph counts and one past a block boundary does not.
+    Where the two readings are genuinely ambiguous this errs toward *not* code,
+    which costs a visible backtick its formatting and never hides anything.
     """
     ranges: list[tuple[int, int]] = []
-    pos, n = 0, len(line)
+    runs = _tick_runs(line)
+    i = 0
 
     if open_ticks:
-        for m in TICK_RUN.finditer(line):
-            if len(m.group(0)) == open_ticks:
-                ranges.append((0, m.end()))
-                pos = m.end()
+        # a closer is matched on its full length; escapes do not apply inside
+        # a code span, so `escaped` is ignored here
+        while i < len(runs):
+            start, end, _ = runs[i]
+            if end - start == open_ticks:
+                ranges.append((0, end))
+                i += 1
                 open_ticks = 0
                 break
+            i += 1
         else:
-            return [(0, n)], open_ticks          # whole line is still code
+            return [(0, len(line))], open_ticks   # still inside the span
 
-    while pos < n:
-        m = TICK_RUN.search(line, pos)
-        if m is None:
-            break
-        run = len(m.group(0))
-        close = None
-        for c in TICK_RUN.finditer(line, m.end()):
-            if len(c.group(0)) == run:
-                close = c
+    while i < len(runs):
+        start, end, escaped = runs[i]
+        opener = start + 1 if escaped else start
+        length = end - opener
+        if length <= 0:                            # fully escaped single tick
+            i += 1
+            continue
+        close_at = None
+        for j in range(i + 1, len(runs)):
+            c_start, c_end, _ = runs[j]
+            if c_end - c_start == length:
+                close_at = (j, c_end)
                 break
-        if close is None:
-            ranges.append((m.start(), n))        # opens and stays open
-            return ranges, run
-        ranges.append((m.start(), close.end()))
-        pos = close.end()
+        if close_at is not None:
+            ranges.append((opener, close_at[1]))
+            i = close_at[0] + 1
+            continue
+        if any(e - s == length for s, e, _ in _tick_runs(lookahead)):
+            ranges.append((opener, len(line)))     # closes on a later line
+            return ranges, length
+        i += 1                                     # no closer: literal text
     return ranges, 0
 
 
 def _scan_comments(line: bytes, offset: int, in_comment: bool,
                    comment_start: int, comments: list[tuple[int, int]],
-                   open_ticks: int = 0) -> tuple[bytes, bool, int, int]:
+                   open_ticks: int = 0, lookahead: bytes = b""
+                   ) -> tuple[bytes, bool, int, int]:
     """
     Find HTML comments on one line, appending completed (start, end) byte
     spans to `comments` and returning (structure_line, in_comment,
@@ -225,8 +268,8 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
     line breaks are respected too; it is returned for the next line.
     """
     buf = bytearray(line)
-    spans, open_ticks = ((_code_span_ranges(line, open_ticks)) if not in_comment
-                         else ([], open_ticks))
+    spans, open_ticks = ((_code_span_ranges(line, open_ticks, lookahead))
+                         if not in_comment else ([], open_ticks))
     pos, n = 0, len(line)
     while True:
         if in_comment:
@@ -240,7 +283,7 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
                 buf[i] = 0x20
             in_comment, comment_start = False, -1
             pos = end + 3
-            spans, open_ticks = _code_span_ranges(line[pos:], 0)
+            spans, open_ticks = _code_span_ranges(line[pos:], 0, lookahead)
             spans = [(a + pos, b + pos) for a, b in spans]
         else:
             begin = line.find(b"<!--", pos)
@@ -252,6 +295,27 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
             for i in range(begin, begin + 4):    # the opener is comment too
                 buf[i] = 0x20
             pos = begin + 4
+
+
+def _inline_lookahead(lines: list[tuple[int, bytes]], idx: int) -> bytes:
+    """
+    The rest of the current block, for deciding whether a backtick delimiter
+    ever finds its closer. Inline state does not survive a block boundary, so
+    this stops at a blank line, a fence, a heading, a thematic break or the
+    start of a raw-HTML block — not merely at the blank line.
+    """
+    out: list[bytes] = []
+    for _, nxt in lines[idx + 1:]:
+        if not nxt.strip():
+            break
+        if (FENCE.match(nxt) or ATX.match(nxt) or THEMATIC.match(nxt)
+                or HTML1_OPEN.match(nxt) or HTML7_LINE.match(nxt)):
+            break
+        m = HTML6_OPEN.match(nxt)
+        if m and m.group(1).lower() in HTML6_TAGS:
+            break
+        out.append(nxt)
+    return b"\n".join(out)
 
 
 def scan_structure(blob: bytes, start: int):
@@ -284,14 +348,23 @@ def scan_structure(blob: bytes, start: int):
     # underline cannot attach to them: `- foo\nbar\n---` is a list and a
     # thematic break, and Round 3 found it emitting an H2 called "bar" with a
     # `#bar` fragment the rendered page does not have.
-    list_open = False
-    list_blank = False         # a blank line has been seen inside the list
+    # A blockquote holds an open paragraph exactly as a list item does, and
+    # CommonMark's lazy-continuation rule is the same for both: an unindented
+    # line after either continues the container's paragraph rather than
+    # starting a new one. Round 3 modelled the list case; `> quoted / lazy
+    # continuation / ---` still produced a phantom H2 and a citation fragment
+    # the rendered page does not have.
+    container_open = False
+    container_blank = False    # a blank line has been seen inside it
 
-    for offset, line in iter_lines(blob, start):
+    lines = list(iter_lines(blob, start))
+    for idx, (offset, line) in enumerate(lines):
+        # only paid for when the line could actually carry a delimiter
+        ahead = _inline_lookahead(lines, idx) if b"`" in line else b""
         # -- a multi-line comment consumes everything until it closes -------
         if in_comment:
             _, in_comment, comment_start, open_ticks = _scan_comments(
-                line, offset, True, comment_start, comments, open_ticks)
+                line, offset, True, comment_start, comments, open_ticks, ahead)
             continue
 
         # -- fenced code: only the closing fence matters ---------------------
@@ -316,18 +389,18 @@ def scan_structure(blob: bytes, start: int):
                 continue
             # comments inside the block are still invisible text
             _, in_comment, comment_start, open_ticks = _scan_comments(
-                line, offset, False, comment_start, comments, open_ticks)
+                line, offset, False, comment_start, comments, open_ticks, ahead)
             continue
 
         # -- normal state -----------------------------------------------------
         sline, in_comment, comment_start, open_ticks = _scan_comments(
-            line, offset, False, comment_start, comments, open_ticks)
+            line, offset, False, comment_start, comments, open_ticks, ahead)
 
         if not sline.strip():
             para = []
             open_ticks = 0          # a code span cannot cross a blank line
-            if list_open:
-                list_blank = True
+            if container_open:
+                container_blank = True
             continue
 
         m = FENCE.match(sline)
@@ -336,7 +409,7 @@ def scan_structure(blob: bytes, start: int):
             # an opening backtick fence may not contain a backtick in its info
             if not (marker[:1] == b"`" and b"`" in rest):
                 fence_char, fence_len = marker[:1], len(marker)
-                para, list_open, open_ticks = [], False, 0
+                para, container_open, open_ticks = [], False, 0
                 continue
 
         m = HTML1_OPEN.match(sline)
@@ -378,7 +451,7 @@ def scan_structure(blob: bytes, start: int):
             # paragraph — it is never a lazy continuation.
             headings.append((offset, len(atx.group(1)), atx.group(2) or b""))
             para = []
-            list_open = False
+            container_open = False
             continue
 
         st = SETEXT.match(sline)
@@ -396,25 +469,25 @@ def scan_structure(blob: bytes, start: int):
             # scanner made it a heading of whatever non-paragraph line came
             # before, including `> quoted text`.
             para = []
-            list_open = False
+            container_open = False
             continue
 
         # a lone `===` with no paragraph above is just text, and falls through
 
-        if LIST_ITEM.match(sline):
-            list_open, list_blank, para = True, False, []
+        if LIST_ITEM.match(sline) or BLOCKQUOTE.match(sline):
+            container_open, container_blank, para = True, False, []
             continue
-        if BLOCKQUOTE.match(sline) or TEMPLATE_LINE.match(sline):
-            list_open, para = False, []
+        if TEMPLATE_LINE.match(sline):
+            container_open, para = False, []
             continue
         if INDENTED_CODE.match(sline):
-            # inside a list this is item content; outside one it is code
-            if list_open or not para:
+            # inside a container this is its content; outside one it is code
+            if container_open or not para:
                 continue
-        if list_open:
-            if not list_blank:
-                continue        # lazy continuation of the item's paragraph
-            list_open = False   # blank line then unindented text ends the list
+        if container_open:
+            if not container_blank:
+                continue          # lazy continuation of the container's paragraph
+            container_open = False  # blank line then unindented text ends it
 
         para.append((offset, sline))
 
