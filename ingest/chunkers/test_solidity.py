@@ -363,7 +363,7 @@ def test_schema(solc: str, tmp: pathlib.Path) -> None:
     check("chunker leaves provenance unset",
           all(c.corpus_build_id is None and c.source_ref is None for c in chunks))
     schema.stamp(chunks, corpus_build_id="47", source_ref="tag@sha",
-                 protocol_version="v2.1")
+                 protocol_version="v2.0")
     check("stamp applies uniformly",
           all(c.corpus_build_id == "47" for c in chunks))
     try:

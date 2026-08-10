@@ -168,6 +168,8 @@ README.md                     this file
 
 ingest/
   PIPELINE.md                 how manifest.yaml becomes a queryable corpus
+  build.py                    the pipeline driver — manifest in, corpus out
+  test_build.py               35 assertions, no compiler needed
   schema.py                   the chunk shape every chunker emits
   ADVERSARIAL.md              invariants and attack agenda
   REVIEW.md                   brief for an adversarial reviewer

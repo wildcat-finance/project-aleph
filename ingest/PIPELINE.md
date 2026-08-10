@@ -32,7 +32,7 @@ For `v2-protocol`, the order matters:
 
 ```bash
 git fetch --tags
-git verify-tag v2.1.0                    # signature is on tag object 8aab396
+git verify-tag v2.1.0                    # tag object 8aab396 — presently unsigned
 git rev-parse v2.1.0^{}                  # only now resolve to commit c7be403
 ```
 
@@ -40,6 +40,19 @@ Signature verification precedes resolution. Verifying the commit verifies nothin
 an annotated tag is a separate object and the signature lives on it. If
 `require_signature` is true and verification fails, the build aborts. It does not
 warn and continue.
+
+Three outcomes, and `ingest/build.py` keeps them apart. A signature that is
+**present and invalid** is an attack signal and aborts unconditionally. A
+signature that is **absent**, or that cannot be checked because the signer's key
+is not in the keyring, is a missing control: it aborts too, but
+`--allow-unverified-signature` will carry it, and the waiver is written into
+`build.json` so a corpus built without attestation can never be mistaken for one
+built with it.
+
+As of this writing no `v2-protocol` tag is signed, so the main corpus requires
+that waiver. The tag-object and commit hashes the manifest names are asserted on
+every build regardless, and those need no key — the build is pinned to exact
+objects whether or not anyone has vouched for them.
 
 `wildcat-docs` has no tags, so the promoted commit SHA is recorded into build
 metadata at acquisition time and treated as immutable thereafter.
@@ -75,9 +88,18 @@ signature and no owning contract. Instead, compile to AST and emit one chunk per
 semantic unit:
 
 ```bash
+python3 ingest/build.py --manifest manifest.yaml --out corpus/ --solc "$SOLC"
+
+That drives everything below from the manifest: acquire with verification,
+filter, both chunkers, provenance stamping, schema validation, and a build
+record. The individual chunkers remain runnable on their own for development
+and are what the tests exercise, but a corpus assembled by hand is a corpus
+nobody can replay — which is what every build before the driver was.
+
+```bash
 python3 ingest/chunkers/solidity.py \
   $(for d in deployments/mainnet/*/; do echo --input $d/standard-input.json; done) \
-  --include 'src/**' --out chunks.jsonl
+  --include 'src/**' --expect-solc 0.8.25 --out chunks.jsonl
 ```
 
 Use `--solc ingest/solc-container` in CI: the pinned `ethereum/solc` image with
@@ -167,7 +189,7 @@ Attach the §4 metadata schema to every chunk: `corpus_build_id`, `tier`,
 
 `protocol_version` is the load-bearing one. It is what lets retrieval filter to the
 version being asked about, and it is what stops the v2.5 pre-release index bleeding
-into v2.1 answers the day someone re-snapshots the branch.
+into v2.0 answers the day someone re-snapshots the branch.
 
 Chunks from `v2-protocol-prerelease` additionally carry `audited: false` and
 `deployment_status: not_deployed`, and the retrieval layer refuses to return them
@@ -237,7 +259,7 @@ whole retrieval path is replayable.
 **Silent corpus shrinkage.** A renamed directory quietly drops half the source and
 every build stays green. Caught by fail-loud globs (§2) and the diff gate (§6.3).
 
-**Version bleed.** A v2.5 chunk answers a v2.1 question. Caught by
+**Version bleed.** A v2.5 chunk answers a v2.0 question. Caught by
 `protocol_version` filtering (§4) and separate indices (§3 of the manifest).
 
 **Citation drift.** The bot quotes text that isn't in the file. Caught by storing

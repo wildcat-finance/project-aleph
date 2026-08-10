@@ -824,6 +824,42 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
     )
 
 
+_GLOB_CACHE: dict[str, re.Pattern] = {}
+
+
+def glob_match(rel: str, pattern: str) -> bool:
+    """
+    Path-aware glob matching: `**` spans directory separators, `*` does not.
+
+    `fnmatch` does not make that distinction — its `*` happily crosses `/`, so
+    an include of `*.md` also selects `elsewhere/other.md`, and a manifest that
+    means "the markdown at the root of this repo" quietly means "all of it".
+    A trailing `/**` also matches the directory itself, which is what an
+    exclusion like `skills/**` is understood to mean.
+    """
+    rx = _GLOB_CACHE.get(pattern)
+    if rx is None:
+        out, i, n = [], 0, len(pattern)
+        while i < n:
+            if pattern.startswith("**/", i):
+                out.append("(?:.*/)?")
+                i += 3
+            elif pattern.startswith("**", i):
+                out.append(".*")
+                i += 2
+            elif pattern[i] == "*":
+                out.append("[^/]*")
+                i += 1
+            elif pattern[i] == "?":
+                out.append("[^/]")
+                i += 1
+            else:
+                out.append(re.escape(pattern[i]))
+                i += 1
+        rx = _GLOB_CACHE[pattern] = re.compile("^" + "".join(out) + r"/?$")
+    return rx.match(rel) is not None
+
+
 def _reject_symlink(path: pathlib.Path, base: pathlib.Path) -> None:
     """
     A symlinked Markdown file reads bytes the pinned ref does not describe.
@@ -847,7 +883,17 @@ def _reject_symlink(path: pathlib.Path, base: pathlib.Path) -> None:
 
 
 def chunk_tree(root: str, excludes: list[str],
-               summary: str | None = None) -> list[Chunk]:
+               summary: str | None = None,
+               includes: list[str] | None = None) -> list[Chunk]:
+    """
+    `includes` is the allowlist half of the filter PIPELINE.md §2 describes:
+    include, then exclude. Without it this chunker took every `*.md` under the
+    root and could not express a manifest that names specific documents — which
+    is why `v2-protocol`'s thirteen in-scope markdown files, `Known Issues.md`
+    among them, had never been chunked at all. Empty means everything, and a
+    glob that matches nothing is fatal, on the same reasoning as the Solidity
+    side: a silently-empty selection is how a rename removes half a corpus.
+    """
     base = pathlib.Path(root)
     if not base.is_dir():
         raise ChunkError(f"--root {root} is not a directory")
@@ -874,9 +920,17 @@ def chunk_tree(root: str, excludes: list[str],
     out: list[Chunk] = []
     included: list[str] = []
     skipped = 0
+    glob_hits: dict[str, int] = {g: 0 for g in (includes or [])}
     for path in sorted(base.rglob("*.md")):
         rel = str(path.relative_to(base))
-        if any(fnmatch.fnmatch(rel, g) or rel.startswith(g.rstrip("*"))
+        if includes:
+            matched = [g for g in includes if glob_match(rel, g)]
+            if not matched:
+                skipped += 1
+                continue
+            for g in matched:
+                glob_hits[g] += 1
+        if any(glob_match(rel, g) or rel.startswith(g.rstrip("*"))
                for g in excludes):
             skipped += 1
             continue
@@ -884,6 +938,11 @@ def chunk_tree(root: str, excludes: list[str],
         included.append(rel)
         out.extend(chunk_file(path, base, hierarchy=hierarchy))
     print(f"  skipped {skipped} excluded file(s)")
+    unmatched = [g for g, n in glob_hits.items() if n == 0]
+    if unmatched:
+        raise ChunkError(
+            "include pattern(s) matched no markdown under "
+            f"{root}: {', '.join(repr(g) for g in unmatched)}")
 
     # Coverage is computed from documents that actually produced chunks, not
     # from filenames discovered before chunking. The latter certified a file as

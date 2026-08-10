@@ -56,7 +56,7 @@ class Chunk:
     tier: str = "A"               # A canonical, B published docs
     corpus_build_id: str | None = None
     source_ref: str | None = None         # tag + commit, or promoted docs commit
-    protocol_version: str | None = None   # "v2.1" | "v2.5"
+    protocol_version: str | None = None   # "v2.0" | "v2.5" — public names only
     deployment_status: str | None = None  # deployed | not_deployed | n/a
     effective_date: str | None = None     # tier B
     doc_version: str | None = None        # tier B

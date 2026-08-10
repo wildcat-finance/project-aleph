@@ -65,10 +65,24 @@ sources:
     ref:
       kind: annotated_tag
       tag: v2.1.0
-      tag_object: 8aab396          # GPG signature is on this
+      tag_object: 8aab396          # annotated tag object — NOT SIGNED, see below
       commit: c7be403              # resolve only after signature verifies
+      # Kept true deliberately, and currently unmet: v2.1.0 is an annotated
+      # tag carrying no signature at all, and v2.0.0 is lightweight. The first
+      # build that actually ran `git verify-tag` — ingest/build.py, 2026-08 —
+      # found this. Until a tag is signed, every build of this source needs
+      # --allow-unverified-signature, which records the gap in build.json.
+      # The tag object and commit hashes above are still asserted on every
+      # build, so the corpus is pinned to exact objects; it is not attested to
+      # a signer, and the "trust boundary is the signature" argument in
+      # aleph-ingestion-manifest.md §5 does not currently hold.
       require_signature: true
-    protocol_version: "v2.1"
+    # The public name of this protocol, and the only one an answer may use.
+    # The repository distinguishes a v2.1.0 *tag*; Wildcat does not publish a
+    # "v2.1" and never refers to one. The tag is a reproducibility handle and
+    # belongs in source_ref, not in anything a reader sees. v2.5 is different:
+    # that one will be publicly distinguished, so it keeps its own name.
+    protocol_version: "v2.0"
     deployment_status: deployed
     include:
       - "src/**/*.sol"
