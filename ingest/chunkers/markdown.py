@@ -747,6 +747,8 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                 "nav_path": ancestors,
                 "anchor": anchor,
                 "description": front.get("description"),
+                "effective_date": front.get("effective_date"),
+                "doc_version": front.get("doc_version"),
             },
         ))
 
@@ -778,6 +780,8 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                     "nav_path": ancestors,
                     "anchor": None,
                     "description": front.get("description"),
+                    "effective_date": front.get("effective_date"),
+                    "doc_version": front.get("doc_version"),
                     "whole_document": True,
                 },
             ))
@@ -819,6 +823,8 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
         tier="B",
         synthesised=True,
         detail={"description": front.get("description"),
+                "effective_date": front.get("effective_date"),
+                "doc_version": front.get("doc_version"),
                 "nav_path": ancestors,
                 "heading_count": len(headings)},
     )

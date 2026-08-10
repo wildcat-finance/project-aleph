@@ -459,6 +459,74 @@ def test_watched_documents(tmp: pathlib.Path) -> None:
           str(rec["watch"]["alpha"][0]["status"]))
 
 
+def test_scoped_metadata(tmp: pathlib.Path) -> None:
+    print("\nB9 — metadata_required can be scoped to the documents it fits")
+    a = make_repo(tmp / "msrc", {
+        "legal/terms.md": f'---\neffective_date: "2025-02-12"\n'
+                          f'doc_version: "sha256:abc"\n---\n\n# Terms\n\n{LONG}\n',
+        "legal/undated.md": f"# Undated\n\n{LONG}\n",
+        "guide.md": f"# Guide\n\n{LONG}\n",
+    })
+    git(a, "tag", "-a", "-m", "t", "v1.0.0")
+
+    def manifest(spec: str) -> str:
+        path = tmp / f"m{abs(hash(spec)) % 9999}.yaml"
+        path.write_text(
+            "version: 1\nsources:\n  - id: alpha\n    tier: B\n"
+            "    repo: x/alpha\n    ref: {kind: tag, tag: v1.0.0}\n"
+            "    include: ['**/*.md']\n" + spec, encoding="utf-8")
+        return str(path)
+
+    # scoped, and one document in scope is missing both fields
+    strict = manifest("    metadata_required:\n      paths: ['legal/**']\n"
+                      "      fields: [doc_version, effective_date]\n")
+    raised = ""
+    try:
+        ab.build(strict, str(tmp / "m1"), "solc", str(tmp / "mw"),
+                 {"alpha": str(a)}, True, False, False, None)
+    except ab.BuildError as e:
+        raised = str(e)
+    check("an in-scope document missing the fields stops the build",
+          "legal/**" in raised and "metadata_required" in raised, raised[:140])
+    check("...and the message says how many chunks were in scope",
+          "chunks); missing on" in raised, raised[:200])
+
+    # give it what it asks for
+    (a / "legal" / "undated.md").write_text(
+        f'---\neffective_date: "2025-01-16"\ndoc_version: "2025-01-16"\n'
+        f'---\n\n# Undated\n\n{LONG}\n', encoding="utf-8")
+    git(a, "add", "-A")
+    git(a, "commit", "-qm", "dates")
+    git(a, "tag", "-a", "-f", "-m", "t", "v1.0.0")
+    rec = ab.build(strict, str(tmp / "m2"), "solc", str(tmp / "mw"),
+                   {"alpha": str(a)}, True, False, False, None)
+    check("with both in scope satisfied, the gate passes",
+          rec["gates"]["metadata_required"] is True, str(rec["gates"]))
+    check("and no waiver was needed", rec["waivers"] == [], str(rec["waivers"]))
+
+    rows = [json.loads(l) for l in
+            open(pathlib.Path(tmp / "m2" / rec["build_id"] / "chunks.jsonl"))]
+    legal = [c for c in rows if c["path"].startswith("legal/")]
+    other = [c for c in rows if not c["path"].startswith("legal/")]
+    check("in-scope chunks carry the dates as schema fields",
+          all(c["effective_date"] and c["doc_version"] for c in legal),
+          str([(c["path"], c["effective_date"]) for c in legal][:2]))
+    check("out-of-scope chunks are left alone, not backfilled",
+          all(not c["effective_date"] for c in other),
+          str([(c["path"], c["effective_date"]) for c in other][:2]))
+
+    # the bare-list form still means every document
+    everywhere = manifest("    metadata_required: [effective_date]\n")
+    raised = ""
+    try:
+        ab.build(everywhere, str(tmp / "m3"), "solc", str(tmp / "mw"),
+                 {"alpha": str(a)}, True, False, False, None)
+    except ab.BuildError as e:
+        raised = str(e)
+    check("an unscoped list still applies to everything",
+          "every document" in raised, raised[:140])
+
+
 def test_policy(tmp: pathlib.Path) -> None:
     print("\nB3 — stated policy is enforced, not merely stated")
     repo = make_repo(tmp / "pol", {"a.txt": "hi"})
@@ -675,7 +743,7 @@ def main() -> int:
 
     test_build_id()
     for fn in (test_signatures, test_keyring, test_watched_documents,
-               test_policy,
+               test_scoped_metadata, test_policy,
                test_merge_and_provenance,
                test_gates, test_filter_and_diff):
         td = tempfile.mkdtemp()

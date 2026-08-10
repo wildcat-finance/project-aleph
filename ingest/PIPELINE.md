@@ -239,6 +239,32 @@ unless the query explicitly names v2.5.
 
 ---
 
+### Per-document provenance
+
+`corpus_build_id`, `source_ref`, `protocol_version` and `deployment_status`
+are properties of the source and are the same for every chunk in it.
+`effective_date` and `doc_version` are properties of the *document*, read from
+its frontmatter and promoted to schema fields during enrich, so a citation can
+say which version of the Terms of Use it is quoting without anyone rummaging
+in `detail`.
+
+`metadata_required` may name the paths it applies to:
+
+```yaml
+metadata_required:
+  paths: [ "legal/**" ]
+  fields: [ doc_version, effective_date ]
+```
+
+Scoped, because the requirement is not uniform. "Which version is in force" is
+a real question about the Terms of Use and a meaningless one about the
+delinquency explainer. Demanding a date for all eighty documents would mean
+inventing seventy-six of them, and a typo fix would then claim the terms had
+changed — ceremony that degrades the thing it decorates. A bare list still
+means every document in the source.
+
+---
+
 ## 5. Embed and index
 
 Postgres. One database, three tables: `chunks`, `chunk_vectors`, `builds`.

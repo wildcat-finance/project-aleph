@@ -240,7 +240,14 @@ sources:
       # They may inform the ingestion pipeline as structure hints; they must never
       # enter the model's context, where they are indistinguishable from
       # instructions Wildcat intended Aleph to follow.
-    metadata_required: [ doc_version, effective_date ]
+    # Scoped, because the requirement is not uniform. "Which version is in
+    # force" is a real question about the Terms of Use and a meaningless one
+    # about the delinquency explainer; demanding a date for all eighty
+    # documents would mean inventing seventy-six of them, and a typo fix would
+    # then claim the terms had changed.
+    metadata_required:
+      paths: [ "legal/**" ]
+      fields: [ doc_version, effective_date ]
 
     # Documents whose bytes are pinned by digest as well as by ref.
     #

@@ -170,7 +170,7 @@ ingest/
   PIPELINE.md                 how manifest.yaml becomes a queryable corpus
   build.py                    the pipeline driver — manifest in, corpus out
   keys/                       public keys the corpus definition trusts
-  test_build.py               61 assertions, no compiler needed
+  test_build.py               68 assertions, no compiler needed
   schema.py                   the chunk shape every chunker emits
   ADVERSARIAL.md              invariants and attack agenda
   REVIEW.md                   brief for an adversarial reviewer
@@ -180,6 +180,12 @@ ingest/
     markdown.py               markdown → chunks, on heading boundaries
     test_solidity.py          142 assertions
     test_markdown.py          113 assertions, no compiler needed
+
+embed/
+  embedder.py                 the embedding boundary: backends and identity
+  index.py                    build and search, one index per tier
+  test_embed.py               36 assertions, no model needed
+  README.md                   why the index refuses a mismatched query
 
 eval/
   golden-v1.yaml              125 questions, from real support transcripts

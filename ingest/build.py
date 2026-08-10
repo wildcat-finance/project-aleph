@@ -484,6 +484,15 @@ def enrich(chunks: list, source: dict, resolution: dict, build_id: str) -> None:
         protocol_version=source.get("protocol_version"),
         deployment_status=source.get("deployment_status"),
     )
+    # Per-document provenance, which unlike the fields above varies within a
+    # source: a chunk of the Terms of Use is dated by the Terms of Use, not by
+    # the corpus. The chunkers put it in `detail`; it is promoted to a schema
+    # field here so a citation can carry it without anyone rummaging.
+    for c in chunks:
+        for field in ("effective_date", "doc_version"):
+            value = c.detail.get(field)
+            if value:
+                setattr(c, field, str(value))
     tier = source.get("tier")
     for c in chunks:
         if tier and c.tier != tier:
@@ -493,16 +502,42 @@ def enrich(chunks: list, source: dict, resolution: dict, build_id: str) -> None:
 
 
 def metadata_coverage(chunks: list, source: dict) -> dict:
-    required = list(source.get("metadata_required") or [])
+    """
+    Check `metadata_required`, which may be a bare list of fields or a mapping
+    with `paths` scoping it.
+
+    Scoping matters because the requirement is not uniform. "Which version of
+    this is in force" is a real question about the Terms of Use and a
+    meaningless one about the delinquency explainer, and demanding a date for
+    all eighty documents would mean inventing seventy-six of them — at which
+    point a typo fix silently claims the terms changed. Ceremony that degrades
+    the thing it decorates.
+    """
+    spec = source.get("metadata_required")
+    if not spec:
+        return {"required": [], "satisfied": True}
+    if isinstance(spec, dict):
+        required = list(spec.get("fields") or [])
+        paths = list(spec.get("paths") or [])
+    else:
+        required, paths = list(spec), []
     if not required:
         return {"required": [], "satisfied": True}
+
+    if paths:
+        scoped = [c for c in chunks
+                  if any(_md.glob_match(c.path, g) for g in paths)]
+    else:
+        scoped = list(chunks)
+
     missing: dict[str, int] = {}
     for field in required:
-        n = sum(1 for c in chunks if not getattr(c, field, None))
+        n = sum(1 for c in scoped if not getattr(c, field, None))
         if n:
             missing[field] = n
-    return {"required": required, "missing": missing,
-            "satisfied": not missing, "chunks": len(chunks)}
+    return {"required": required, "paths": paths or None,
+            "missing": missing, "satisfied": not missing,
+            "chunks": len(scoped), "of": len(chunks)}
 
 
 # --------------------------------------------------------------------------
@@ -657,7 +692,9 @@ def build(manifest_path: str, out_root: str, solc: str, workdir: str,
              if not r["metadata"]["satisfied"]}
     if unmet and not allow_missing_metadata:
         detail = "\n".join(
-            f"  {sid}: {m['required']} required; missing on "
+            f"  {sid}: {m['required']} required on "
+            + (", ".join(m["paths"]) if m.get("paths") else "every document")
+            + f" ({m['chunks']} chunks); missing on "
             + ", ".join(f"{k} ({n} chunks)" for k, n in m["missing"].items())
             for sid, m in unmet.items())
         raise BuildError(
