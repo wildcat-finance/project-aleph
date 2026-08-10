@@ -272,6 +272,15 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
     out_of_scope_ok = (unsupported.status == "refused"
                        and unsupported.route.refusal_reason == "unsupported_chain"
                        and unsupported.live is None and not unsupported.citations)
+    registry = engine.answer(
+        "Which Wildcat markets are currently registered?")
+    registry_discovery_ok = (
+        registry.status == "answered"
+        and registry.mode == RouteMode.LIVE
+        and registry.route.live_operation == "registry"
+        and registry.live is not None
+        and registry.live.operation == "registry"
+        and not registry.citations)
 
     check_names = ("route", "outcome", "citations", "claim_support",
                    "live_determinism", "refusal")
@@ -301,6 +310,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
                                <= policy["maximum_known_gap_answers"]),
         "version_isolation": all(isolation.values()),
         "unsupported_chain_refused": out_of_scope_ok,
+        "registry_discovery": registry_discovery_ok,
     }
     failures = [{"id": case["id"],
                  "failed_checks": [name for name, ok in case["checks"].items()
@@ -316,6 +326,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         "groups": {"by_mode": by_mode, "by_risk": by_risk},
         "retrieval": retrieval_report, "version_isolation": isolation,
         "unsupported_chain_refused": out_of_scope_ok,
+        "registry_discovery": registry_discovery_ok,
         "known_gap_answers": known_gap_answers,
         "gates": gates, "passed": all(gates.values()),
         "failures": failures, "cases": cases,

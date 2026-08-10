@@ -209,6 +209,8 @@ The implementation provides:
 - version and deployment correctness, including prerelease isolation;
 - calibrated abstention on known-unanswerable and out-of-scope questions;
 - deterministic live-value and block-number checks;
+- address-free registry discovery for natural "which markets are registered"
+  questions;
 - reporting by reviewed mode and conservative risk class, with every failed ID;
 - nine declared corpus gaps that must abstain or route elsewhere rather than
   receiving credit for a plausible-looking answer; and

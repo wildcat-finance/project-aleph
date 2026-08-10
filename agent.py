@@ -278,7 +278,10 @@ class Router:
         lower = question.lower()
         if re.search(r"what markets has|markets (?:has|for) .*borrower", lower):
             return "borrower_markets"
-        if re.search(r"enumerate.*markets|all active markets|market registry", lower):
+        if re.search(
+                r"enumerate.*markets|all active markets|market registry|"
+                r"(?:which|list|show)\b.*\bmarkets\b.*\bregistered\b",
+                lower):
             return "registry"
         if re.search(r"claimable|my balance|my deposit|my account", lower):
             return "account"

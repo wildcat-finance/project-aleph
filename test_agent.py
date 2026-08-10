@@ -72,6 +72,11 @@ def run(tmp: pathlib.Path) -> None:
     check("an unsupported chain is a refusal with a destination",
           offchain.mode == agent.RouteMode.REFUSE_POINT
           and offchain.refusal_reason == "unsupported_chain")
+    registry_route = router.route(
+        "Which Wildcat markets are currently registered?")
+    check("natural registry discovery selects the address-free live operation",
+          registry_route.mode == agent.RouteMode.LIVE
+          and registry_route.live_operation == "registry")
     golden = yaml.safe_load(pathlib.Path("eval/golden-v1.yaml").read_bytes())
     routed = [(item["id"], item["expected"],
                router.route(item["question"]).mode.value)
@@ -96,6 +101,12 @@ def run(tmp: pathlib.Path) -> None:
 
     retriever, client, transport = components(tmp)
     engine = agent.AnswerEngine(retriever, client)
+    registry_answer = engine.answer(
+        "Which Wildcat markets are currently registered?")
+    check("registry discovery needs no market address",
+          registry_answer.status == "answered"
+          and registry_answer.live is not None
+          and registry_answer.live.operation == "registry")
 
     print("\nA2 — corpus claims cannot leave without byte-verified citations")
     corpus = engine.answer("What does exactIdentifier(uint256) do?")
