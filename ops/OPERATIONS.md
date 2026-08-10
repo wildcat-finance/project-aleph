@@ -121,6 +121,18 @@ Keep `/srv/aleph/artifacts` and `/srv/aleph/active-release.json` read-only to
 Telegram offset and `/var/log/aleph` for scrubbed audits. This prevents the
 network-facing process from selecting its own evidence release.
 
+Archive transfers may preserve restrictive build-host modes. After copying,
+make the immutable tree service-readable without making it writable:
+
+```bash
+chown -R root:root /srv/aleph/artifacts
+chmod -R a+rX /srv/aleph/artifacts
+chmod -R a-w /srv/aleph/artifacts
+```
+
+Run `monitor.py` as `aleph-query` before enabling polling; this catches a
+permission error at the same boundary production uses.
+
 The Telegram bot must retain Group Privacy mode, must not be a group admin, and
 must have no webhook. A human handoff sink is disabled until an owner and
 idempotent destination are explicitly configured.

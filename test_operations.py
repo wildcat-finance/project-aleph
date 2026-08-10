@@ -230,6 +230,24 @@ def run(tmp: pathlib.Path) -> None:
           report["ok"] and set(report["checks"]) == {
               "active_release", "model_runtime", "gateway", "telegram"})
 
+    print("\nO5 — production units keep the query identity unprivileged")
+    required_hardening = {
+        "CapabilityBoundingSet=", "DevicePolicy=closed",
+        "MemoryDenyWriteExecute=true", "NoNewPrivileges=true",
+        "PrivateDevices=true", "ProtectSystem=strict",
+        "ProtectHome=true", "ProtectKernelModules=true",
+        "ProtectKernelTunables=true", "ProtectProc=invisible",
+        "RemoveIPC=true", "RestrictNamespaces=true",
+        "RestrictSUIDSGID=true", "SystemCallArchitectures=native",
+        "UMask=0077",
+    }
+    for name in ("aleph.service", "aleph-monitor.service",
+                 "aleph-sdk-watch.service"):
+        lines = set((pathlib.Path("ops/systemd") / name).read_text().splitlines())
+        check(f"{name} retains the production sandbox",
+              required_hardening <= lines,
+              str(sorted(required_hardening - lines)))
+
 
 def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp())
