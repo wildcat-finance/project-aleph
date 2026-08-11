@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import re
+import secrets
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Callable, Protocol
 
 from live import GatewayUnavailable, LiveError, RenderedLive, render_live
 from retrieval import (Citation, CitationError, Evidence, RetrievalError,
@@ -27,6 +28,7 @@ class RouteMode(str, Enum):
     TRIAGE = "triage"
     PARTIAL = "partial"
     CLARIFY = "clarify"
+    EASTER_EGG = "easter_egg"
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,9 @@ class Router:
         r"\bapi\b|address|whitelist|app|website|site|platform|history|"
         r"notification|agreement|legal|entity|sign|admin|approval|discord|"
         r"telegram|chain|0x[0-9a-f]{8,}|[A-Za-z_]\w*\([^)]*\)", re.I)
+    _vegan = re.compile(
+        r"^\s*(?:(?:is\s+(?:it|aleph|wildcat))|(?:are\s+you))"
+        r"\s+vegan\s*[?!.]*\s*$", re.I)
 
     @classmethod
     def known_gap(cls, question: str) -> str | None:
@@ -280,6 +285,8 @@ class Router:
         if not question.strip():
             raise AnswerError("question is empty")
         entities = extract_entities(question)
+        if self._vegan.fullmatch(question):
+            return Route(RouteMode.EASTER_EGG, "vegan coin flip", entities)
         if self._content_safety.search(question):
             return Route(RouteMode.REFUSE, "content safety boundary", entities,
                          refusal_reason="unsafe_or_abusive")
@@ -506,14 +513,22 @@ class AnswerEngine:
     """Assemble answers while keeping model claims and live bytes separated."""
 
     def __init__(self, retriever, live_client, writer: EvidenceWriter | None = None,
-                 router: Router | None = None):
+                 router: Router | None = None,
+                 coin_flip: Callable[[], bool] | None = None):
         self.retriever = retriever
         self.live_client = live_client
         self.writer = writer or ExtractiveWriter()
         self.router = router or Router()
+        self.coin_flip = coin_flip or (lambda: bool(secrets.randbits(1)))
 
     def answer(self, question: str) -> Answer:
         route = self.router.route(question)
+        if route.mode == RouteMode.EASTER_EGG:
+            verdict = ("Yes. Categorically vegan. I refuse to elaborate."
+                       if self.coin_flip() else
+                       "No. Categorically not vegan. I refuse to elaborate.")
+            return Answer(
+                status="answered", mode=route.mode, text=verdict, route=route)
         if route.mode == RouteMode.CLARIFY:
             return Answer(
                 status="needs_input", mode=route.mode,

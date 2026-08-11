@@ -58,6 +58,7 @@ def run(tmp: pathlib.Path) -> None:
         "Can you generate a CSV for the year?": agent.RouteMode.REFUSE_POINT,
         "Deposit fails with an error — screenshot attached.": agent.RouteMode.TRIAGE,
         "Why is it doing that again?": agent.RouteMode.CLARIFY,
+        "Is it vegan?": agent.RouteMode.EASTER_EGG,
         "Is it accruing interest now, and does the borrower plan another term?":
             agent.RouteMode.PARTIAL,
     }
@@ -103,8 +104,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 126 golden questions enter their reviewed handling mode",
-          len(routed) == 126 and not wrong, str(wrong[:5]))
+    check("all 127 golden questions enter their reviewed handling mode",
+          len(routed) == 127 and not wrong, str(wrong[:5]))
 
     market = test_live.MARKET
     lender = test_live.LENDER
@@ -128,6 +129,28 @@ def run(tmp: pathlib.Path) -> None:
           registry_answer.status == "answered"
           and registry_answer.live is not None
           and registry_answer.live.operation == "registry")
+
+    class ForbiddenTool:
+        def __getattr__(self, name):
+            raise AssertionError(f"Easter egg called forbidden tool {name}")
+
+    vegan_yes = agent.AnswerEngine(
+        ForbiddenTool(), ForbiddenTool(), coin_flip=lambda: True).answer(
+            "Is Aleph vegan?")
+    vegan_no = agent.AnswerEngine(
+        ForbiddenTool(), ForbiddenTool(), coin_flip=lambda: False).answer(
+            "Are you vegan?!")
+    check("the vegan coin reaches both terse confident verdicts",
+          vegan_yes.text ==
+          "Yes. Categorically vegan. I refuse to elaborate."
+          and vegan_no.text ==
+          "No. Categorically not vegan. I refuse to elaborate.")
+    check("the Easter egg has no evidence, live state, or handoff payload",
+          not vegan_yes.citations and not vegan_yes.claims
+          and vegan_yes.live is None and vegan_yes.triage is None
+          and vegan_yes.corpus_release_id is None)
+    check("nearby wording does not hijack ordinary market routing",
+          router.route("Is this market vegan?").mode == agent.RouteMode.CORPUS)
 
     print("\nA2 — corpus claims cannot leave without byte-verified citations")
     corpus = engine.answer("What does exactIdentifier(uint256) do?")

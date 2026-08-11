@@ -203,7 +203,7 @@ appends the deterministic live block without exposing it to the writer.
 Advice, borrower assessment, inferred intent, unsupported chains, private
 lender lists, and prompt/private-context extraction are refused. Handoffs are
 prepared but never sent without a separate explicit confirmation. The router's
-handling mode matches all 126 reviewed golden questions; answer quality and
+handling mode matches all 127 reviewed golden questions; answer quality and
 claim support are enforced by the blocking stage-5 gate.
 
 ### 5. End-to-end evaluation and promotion gates — implemented
@@ -218,7 +218,7 @@ client. It publishes a content-addressed record under
 
 The implementation provides:
 
-- execution of all 126 golden questions through the real router, retriever,
+- execution of all 127 golden questions through the real router, retriever,
   answer engine, citation resolver, and fixture-backed live tools;
 - blocking checks for citation existence and claim support;
 - version and deployment correctness, including prerelease isolation;
@@ -444,7 +444,7 @@ embed/
   test_embed.py               index and backend behavior checks
 
 eval/
-  golden-v1.yaml              126 questions and expected handling modes
+  golden-v1.yaml              127 questions and expected handling modes
   labels.yaml                 retrieval labels for consequential questions
   embed_compare.py            Markdown-only model comparison harness
   retrieval_eval.py           labels against an immutable release retriever
