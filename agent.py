@@ -280,6 +280,10 @@ class Router:
                 and re.search(r"liquidat(?:e|ed|ion)", question, re.I)):
             return ("Wildcat protocol does not liquidate lender positions or "
                     "participate in liquidation")
+        if (route.mode == RouteMode.CORRECT
+                and re.search(r"wildcat changed the apr", question, re.I)):
+            return ("borrower can change APR set annual interest and reserve "
+                    "ratio")
         # Presentation requests are not evidence topics. Sending them to the
         # embedder can make an otherwise exact protocol question retrieve
         # semantically adjacent legal, medical, or stylistic prose.
