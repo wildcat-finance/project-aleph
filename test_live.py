@@ -149,6 +149,33 @@ class FakeTransport:
                     "totalInterestEarned": "1000"}]}
         elif "query BorrowerMarkets(" in query:
             data["markets"] = [market_summary()]
+        elif "query History(" in query:
+            first = body["variables"]["first"]
+            def event(index, amount, transaction, log_index):
+                return {
+                    "eventIndex": index, "assetAmount": str(amount),
+                    "blockNumber": 60 + index, "blockTimestamp": 1_700_000_000 + index,
+                    "transactionHash": "0x" + transaction * 64,
+                    "blockLogIndex": log_index,
+                }
+            borrows = [
+                event(40, 4_000_000, "a", 4),
+                event(32, 3_200_000, "b", 3),
+                event(20, 2_000_000, "c", 2),
+            ]
+            repayments = [event(39, 3_900_000, "d", 3)]
+            deposits = [event(38, 3_800_000, "e", 2)]
+            withdrawals = [event(37, 3_700_000, "f", 1)]
+            withdrawals[0]["normalizedAmount"] = withdrawals[0].pop(
+                "assetAmount")
+            data["market"] = {
+                "id": MARKET, "name": "Example Market",
+                "asset": market_summary()["asset"],
+                "borrowRecords": borrows[:first],
+                "repaymentRecords": repayments[:first],
+                "depositRecords": deposits[:first],
+                "withdrawalRequestRecords": withdrawals[:first],
+            }
         else:
             return {"errors": [{"message": "unknown fixture query"}]}
         return {"data": data}
@@ -198,14 +225,16 @@ def run(tmp: pathlib.Path) -> None:
     account = client.account(MARKET, LENDER)
     withdrawals = client.withdrawals(MARKET)
     borrower = client.borrower_markets(BORROWER)
-    check("all five narrow operations return typed facts",
+    history = client.history(MARKET, limit=3, event_types=("borrow",))
+    check("all six narrow operations return typed facts",
           isinstance(market.value, live.MarketState)
           and isinstance(registry.value, live.RegistryState)
           and isinstance(account.value, live.AccountState)
           and isinstance(withdrawals.value, live.WithdrawalQueueState)
-          and isinstance(borrower.value, live.BorrowerMarketsState))
+          and isinstance(borrower.value, live.BorrowerMarketsState)
+          and isinstance(history.value, live.MarketHistoryState))
     check("health is checked immediately before every query",
-          len(transport.get_calls) == len(transport.post_calls) == 5)
+          len(transport.get_calls) == len(transport.post_calls) == 6)
     check("the pinned release is explicit in every request URL",
           all(url.endswith("/mainnet/v2.0.30")
               for url, _, _ in transport.post_calls))
@@ -214,7 +243,8 @@ def run(tmp: pathlib.Path) -> None:
               for call in transport.post_calls))
     check("every typed result propagates the observed block and release",
           all(result.block_number == 100 and result.gateway_release == "v2.0.30"
-              for result in (market, registry, account, withdrawals, borrower)))
+              for result in (
+                  market, registry, account, withdrawals, borrower, history)))
     check("account claimable is allocated exactly across pending batches",
           account.value.claimable_withdrawals == 1_250_000)
     smoke_transport = FakeTransport()
@@ -232,6 +262,23 @@ def run(tmp: pathlib.Path) -> None:
     check("borrower aggregation contains facts, never scores or rankings",
           not borrower_fields.intersection(
               {"score", "rank", "reliability", "trust", "risk"}))
+    check("history is bounded, typed, and newest-first across requested events",
+          len(history.value.events) == 3
+          and tuple(event.event_index for event in history.value.events)
+          == (40, 32, 20)
+          and all(event.kind == "borrow" for event in history.value.events))
+    bounded = client.history(MARKET, limit=2)
+    check("mixed history returns no more than the requested overall limit",
+          len(bounded.value.events) == 2
+          and tuple(event.event_index for event in bounded.value.events)
+          == (40, 39))
+    refused = ""
+    try:
+        client.history(MARKET, limit=live.MAX_HISTORY_EVENTS + 1)
+    except live.LiveError as error:
+        refused = str(error)
+    check("history limits above the fixed contract fail before a gateway read",
+          "between 1 and 10" in refused, refused)
 
     print("\nL3 — unhealthy, lagging, or incoherent data fails closed")
     lagging_health = healthy()
@@ -276,11 +323,44 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("an incomplete account withdrawal page fails closed",
           "2 of 3 pending withdrawal batches" in refused, refused)
+    class IncoherentHistoryTransport(FakeTransport):
+        def post_json(self, url: str, body: dict, token: str) -> dict:
+            payload = super().post_json(url, body, token)
+            if "query History(" in body["query"]:
+                payload["data"]["market"]["borrowRecords"][0][
+                    "blockNumber"] = 101
+            return payload
+    refused = ""
+    try:
+        live.GatewayClient(
+            str(manifest), IncoherentHistoryTransport(), "test").history(
+                MARKET, limit=1, event_types=("borrow",))
+    except live.LiveError as error:
+        refused = str(error)
+    check("a history event later than the pinned response block fails closed",
+          "later than the pinned response block" in refused, refused)
+    class MalformedHistoryTransport(FakeTransport):
+        def post_json(self, url: str, body: dict, token: str) -> dict:
+            payload = super().post_json(url, body, token)
+            if "query History(" in body["query"]:
+                payload["data"]["market"]["borrowRecords"][0][
+                    "transactionHash"] = "not-a-transaction"
+            return payload
+    refused = ""
+    try:
+        live.GatewayClient(
+            str(manifest), MalformedHistoryTransport(), "test").history(
+                MARKET, limit=1, event_types=("borrow",))
+    except live.LiveError as error:
+        refused = str(error)
+    check("malformed transaction provenance fails closed",
+          "transactionHash is malformed" in refused, refused)
 
     print("\nL4 — numeric and state prose is produced only by deterministic code")
     rendered_market = live.render_live(market)
     rendered_account = live.render_live(account)
     rendered_withdrawals = live.render_live(withdrawals)
+    rendered_history = live.render_live(history)
     check("integer token units are formatted without floating point",
           "123.456789 USDC" in rendered_market.text
           and "Claimable withdrawals: 1.25 USDC" in rendered_account.text,
@@ -301,7 +381,12 @@ def run(tmp: pathlib.Path) -> None:
     check("every renderer appends the block and pinned release",
           "Ethereum block 100" in rendered_market.text
           and "release v2.0.30" in rendered_market.text
-          and "Ethereum block 100" in rendered_withdrawals.text)
+          and "Ethereum block 100" in rendered_withdrawals.text
+          and "Ethereum block 100" in rendered_history.text)
+    check("every history event renders amount, transaction, and block provenance",
+          rendered_history.text.count("transaction 0x") == 3
+          and rendered_history.text.count("; block ") == 3
+          and "4 USDC" in rendered_history.text)
     check("re-rendering the same typed result is byte-identical",
           live.render_live(market).text == rendered_market.text)
 

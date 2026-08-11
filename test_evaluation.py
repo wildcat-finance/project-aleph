@@ -58,8 +58,8 @@ def run(tmp: pathlib.Path) -> None:
     print("\nE1 — all reviewed routes pass through the complete answer path")
     report = product_eval.evaluate(
         engine, retriever, "eval/golden-v1.yaml", str(labels), policy, fixture)
-    check("all 141 questions are evaluated, not sampled",
-          report["golden"]["total"] == 141)
+    check("all 142 questions are evaluated, not sampled",
+          report["golden"]["total"] == 142)
     check("the nine declared corpus gaps abstain or route elsewhere",
           report["golden"]["known_gaps"] == 9
           and report["known_gap_answers"] == 0)
@@ -75,7 +75,7 @@ def run(tmp: pathlib.Path) -> None:
           and report["unsupported_chain_refused"]
           and report["registry_discovery"]
           and report["unsafe_content_refused"]
-          and report["historical_activity_refused"]
+          and report["history_capability"]
           and report["missing_symbol_abstains"]
           and report["off_topic_refused"])
 

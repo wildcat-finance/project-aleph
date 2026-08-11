@@ -47,10 +47,12 @@ def _tool_hashes() -> dict[str, str]:
 class FixtureTransport:
     """Replay checked-in GraphQL fixture data through the real live client."""
 
-    _OPERATION = re.compile(r"\bquery\s+(Registry|Market|Account|Withdrawals|BorrowerMarkets)\b")
+    _OPERATION = re.compile(
+        r"\bquery\s+(Registry|Market|Account|Withdrawals|BorrowerMarkets|History)\b")
     _KEYS = {
         "Registry": "registry", "Market": "market", "Account": "account",
         "Withdrawals": "withdrawals", "BorrowerMarkets": "borrower_markets",
+        "History": "history",
     }
 
     def __init__(self, fixture: dict):
@@ -73,6 +75,14 @@ class FixtureTransport:
         if requested != actual:
             return {"errors": [{"message":
                 f"fixture block {actual} does not match request {requested}"}]}
+        if key == "history" and data.get("market"):
+            first = body.get("variables", {}).get("first")
+            if not isinstance(first, int) or not 1 <= first <= 10:
+                return {"errors": [{"message": "fixture history limit is invalid"}]}
+            for field in (
+                    "borrowRecords", "repaymentRecords", "depositRecords",
+                    "withdrawalRequestRecords"):
+                data["market"][field] = data["market"][field][:first]
         return {"data": data}
 
 
@@ -148,7 +158,7 @@ def _question_with_fixture_entities(question: str, route, entities: dict) -> str
         if not route.entities.account_address:
             additions.append(f"Wallet address: {entities['lender']}")
         return question + (("\n" + "\n".join(additions)) if additions else "")
-    if operation in ("market", "withdrawals"):
+    if operation in ("market", "withdrawals", "history"):
         return (question if route.entities.market_address else
                 f"{question}\nMarket address: {entities['market']}")
     return question
@@ -296,14 +306,22 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         unsafe.status == "refused"
         and unsafe.route.refusal_reason == "unsafe_or_abusive"
         and unsafe.live is None and not unsafe.citations)
-    historical = engine.answer(
+    historical_missing = engine.answer(
         "When did Wintermute last borrow from its USDC market?")
-    historical_activity_refused = (
-        historical.status == "refused"
-        and historical.mode == RouteMode.REFUSE_POINT
-        and historical.route.refusal_reason == "historical_activity_unavailable"
-        and historical.route.destination == "Wildcat market CSV exporter"
-        and historical.live is None and not historical.citations)
+    historical = engine.answer(
+        "List the latest three borrowing transactions for this market.\n"
+        f"Market address: {fixture['entities']['market']}")
+    history_capability = (
+        historical_missing.status == "needs_input"
+        and historical_missing.mode == RouteMode.LIVE
+        and historical_missing.route.live_operation == "history"
+        and historical_missing.live is None
+        and historical.status == "answered"
+        and historical.mode == RouteMode.LIVE
+        and historical.live is not None
+        and historical.live.operation == "history"
+        and len(historical.live.text.split("transaction 0x")) - 1 == 3
+        and not historical.citations)
     missing_symbol = engine.answer(
         "What does missingAlephSymbol(uint256) do?")
     missing_symbol_abstains = (
@@ -346,7 +364,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         "unsupported_chain_refused": out_of_scope_ok,
         "registry_discovery": registry_discovery_ok,
         "unsafe_content_refused": unsafe_content_refused,
-        "historical_activity_refused": historical_activity_refused,
+        "history_capability": history_capability,
         "missing_symbol_abstains": missing_symbol_abstains,
         "off_topic_refused": off_topic_refused,
     }
@@ -366,7 +384,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         "unsupported_chain_refused": out_of_scope_ok,
         "registry_discovery": registry_discovery_ok,
         "unsafe_content_refused": unsafe_content_refused,
-        "historical_activity_refused": historical_activity_refused,
+        "history_capability": history_capability,
         "missing_symbol_abstains": missing_symbol_abstains,
         "off_topic_refused": off_topic_refused,
         "known_gap_answers": known_gap_answers,

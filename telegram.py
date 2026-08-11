@@ -35,7 +35,8 @@ class TelegramTimeout(TelegramError):
 
 RICH_MESSAGE_LIMIT = 32768
 _RICH_HEADINGS = frozenset({
-    "Explanation", "Current state", "Premise correction", "Sources",
+    "Explanation", "Current state", "Transaction history",
+    "Premise correction", "Sources",
 })
 _SOURCE_CITATION = re.compile(
     r"^\[(?P<number>[1-9][0-9]*)\]\s+"

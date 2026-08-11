@@ -249,7 +249,10 @@ def run(tmp: pathlib.Path) -> None:
     check("one-shot monitoring covers activation, model, gateway and Telegram",
           report["ok"] and set(report["checks"]) == {
               "active_release", "model_runtime", "gateway", "telegram"}
-          and report["checks"]["telegram"]["rich_messages"] is True)
+          and report["checks"]["telegram"]["rich_messages"] is True
+          and report["checks"]["gateway"]["history_probe"] == {
+              "ok": True, "block_number": 100,
+              "events_returned": 1, "maximum_events": 1})
 
     print("\nO5 — production units keep the query identity unprivileged")
     required_hardening = {

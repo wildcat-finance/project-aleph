@@ -37,12 +37,24 @@ def check(manifest: str, artifacts: str, pointer: str, prerelease: str,
     require_match(Identity.from_dict(active["embedding"]), runtime_identity)
     checks["model_runtime"] = {"ok": True,
                                "identity": runtime_identity.to_dict()}
-    health = (gateway_client or GatewayClient(manifest)).check_health()
+    gateway = gateway_client or GatewayClient(manifest)
+    health = gateway.check_health()
+    registry_probe = gateway.registry(limit=1)
+    if not registry_probe.value.markets:
+        raise LiveError("gateway history probe has no registered market")
+    history_probe = gateway.history(
+        registry_probe.value.markets[0].address, limit=1)
     checks["gateway"] = {
         "ok": True, "release": health.release,
         "indexed_block": health.indexed_block,
         "observed_head": health.observed_head,
         "ready_providers": health.ready_providers,
+        "history_probe": {
+            "ok": True,
+            "block_number": history_probe.block_number,
+            "events_returned": len(history_probe.value.events),
+            "maximum_events": 1,
+        },
     }
     telegram_api = api or TelegramHTTP()
     peers = peer_bot_ids()

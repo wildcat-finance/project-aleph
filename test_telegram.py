@@ -287,6 +287,19 @@ def run(tmp: pathlib.Path) -> None:
           and f"<b>Market:</b> <code>{hexaddr}</code>" in live_entity[0].html
           and "<b>APR:</b> 8.50%" in live_entity[0].html
           and live_entity[0].plain == live_answer)
+    history_answer = (
+        "Transaction history\n\nLatest 1 matching event(s):\n"
+        f"- Borrow: 4 USDC; block 25,728,947; transaction {'0x' + 'a' * 64}\n\n"
+        "Observed at Ethereum block 25,728,947 via Wildcat Data Gateway "
+        "release v2.0.30.")
+    history_md = telegram.rich_markdown(history_answer)
+    history_entity = telegram.format_message(history_answer)
+    check("transaction history retains its heading and copyable hash",
+          "## Transaction history" in history_md
+          and "`0x" in history_md
+          and history_entity is not None
+          and "<b>Transaction history</b>" in history_entity[0].html
+          and "<code>0x" in history_entity[0].html)
     prose_md = telegram.rich_markdown(
         "Explanation\n\nNote: colons in prose stay unstyled. [1]\n\n"
         "Sources\n\n[1] docs/a.md › A: https://example.invalid/a")

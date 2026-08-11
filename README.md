@@ -7,7 +7,7 @@ mainnet state through narrow, typed Data Gateway operations.
 Aleph is running in the reference production deployment. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.3`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 141-case product
+`bge-m3` embedding identity. Every release must pass the 142-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,
@@ -22,6 +22,8 @@ Aleph can:
   they support;
 - read current registry, market, lender-account, withdrawal-queue, and
   borrower-to-markets state at one verified Ethereum block;
+- read the latest one to ten borrowing, repayment, deposit, or withdrawal-request
+  events for an explicitly addressed market, with transaction and block provenance;
 - keep retrieved explanation separate from deterministically rendered live
   numbers;
 - correct false premises, ask for missing addresses, and distinguish an
@@ -46,12 +48,11 @@ grace-period questions use the typed market read without requiring the word
 questions remain corpus-backed, and every live response retains one-block Data
 Gateway provenance.
 
-Aleph does not yet discover a market reliably from an approximate rate, a
-borrower name, or other fuzzy description. That requires indexed live discovery,
-not a larger language-model prompt. Historical transaction questions are not yet
-available in this answer path; the current release points to the Wildcat market
-CSV workflow. The bounded, address-required history capability is tracked in
-[issue #60](https://github.com/wildcat-finance/project-aleph/issues/60).
+Aleph does not discover a market reliably from an approximate rate, a borrower
+name, or other fuzzy description. That requires indexed live discovery, not a
+larger language-model prompt. Transaction-history questions therefore require
+the market contract address. The live path returns at most ten deterministically
+ordered events and does not replace the complete Wildcat market CSV export.
 
 Corpus answers currently use a strict extractive writer. It selects one coherent,
 topic-relevant source by default and refuses unsupported synthesis. Fluent
@@ -100,10 +101,9 @@ The human boundary is the point of the loop:
    approval, and be activated by an operator.
 
 The first production Null export, `e168ea3628343c39c9cf`, contains fourteen
-regression candidates and no factual proposals. Six add golden cases, seven map
-to existing coverage, and one is deferred to the bounded transaction-history
-capability. `eval/null_import.py` reproduces that disposition from the immutable
-export bytes.
+regression candidates and no factual proposals. Seven add golden cases and seven
+map to existing coverage. `eval/null_import.py` reproduces that complete
+disposition from the immutable export bytes.
 
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train
