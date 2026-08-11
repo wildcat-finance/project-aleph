@@ -40,6 +40,8 @@ class FakeAPI:
         self.fail_html = False
         self.fail_rich = False
         self.lose_rich_response = False
+        self.poll_timeout = False
+        self.send_timeout = False
 
     def call(self, method: str, payload=None):
         self.calls.append((method, payload or {}))
@@ -49,11 +51,15 @@ class FakeAPI:
         if method == "getWebhookInfo":
             return {"url": self.webhook, "pending_update_count": 0}
         if method == "getUpdates":
+            if self.poll_timeout:
+                raise telegram.TelegramTimeout("fixture poll timed out")
             return self.updates
         if method == "sendChatAction":
             self.actions.append(payload)
             return True
         if method == "sendMessage":
+            if self.send_timeout:
+                raise telegram.TelegramTimeout("fixture send timed out")
             if self.fail_send:
                 raise telegram.TelegramError("fixture send failed")
             if self.fail_html and "parse_mode" in payload:
@@ -169,6 +175,47 @@ def run(tmp: pathlib.Path) -> None:
     check("polling is message-only and uses the durable offset",
           poll["allowed_updates"] == ["message"] and poll["offset"] == 0
           and poll["timeout"] == 30)
+
+    timeout_api = FakeAPI([update(10, "question")])
+    timeout_service = adapter(
+        tmp / "poll-timeout", StaticEngine(), timeout_api)
+    timeout_api.poll_timeout = True
+    check("a long-poll timeout is an empty iteration with no checkpoint move",
+          timeout_service.run_once() == 0
+          and timeout_service.offset_store.load() == 0)
+    timeout_api.poll_timeout = False
+    check("polling continues normally after a timeout",
+          timeout_service.run_once() == 1
+          and timeout_service.offset_store.load() == 11)
+
+    original_urlopen = telegram.urllib.request.urlopen
+    try:
+        def plain_timeout(*_args, **_kwargs):
+            raise TimeoutError("private transport detail")
+
+        telegram.urllib.request.urlopen = plain_timeout
+        transport_error = ""
+        try:
+            telegram.TelegramHTTP("fixture-token").call("getUpdates")
+        except telegram.TelegramTimeout as error:
+            transport_error = str(error)
+        check("plain HTTP read timeouts have a safe typed boundary",
+              transport_error == "Telegram getUpdates timed out")
+
+        def wrapped_timeout(*_args, **_kwargs):
+            raise telegram.urllib.error.URLError(
+                TimeoutError("private transport detail"))
+
+        telegram.urllib.request.urlopen = wrapped_timeout
+        transport_error = ""
+        try:
+            telegram.TelegramHTTP("fixture-token").call("getUpdates")
+        except telegram.TelegramTimeout as error:
+            transport_error = str(error)
+        check("URL-wrapped read timeouts use the same typed boundary",
+              transport_error == "Telegram getUpdates timed out")
+    finally:
+        telegram.urllib.request.urlopen = original_urlopen
 
     rich_text = (
         "Explanation\n\nEvidence-backed answer.\n\nSources\n\n"
@@ -340,6 +387,19 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("a failed send does not confirm the update",
           "send failed" in refused and send_service.offset_store.load() == 0)
+
+    timed_send_api = FakeAPI([update(50, "question")])
+    timed_send_service = adapter(
+        tmp / "timed-send", StaticEngine(), timed_send_api)
+    timed_send_api.send_timeout = True
+    timed_out = ""
+    try:
+        timed_send_service.run_once()
+    except telegram.TelegramTimeout as error:
+        timed_out = str(error)
+    check("an uncertain send timeout remains fatal and unconfirmed",
+          "send timed out" in timed_out
+          and timed_send_service.offset_store.load() == 0)
 
     failed_fallback_api = FakeAPI([update(51, "question")])
     failed_fallback_api.fail_rich = failed_fallback_api.fail_send = True

@@ -29,6 +29,10 @@ class TelegramRefused(TelegramError):
     """Telegram definitively refused a request before accepting delivery."""
 
 
+class TelegramTimeout(TelegramError):
+    """Telegram timed out before returning a Bot API response."""
+
+
 RICH_MESSAGE_LIMIT = 32768
 _RICH_HEADINGS = frozenset({
     "Explanation", "Current state", "Premise correction", "Sources",
@@ -117,7 +121,13 @@ class TelegramHTTP:
             error_type = (TelegramRefused if 400 <= error.code < 500
                           else TelegramError)
             raise error_type(f"Telegram {method} returned HTTP {error.code}")
-        except (urllib.error.URLError, json.JSONDecodeError) as error:
+        except TimeoutError as error:
+            raise TelegramTimeout(f"Telegram {method} timed out") from error
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise TelegramTimeout(f"Telegram {method} timed out") from error
+            raise TelegramError(f"Telegram {method} failed: {error}")
+        except json.JSONDecodeError as error:
             raise TelegramError(f"Telegram {method} failed: {error}")
         if result.get("ok") is not True:
             description = str(result.get("description") or "unknown API error")
@@ -441,10 +451,16 @@ class TelegramAdapter:
         if self.identity is None:
             raise TelegramError("adapter startup checks have not run")
         offset = self.offset_store.load()
-        updates = self.api.call("getUpdates", {
-            "offset": offset, "limit": 100, "timeout": timeout,
-            "allowed_updates": ["message"],
-        })
+        try:
+            updates = self.api.call("getUpdates", {
+                "offset": offset, "limit": 100, "timeout": timeout,
+                "allowed_updates": ["message"],
+            })
+        except TelegramTimeout:
+            # Telegram long polling may end locally before the Bot API returns.
+            # No update was observed, so this is an empty iteration and the
+            # durable offset must remain unchanged.
+            return 0
         if not isinstance(updates, list):
             raise TelegramError("getUpdates did not return a list")
         return self.process_updates(updates)
