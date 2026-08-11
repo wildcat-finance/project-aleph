@@ -159,6 +159,21 @@ def run(tmp: pathlib.Path) -> None:
           and rollback_record["previous_release_id"] == second["release_id"]
           and (root / "releases" / second["release_id"]).is_dir())
 
+    original_verifier = activation.verify_tool_hashes
+    activation.verify_tool_hashes = lambda expected: (_ for _ in ()).throw(
+        product_eval.ProductEvaluationError("evaluated runtime tool bytes differ"))
+    before_failed_rollback = store.load_pointer()
+    refused = ""
+    try:
+        store.rollback("operator@example", "must not bypass runtime identity")
+    except activation.ActivationError as error:
+        refused = str(error)
+    finally:
+        activation.verify_tool_hashes = original_verifier
+    check("rollback rechecks evaluated runtime bytes before moving the pointer",
+          "cannot authorize runtime" in refused
+          and store.load_pointer() == before_failed_rollback, refused)
+
     original_pointer = pointer_path.read_bytes()
     damaged = json.loads(pointer_path.read_text())
     damaged["release_id"] = second["release_id"]
@@ -210,6 +225,70 @@ def run(tmp: pathlib.Path) -> None:
           and "secret" not in path.read_text())
 
     print("\nO4 — composition and monitoring verify every runtime dependency")
+    relocated = tmp / "relocated-runtime"
+    for relative in product_eval.RUNTIME_TOOL_PATHS:
+        destination = relocated / pathlib.PurePosixPath(relative)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pathlib.Path(relative), destination)
+    expected_tools = product_eval._tool_hashes(relocated)
+    verified_tools = product_eval.verify_tool_hashes(expected_tools, relocated)
+    check("runtime identity is stable across deployment paths",
+          expected_tools == product_eval._tool_hashes()
+          and verified_tools["file_count"] == len(product_eval.RUNTIME_TOOL_PATHS)
+          and len(verified_tools["sha256"]) == 64)
+
+    changed_path = relocated / "agent.py"
+    original_agent = changed_path.read_bytes()
+    changed_path.write_bytes(original_agent + b"\n# changed after evaluation\n")
+    refused = ""
+    try:
+        product_eval.verify_tool_hashes(expected_tools, relocated)
+    except product_eval.ProductEvaluationError as error:
+        refused = str(error)
+    check("changed evaluated source is rejected", "agent.py" in refused, refused)
+    changed_path.write_bytes(original_agent)
+
+    changed_path.unlink()
+    refused = ""
+    try:
+        product_eval.verify_tool_hashes(expected_tools, relocated)
+    except product_eval.ProductEvaluationError as error:
+        refused = str(error)
+    check("a missing runtime file is rejected",
+          "absent or escapes its source root: agent.py" in refused, refused)
+    changed_path.write_bytes(original_agent)
+
+    missing_inventory = dict(expected_tools)
+    missing_inventory.pop("serve.py")
+    refused = ""
+    try:
+        product_eval.verify_tool_hashes(missing_inventory, relocated)
+    except product_eval.ProductEvaluationError as error:
+        refused = str(error)
+    check("missing evaluated inventory entries are rejected",
+          "missing=serve.py" in refused, refused)
+
+    unexpected_inventory = {**expected_tools, "unreviewed.py": "0" * 64}
+    refused = ""
+    try:
+        product_eval.verify_tool_hashes(unexpected_inventory, relocated)
+    except product_eval.ProductEvaluationError as error:
+        refused = str(error)
+    check("unexpected evaluated inventory entries are rejected",
+          "unexpected=unreviewed.py" in refused, refused)
+
+    outside = tmp / "outside-agent.py"
+    outside.write_bytes(original_agent)
+    changed_path.unlink()
+    changed_path.symlink_to(outside)
+    refused = ""
+    try:
+        product_eval.verify_tool_hashes(expected_tools, relocated)
+    except product_eval.ProductEvaluationError as error:
+        refused = str(error)
+    check("a runtime path escaping the deployment root is rejected",
+          "escapes its source root: agent.py" in refused, refused)
+
     check("peer bot allowlists are parsed, deduplicated, and default closed",
           serve.peer_bot_ids("") == ()
           and serve.peer_bot_ids("500, 501,500") == (500, 501))
@@ -220,6 +299,23 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("malformed peer bot configuration fails closed",
           "positive integers" in refused, refused)
+    activation.verify_tool_hashes = lambda expected: (_ for _ in ()).throw(
+        product_eval.ProductEvaluationError("evaluated runtime tool bytes differ"))
+    refused = ""
+    try:
+        serve.compose(
+            str(retriever.main.manifest_path), str(root), str(pointer_path),
+            str(retriever.prerelease.release_path), "stub:test",
+            str(tmp / "must-not-create-audit"), 30,
+            str(tmp / "must-not-create-offset.json"), 2)
+    except activation.ActivationError as error:
+        refused = str(error)
+    finally:
+        activation.verify_tool_hashes = original_verifier
+    check("query startup refuses drift before creating clients or writable state",
+          "cannot authorize runtime" in refused
+          and not (tmp / "must-not-create-audit").exists()
+          and not (tmp / "must-not-create-offset.json").exists(), refused)
     previous = {name: os.environ.get(name) for name in (
         "ALEPH_GATEWAY_TOKEN", "ALEPH_TELEGRAM_TOKEN", "ALEPH_AUDIT_HMAC_KEY",
         "ALEPH_TELEGRAM_RICH_MESSAGES")}
@@ -249,6 +345,9 @@ def run(tmp: pathlib.Path) -> None:
     check("one-shot monitoring covers activation, model, gateway and Telegram",
           report["ok"] and set(report["checks"]) == {
               "active_release", "model_runtime", "gateway", "telegram"}
+          and report["checks"]["active_release"]["runtime_tools"] == {
+              "sha256": verified_tools["sha256"],
+              "file_count": len(product_eval.RUNTIME_TOOL_PATHS)}
           and report["checks"]["telegram"]["rich_messages"] is True
           and report["checks"]["gateway"]["history_probe"] == {
               "ok": True, "block_number": 100,

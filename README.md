@@ -179,9 +179,11 @@ and zero-lag checks; every query is pinned to the checked block; typed code
 renders the result with its block and gateway release.
 
 **Promotion and activation are separate.** Product evaluation binds results to
-the exact candidate and tool hashes. Promotion requires every manifest gate to
-be true. Activation is a later attributable operation, and rollback creates a
-new pointer generation without rebuilding or deleting artifacts.
+the exact candidate and a fixed relative-path inventory of production tool
+hashes. Promotion requires every manifest gate to be true. Activation, startup,
+monitoring, and rollback recheck those running bytes. Activation is a later
+attributable operation, and rollback creates a new pointer generation without
+rebuilding or deleting artifacts.
 
 **Auditing avoids raw question retention.** Production audit records contain
 release identity, route, citations, live block, refusal reason, and an HMAC
