@@ -74,6 +74,11 @@ Bizarro counterpart: Null asks questions and hallucinates scenarios; Aleph must
 answer, clarify, abstain, point elsewhere, or refuse. The interaction creates a
 controlled feedback loop without turning synthetic text into protocol truth.
 
+[`OUROBOROS.MD`](OUROBOROS.MD) is the cold-read operator handoff for continuing
+that loop. It defines the one-operator lease, organisation-authenticated local
+model tunnel, controlled review wave, corpus/evaluation path, release gates,
+handoff, and emergency revocation without distributing production credentials.
+
 ```mermaid
 flowchart LR
     A["Active Aleph release"] --> S["Answer-free coverage silhouette"]
