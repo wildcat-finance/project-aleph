@@ -3,7 +3,8 @@
 # Rebuilt from real transcripts: ~2,940 messages across five channels
 # (public Telegram reachout, three borrower groups, one Slack channel with a
 # market maker), Feb 2025 – Aug 2026. 500 question-bearing messages extracted,
-# clustered, and reduced to the recurring shapes below.
+# clustered, and reduced to the recurring shapes below. One additional synthetic
+# Project Null probe is included after human review as a routing regression.
 #
 # Supersedes golden-v0.yaml, which was written by guessing. Roughly a third of
 # v0 survived contact with the data. What v0 got wrong is at the bottom under
@@ -24,12 +25,13 @@
 #   refuse        — decline, offer escalation, no attempt
 #   refuse+point  — decline, but name the right destination
 #   triage        — gather the one detail a human will need, then hand off
+#   clarify       — ask for a missing subject; do not infer conversational state
 
 meta:
   version: 1
-  sources: 5 anonymised channels, 2,940 messages, 500 questions extracted
+  sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; 1 reviewed synthetic Project Null probe
   period: 2025-02-13 – 2026-08-05
-  count: 125
+  count: 126
   corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -840,6 +842,20 @@ questions:
   note: 'Not strictly false, but the premise assumes automation exists. Real question from
     a lender waiting on a claim, and the honest answer involves the manual poke — which is
     exactly what Hydra would change.
+
+    '
+
+  # ====================================================================
+  # O. Missing conversational context
+  # ====================================================================
+- id: o01
+  question: Why is it doing that again?
+  expected: clarify
+  frequency: low
+  provenance: synthetic_project_null
+  note: 'Reviewed Project Null regression. The wording contains no subject that Aleph can
+    resolve from the message itself. Ask for the subject and behaviour; do not infer hidden
+    conversational state or point the user to support.
 
     '
 what_v0_missed:

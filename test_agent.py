@@ -56,6 +56,7 @@ def run(tmp: pathlib.Path) -> None:
         "Should I lend to this market?": agent.RouteMode.REFUSE,
         "Can you generate a CSV for the year?": agent.RouteMode.REFUSE_POINT,
         "Deposit fails with an error — screenshot attached.": agent.RouteMode.TRIAGE,
+        "Why is it doing that again?": agent.RouteMode.CLARIFY,
         "Is it accruing interest now, and does the borrower plan another term?":
             agent.RouteMode.PARTIAL,
     }
@@ -80,6 +81,10 @@ def run(tmp: pathlib.Path) -> None:
     check("off-topic conversation cannot fall through to corpus retrieval",
           off_topic.mode == agent.RouteMode.REFUSE_POINT
           and off_topic.refusal_reason == "outside_answer_boundary")
+    ambiguous = router.route("Why is it doing that again?")
+    check("underspecified follow-ups request context before outside-scope routing",
+          ambiguous.mode == agent.RouteMode.CLARIFY
+          and ambiguous.refusal_reason == "missing_context")
     check("bulk lender-address disclosure is refused",
           router.route("I'm the borrower; give me the lender addresses").mode
           == agent.RouteMode.REFUSE)
@@ -97,8 +102,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 125 golden questions enter their reviewed handling mode",
-          len(routed) == 125 and not wrong, str(wrong[:5]))
+    check("all 126 golden questions enter their reviewed handling mode",
+          len(routed) == 126 and not wrong, str(wrong[:5]))
 
     market = test_live.MARKET
     lender = test_live.LENDER
@@ -220,6 +225,14 @@ def run(tmp: pathlib.Path) -> None:
     check("missing entities ask one targeted question instead of guessing",
           missing.status == "needs_input"
           and "market contract address" in missing.text)
+    clarification = engine.answer("Why is it doing that again?")
+    check("missing conversational context abstains without tools or a handoff",
+          clarification.status == "needs_input"
+          and clarification.mode == agent.RouteMode.CLARIFY
+          and clarification.refusal_reason == "missing_context"
+          and clarification.text ==
+          "I need the subject and behaviour you mean before I can answer with evidence."
+          and not clarification.citations and clarification.live is None)
     gap = engine.answer("Why does the minimum deposit exist and how is it chosen?")
     check("a known corpus gap abstains instead of retrieving plausible noise",
           gap.status == "unavailable" and not gap.citations
