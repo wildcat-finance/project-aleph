@@ -20,7 +20,9 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 from agent import AnswerEngine, RouteMode  # noqa: E402
-from live import GatewayClient, REGISTRY_PAGE_SIZE  # noqa: E402
+from live import (  # noqa: E402
+    BORROWER_MARKETS_PAGE_SIZE, GatewayClient, REGISTRY_PAGE_SIZE,
+)
 from retrieval import RetrievalRequest, Retriever, RetrievalError  # noqa: E402
 from eval.retrieval_eval import EvaluationError, evaluate as retrieval_evaluate  # noqa: E402
 
@@ -367,6 +369,20 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         and len(registry.text) <= 4096
         and "Registered markets (" in registry.live.text
         and not registry.citations)
+    borrower_discovery = engine.answer(
+        "What markets has this borrower run?\n"
+        f"Borrower address: {fixture['entities']['borrower']}")
+    borrower_discovery_ok = (
+        borrower_discovery.status == "answered"
+        and borrower_discovery.mode == RouteMode.LIVE
+        and borrower_discovery.route.live_operation == "borrower_markets"
+        and borrower_discovery.live is not None
+        and borrower_discovery.live.operation == "borrower_markets"
+        and borrower_discovery.live.text.count("\n- ")
+            <= BORROWER_MARKETS_PAGE_SIZE
+        and len(borrower_discovery.text) <= 4096
+        and "Markets for borrower" in borrower_discovery.live.text
+        and not borrower_discovery.citations)
     governance_apr = engine.answer(
         "Where is the governance vote that changed this market's APR?")
     governance_apr_ok = (
@@ -442,6 +458,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         "version_isolation": all(isolation.values()),
         "unsupported_chain_refused": out_of_scope_ok,
         "registry_discovery": registry_discovery_ok,
+        "borrower_discovery": borrower_discovery_ok,
         "governance_apr_correction": governance_apr_ok,
         "unsafe_content_refused": unsafe_content_refused,
         "history_capability": history_capability,
@@ -463,6 +480,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
         "retrieval": retrieval_report, "version_isolation": isolation,
         "unsupported_chain_refused": out_of_scope_ok,
         "registry_discovery": registry_discovery_ok,
+        "borrower_discovery": borrower_discovery_ok,
         "governance_apr_correction": governance_apr_ok,
         "unsafe_content_refused": unsafe_content_refused,
         "history_capability": history_capability,

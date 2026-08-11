@@ -161,7 +161,7 @@ class FakeTransport:
                     "normalizedTotalAmount": "5000000",
                     "totalInterestEarned": "1000"}]}
         elif "query BorrowerMarkets(" in query:
-            data["markets"] = [market_summary()]
+            data["markets"] = registry_markets()
         elif "query History(" in query:
             first = body["variables"]["first"]
             def event(index, amount, transaction, log_index):
@@ -281,6 +281,26 @@ def run(tmp: pathlib.Path) -> None:
           and live._registry_label("line one\n- forged line")
               == "line one - forged line"
           and registry.value.query_limit == live.DEFAULT_REGISTRY_LIMIT)
+    borrower_render = live.render_live(borrower)
+    borrower_lines = borrower_render.text.splitlines()
+    check("borrower discovery states the total and deterministic first page",
+          borrower_lines[0] == (
+              f"Markets for borrower {BORROWER} "
+              "(12; showing 1–10 in contract-address order):")
+          and len([line for line in borrower_lines if line.startswith("- ")])
+              == live.BORROWER_MARKETS_PAGE_SIZE
+          and "0x0000000000000000000000000000000000000001"
+              in borrower_lines[1]
+          and "0x000000000000000000000000000000000000000a"
+              in borrower_lines[10]
+          and "000000000000000000000000000000000000000b"
+              not in borrower_render.text)
+    check("borrower discovery is byte-stable and fits one Telegram message",
+          borrower_render == live.render_live(borrower)
+          and len(borrower_render.text) <= 4096
+          and borrower.value.query_limit == 100
+          and borrower_render.text.endswith(
+              "Data Gateway release v2.0.30."))
     check("account claimable is allocated exactly across pending batches",
           account.value.claimable_withdrawals == 1_250_000)
     smoke_transport = FakeTransport()

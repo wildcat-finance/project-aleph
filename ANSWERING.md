@@ -121,7 +121,9 @@ object. Address-bound APR, reserve-ratio, capacity, delinquency, and grace-perio
 questions use the typed market read even when they omit “current”; the renderer
 returns the requested field plus block and gateway provenance. The same field
 question without an address asks for the market contract. Mechanism questions
-such as “how does the reserve ratio work?” remain corpus-backed.
+such as “how does the reserve ratio work?” remain corpus-backed. A borrower
+address can enumerate public markets, but the renderer shows at most ten in
+contract-address order and never scores, ranks, or assesses the borrower.
 A refusal can name a destination and offer to prepare a handoff, but it cannot
 contact anyone.
 
