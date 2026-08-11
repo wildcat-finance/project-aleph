@@ -1,0 +1,39 @@
+[Unit]
+Description=Project Aleph SDK address drift alarm
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aleph-query
+Group=aleph-query
+WorkingDirectory=/opt/aleph
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/sdk-watch.py --pinned 3.1.17 --json
+TimeoutStartSec=2min
+SuccessExitStatus=0 2
+NoNewPrivileges=true
+CapabilityBoundingSet=
+DevicePolicy=closed
+MemoryDenyWriteExecute=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @privileged @raw-io @reboot @swap
+UMask=0077

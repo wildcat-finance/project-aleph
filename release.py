@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from embed import index as indexer
 from embed.embedder import EmbeddingError, Identity
 from ingest import build as ingestion
+from live import AddressError
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -62,6 +63,32 @@ def _embedder_spec(identity: Identity) -> str:
 
 def _without_created(record: dict) -> dict:
     return {key: value for key, value in record.items() if key != "created"}
+
+
+def compute_release_id(record: dict) -> str:
+    """Recompute the identifier from the security-relevant release fields."""
+    basis = {
+        "kind": record["kind"],
+        "manifest_sha256": record["manifest"]["sha256"],
+        "corpus": record["corpus"],
+        "index": record["index"],
+        "embedding": record["embedding"],
+        "sources": record.get("sources"),
+        "review": record["review"],
+        "gates": record["gates"],
+        "required_gates": record["required_gates"],
+        "promotable": record["promotable"],
+        "waivers": record.get("waivers") or [],
+        "address_book": record.get("address_book"),
+        "tools": record["tools"],
+    }
+    # Evaluations are bound after the candidate exists, so evaluated releases
+    # form a new immutable identity over the same corpus/index payloads. Keep
+    # the field absent for compatibility with pre-evaluation release records.
+    if record.get("evaluation") is not None:
+        basis["evaluation"] = record["evaluation"]
+        basis["parent_release_id"] = record.get("parent_release_id")
+    return hashlib.sha256(_canonical(basis)).hexdigest()[:20]
 
 
 def _publish_release(root: pathlib.Path, record: dict) -> dict:
@@ -110,7 +137,8 @@ def build_release(manifest_path: str = "manifest.yaml",
                   prerelease: bool = False, against: str | None = None,
                   diff_reviewed_by: str | None = None,
                   embedder_spec: str | None = None,
-                  batch: int = 16) -> dict:
+                  batch: int = 16, sdk_tarball: str | None = None,
+                  fetch_sdk: bool = False) -> dict:
     try:
         import yaml
     except ImportError:
@@ -121,6 +149,16 @@ def build_release(manifest_path: str = "manifest.yaml",
     expected_identity = _identity_from_manifest(manifest)
     runtime_spec = embedder_spec or _embedder_spec(expected_identity)
     root = pathlib.Path(artifact_root).resolve()
+
+    if sdk_tarball and fetch_sdk:
+        raise ReleaseError("choose --sdk-tarball or --fetch-sdk, not both")
+    address_record = None
+    if sdk_tarball or fetch_sdk:
+        from live import AddressBook
+        address_book = (AddressBook.from_tarball(
+            str(manifest_path_obj), pathlib.Path(sdk_tarball).read_bytes())
+            if sdk_tarball else AddressBook.fetch(str(manifest_path_obj)))
+        address_record = address_book.gate_record()
 
     corpus_record = ingestion.build(
         str(manifest_path_obj), str(root / "corpus"), solc, workdir,
@@ -155,6 +193,8 @@ def build_release(manifest_path: str = "manifest.yaml",
                       "reviewed_by": diff_reviewed_by, "counts": counts}
 
     gates = dict(corpus_record.get("gates") or {})
+    if address_record:
+        gates["address_assertions_hold"] = True
     gates["corpus_diff_reviewed"] = review["reviewed"]
     gates["embedding_identity_matches"] = True
     gates["index_integrity"] = True
@@ -164,20 +204,9 @@ def build_release(manifest_path: str = "manifest.yaml",
     promotable = all(gates.get(gate) is True for gate in required_gates)
 
     release_tool = _sha256(HERE / "release.py")
-    identity_basis = {
-        "corpus_build_id": corpus_record["build_id"],
-        "index_namespace": index_namespace,
-        "index_artifacts": index_record["artifacts"],
-        "embedding": expected_identity.to_dict(),
-        "review": review,
-        "gates": gates,
-        "prerelease": prerelease,
-        "release_tool": release_tool,
-    }
-    release_id = hashlib.sha256(_canonical(identity_basis)).hexdigest()[:20]
     relative = lambda path: str(path.relative_to(root))
     record = {
-        "release_id": release_id,
+        "release_id": "",
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "kind": "prerelease" if prerelease else "main",
         "manifest": {"path": str(manifest_path_obj),
@@ -200,8 +229,10 @@ def build_release(manifest_path: str = "manifest.yaml",
         "required_gates": required_gates,
         "promotable": promotable,
         "waivers": corpus_record.get("waivers") or [],
+        "address_book": address_record,
         "tools": {"release.py": release_tool, **index_tools},
     }
+    record["release_id"] = compute_release_id(record)
     return _publish_release(root, record)
 
 
@@ -221,6 +252,11 @@ def main() -> int:
     parser.add_argument("--embedder",
                         help="runtime override; identity must match manifest")
     parser.add_argument("--batch", type=int, default=16)
+    sdk = parser.add_mutually_exclusive_group()
+    sdk.add_argument("--sdk-tarball",
+                     help="offline @wildcatfi/wildcat-sdk .tgz artifact")
+    sdk.add_argument("--fetch-sdk", action="store_true",
+                     help="fetch and verify the manifest-pinned SDK artifact")
     args = parser.parse_args()
     local = {}
     for spec in args.source_path:
@@ -235,9 +271,9 @@ def main() -> int:
             args.manifest, args.artifacts, args.solc, args.workdir, local,
             args.allow_unverified_signature, args.allow_missing_metadata,
             args.prerelease, args.against, args.diff_reviewed_by,
-            args.embedder, args.batch)
+            args.embedder, args.batch, args.sdk_tarball, args.fetch_sdk)
     except (ReleaseError, ingestion.BuildError, indexer.IndexError_,
-            EmbeddingError) as error:
+            EmbeddingError, AddressError, OSError) as error:
         print(f"\nFATAL: {error}", file=sys.stderr)
         return 1
     print(f"release   {record['release_id']}  promotable={record['promotable']}")

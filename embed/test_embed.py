@@ -158,6 +158,42 @@ def test_specs() -> None:
         check(f"rejected: {bad!r}", raised)
 
 
+def test_ollama_digest_fallback() -> None:
+    print("\nE3b — current Ollama identity remains artifact-pinned")
+
+    class CurrentOllama(em.OllamaEmbedder):
+        def _show(self):
+            return {"model_info": {"bert.embedding_length": 1024}}
+
+        def _tags(self):
+            return {"models": [{
+                "name": "bge-m3:latest", "model": "bge-m3:latest",
+                "digest": "790764642607" + "0" * 52,
+            }]}
+
+    identity = CurrentOllama(
+        "bge-m3", expect_digest="790764642607").identity()
+    check("a digest omitted by /api/show is resolved from the exact tag",
+          identity.digest == "790764642607" and identity.dimensions == 1024,
+          str(identity))
+
+    class Ambiguous(CurrentOllama):
+        def _tags(self):
+            row = {"digest": "790764642607" + "0" * 52}
+            return {"models": [
+                {**row, "name": "bge-m3", "model": "other"},
+                {**row, "name": "other", "model": "bge-m3:latest"},
+            ]}
+
+    refused = ""
+    try:
+        Ambiguous("bge-m3").identity()
+    except em.EmbeddingError as error:
+        refused = str(error)
+    check("multiple exact tag aliases fail rather than choosing one",
+          "2 exact model matches" in refused, refused)
+
+
 def test_index_build(tmp: pathlib.Path) -> None:
     print("\nE4 — an index keeps the tiers apart and records its provenance")
     corpus = fake_corpus(tmp)
@@ -215,6 +251,7 @@ def test_index_build(tmp: pathlib.Path) -> None:
 
 
 def test_search(tmp: pathlib.Path) -> None:
+    import numpy as np
     print("\nE5 — search ranks, scopes and refuses the wrong embedder")
     corpus = fake_corpus(tmp, build_id="def456")
     ix.build_index(str(corpus), str(tmp / "index"), "stub:test")
@@ -262,6 +299,28 @@ def test_search(tmp: pathlib.Path) -> None:
     except ix.IndexError_ as e4:
         raised = str(e4)
     check("an all-zero query vector is refused", "zeros" in raised, raised[:80])
+
+    raised = ""
+    invalid_query = np.zeros(index.identity.dimensions, dtype="float32")
+    invalid_query[0] = np.nan
+    try:
+        index.search(invalid_query, index.identity, k=1)
+    except ix.IndexError_ as error:
+        raised = str(error)
+    check("a non-finite query vector is refused before ranking",
+          "non-finite" in raised, raised[:100])
+
+    original = float(index.vectors["A"][0, 0])
+    index.vectors["A"][0, 0] = np.inf
+    raised = ""
+    try:
+        index.search(q, index.identity, tier="A", k=1)
+    except ix.IndexError_ as error:
+        raised = str(error)
+    finally:
+        index.vectors["A"][0, 0] = original
+    check("non-finite cosine output cannot become a ranked hit",
+          "non-finite" in raised, raised[:100])
 
 
 def test_corpus_integrity(tmp: pathlib.Path) -> None:
@@ -357,6 +416,7 @@ def main() -> int:
     test_identity()
     test_stub()
     test_specs()
+    test_ollama_digest_fallback()
     for fn in (test_index_build, test_search, test_corpus_integrity):
         td = tempfile.mkdtemp()
         try:

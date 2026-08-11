@@ -1,0 +1,41 @@
+[Unit]
+Description=Project Aleph dependency monitor
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aleph-query
+Group=aleph-query
+WorkingDirectory=/opt/aleph
+EnvironmentFile=/etc/aleph/gateway.env
+EnvironmentFile=/etc/aleph/telegram.env
+EnvironmentFile=-/etc/aleph/model.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/aleph/.venv/bin/python /opt/aleph/monitor.py --manifest /opt/aleph/manifest.yaml --artifacts /srv/aleph/artifacts --pointer /srv/aleph/active-release.json --prerelease /srv/aleph/artifacts/releases/REPLACE_V25_RELEASE_ID/release.json
+TimeoutStartSec=2min
+NoNewPrivileges=true
+CapabilityBoundingSet=
+DevicePolicy=closed
+MemoryDenyWriteExecute=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @privileged @raw-io @reboot @swap
+UMask=0077

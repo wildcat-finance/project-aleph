@@ -259,11 +259,19 @@ class Index:
         if not manifest_path.exists():
             raise IndexError_(f"{manifest_path} not found")
         self.manifest = json.loads(manifest_path.read_text())
+        artifacts = self.manifest.get("artifacts") or {}
+        for name, declared_hash in artifacts.items():
+            path = self.dir / name
+            if not path.is_file() or _sha256(path) != declared_hash:
+                raise IndexError_(f"{path}: missing or modified index artifact")
         self.identity = Identity.from_dict(self.manifest["embedder"])
         self.vectors: dict[str, "np.ndarray"] = {}
         self.meta: dict[str, list[dict]] = {}
         for tier in self.manifest["tiers"]:
             self.vectors[tier] = np.load(self.dir / f"tier-{tier}.npy")
+            if (self.vectors[tier].ndim != 2
+                    or not np.isfinite(self.vectors[tier]).all()):
+                raise IndexError_(f"tier {tier}: vector matrix is not finite 2-D data")
             self.meta[tier] = [json.loads(l) for l in
                                open(self.dir / f"tier-{tier}.jsonl")]
             if len(self.meta[tier]) != self.vectors[tier].shape[0]:
@@ -288,10 +296,13 @@ class Index:
         np = _np()
         require_match(self.identity, query_identity)
         q = np.asarray(query_vector, dtype="float32").reshape(-1)
-        norm = float(np.linalg.norm(q))
-        if norm == 0:
-            raise IndexError_("query vector is all zeros")
-        q = q / norm
+        if not q.size or not np.isfinite(q).all():
+            raise IndexError_("query vector is empty or non-finite")
+        q64 = q.astype("float64")
+        norm = float(np.linalg.norm(q64))
+        if not np.isfinite(norm) or norm <= 0:
+            raise IndexError_("query vector is all zeros or invalid")
+        q64 /= norm
 
         results = []
         for name in ([tier] if tier else sorted(self.vectors)):
@@ -299,11 +310,30 @@ class Index:
                 raise IndexError_(f"no tier {name!r} in this index; "
                                   f"have {sorted(self.vectors)}")
             mat = self.vectors[name]
-            if mat.shape[1] != q.shape[0]:
+            if mat.shape[1] != q64.shape[0]:
                 raise IndexError_(
                     f"tier {name} holds {mat.shape[1]}-dimensional vectors, "
-                    f"the query is {q.shape[0]}")
-            scores = mat @ q
+                    f"the query is {q64.shape[0]}")
+            # Do not use ndarray matmul here. Accelerate's BLAS path on macOS
+            # has produced intermittent divide-by-zero/overflow results for
+            # these finite, normalised inputs during long evaluation runs.
+            # A bounded elementwise reduction is simple, reproducible across
+            # the macOS build host and Linux production, and keeps temporary
+            # allocation small for a full corpus search.
+            scores = np.empty(mat.shape[0], dtype="float64")
+            try:
+                with np.errstate(over="raise", invalid="raise",
+                                 divide="raise", under="ignore"):
+                    for start in range(0, mat.shape[0], 256):
+                        stop = min(start + 256, mat.shape[0])
+                        block = mat[start:stop].astype("float64", copy=False)
+                        scores[start:stop] = np.sum(
+                            block * q64, axis=1, dtype="float64")
+            except FloatingPointError as error:
+                raise IndexError_(
+                    f"tier {name}: cosine calculation failed: {error}") from error
+            if not np.isfinite(scores).all():
+                raise IndexError_(f"tier {name}: cosine scores are non-finite")
             top = np.argsort(-scores)[:k]
             for rank, i in enumerate(top, 1):
                 results.append({"tier": name, "rank": rank,

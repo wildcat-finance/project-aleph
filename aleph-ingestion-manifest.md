@@ -31,7 +31,7 @@ correctness, citation integrity, and injection resistance—not confidentiality.
 |---|---|---|---|
 | A | Deployed protocol source, natspec, audits, deployment material | signed release designation plus verified deployment inputs | ingested and indexed separately |
 | B | Published docs, legal text, guides | promoted docs tag and commit | ingested and indexed separately |
-| L | Registry and market state | gateway release, health state, block number | policy only; runtime adapter is not in this repository |
+| L | Registry and market state | gateway release, health state, block number | typed client and deterministic renderers in `live.py` |
 
 Tier A and Tier B never share one ranked vector list. Readable prose can outrank
 the code it describes on wording alone; preserving both result sets leaves that
@@ -187,6 +187,15 @@ shape must not expose scoring, ranking, comparison, or characterisation fields.
 Questions about whether a borrower is trustworthy are refusals rather than
 evaluative answers with caveats.
 
+`live.py` implements this boundary. It verifies the SDK tarball against the
+manifest-pinned npm SRI digest and registry `gitHead`, enforces every address
+assertion, and resolves only asserted map keys. Before every query it requires
+the pinned mainnet gateway deployment and every routable replica to be ready,
+integrity-verified, circuit-closed, and zero-lag. The query is fixed to that
+checked block and the response `_meta` block must agree exactly. Typed integer
+facts then pass through deterministic renderers; no model formats or
+characterizes them.
+
 ## 8. Embedding and retrieval
 
 `bge-m3` through Ollama is the selected embedding artifact. On the recorded
@@ -209,11 +218,18 @@ Exact cosine search is intentional at the current corpus size. Tier matrices are
 only a few megabytes; an approximate index would introduce a new recall boundary
 without measurable benefit.
 
+`retrieval.py` applies the runtime policy around those matrices. Every request
+names its chain, version, tiers, and limits. Lexical and semantic ranks are fused
+within a tier but never across tiers. Deployed v2.0 is the default; the isolated
+v2.5 release is loaded only for an explicit v2.5 request and carries a mandatory
+unaudited, undeployed preamble. Citation resolution compares the indexed quote
+with the named corpus bytes and refuses synthesized retrieval aids as quotes.
+
 ## 9. Evaluation
 
 `eval/golden-v1.yaml` contains 125 questions clustered from support traffic.
 `eval/labels.yaml` supplies retrieval labels for 25 consequential corpus
-questions. Ten entries identify genuine corpus gaps rather than pretending a
+questions. Nine entries identify genuine corpus gaps rather than pretending a
 retrieval model can answer from absent documentation.
 
 The model-selection harness is narrower than the production target: it uses a
@@ -221,19 +237,27 @@ simple Markdown splitter over protocol docs. It does not exercise the built
 corpus, tier policy, answer generation, citation rendering, abstention,
 live-state joins, or Telegram behavior.
 
-`ingest/build.py` therefore records `eval_not_regressed: null`. A downstream
-promotion controller must run and enforce the complete retrieval-and-answer
-evaluation before deployment.
+`ingest/build.py` records `eval_not_regressed: null` because no corpus-only step
+can evaluate the answer path. `eval/product_eval.py` runs the complete 125-case
+path, retrieval labels, fixture-backed typed live reads, claim and citation
+checks, version isolation, and abstention boundaries. Its immutable report is
+bound by `promotion.py`; the evaluated release exists only when every manifest
+gate is exactly `true`.
 
 ## 10. Current limitations
 
-- The answer, citation-rendering, live-state, deterministic-renderer, and
-  Telegram layers are not present in this repository.
-- SDK address assertions exist in the manifest but are not evaluated by the
-  corpus builder; `address_assertions_hold` is recorded as `null`.
+- Routing, answer assembly, live state, deterministic rendering, and blocking
+  extractive claim-support evaluation are implemented. A production language
+  writer remains blocked until a separately pinned semantic verifier exists.
+  The Telegram transport and production composition are implemented. A concrete
+  human handoff destination remains operator-owned.
+- SDK address assertions are enforced by `live.AddressBook` and can be bound
+  into a release with `release.py --fetch-sdk`. A release built without that
+  artifact check keeps `address_assertions_hold: null`.
 - Corpus diffs carry pending, unchanged, or named-reviewer approval state in an
-  immutable release record. Activation of an approved release is not yet
-  implemented.
+  immutable release record. Product evaluation produces a separately identified
+  promotable release, and `activation.py` atomically selects only a re-verified
+  promotable release while retaining rollback history.
 - Lens addresses are pinned through the SDK artifact, while the deployed
   `MarketLens`, `MarketLensV2`, and `CollateralLens` source is not bound here to
   reviewed commits. A disputed numeric answer must be resolved against on-chain

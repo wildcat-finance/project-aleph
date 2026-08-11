@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Project Aleph SDK address drift alarm daily
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target

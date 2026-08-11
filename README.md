@@ -3,18 +3,32 @@
 Project Aleph is intended to answer questions about the Wildcat Protocol over
 Telegram using pinned, citable protocol knowledge and block-numbered live state.
 
-This repository contains the evidence foundation: corpus policy, reproducible
-ingestion, Solidity and Markdown chunkers, provenance, embedding backends, a
-tiered vector index, an immutable release builder, evaluation inputs, and an
-SDK address watcher. It does not yet contain a user-facing agent.
+This repository contains the evidence and answer path: reproducible ingestion,
+tiered retrieval, typed live-state reads, policy-first routing, citable answer
+assembly, blocking product evaluation, a long-polling Telegram adapter, and
+verified production activation, rollback, audit, and monitoring controls.
 
 The shortest honest status is:
 
-> **Aleph can publish a coherent evidence release. It must next implement the
-> retrieval policy that turns a scoped request into validated evidence.**
+> **Aleph's seven-stage repository sequence is implemented, evaluated, and
+> active in the reference production deployment. Evidence-backed answers,
+> deterministic live reads, Telegram delivery, monitoring, and rollback are
+> operational. Human handoff remains deliberately disabled until an owner and
+> destination are named.**
 
-The remaining work is ordered below by dependency. Later stages should not begin
-by inventing around a missing earlier boundary.
+The implemented dependency order remains below because every future release must
+traverse it unchanged. The remaining operator integrations are narrower and must
+occur in this order:
+
+1. name a human-support owner, destination, retention policy, and idempotent
+   delivery contract before enabling the existing confirmation-gated handoff
+   sink; and
+2. identify and privately rehearse any peer bot before placing its numeric ID in
+   `ALEPH_PEER_BOT_IDS`. The allowlist is empty by default and grants only an
+   explicitly targeted `/ask@AlephBot` capability.
+
+Neither integration is a reason to weaken answering, evidence, privacy, or
+promotion gates in the meantime.
 
 ## Current foundation
 
@@ -34,14 +48,30 @@ The checked-in code already provides:
 - a canonical release record that enforces the manifest embedding identity,
   records corpus-diff review state, and exposes every promotion gate;
 - exact cosine search with strict full index/query embedder identity checks;
+- typed mainnet/version/tier-scoped hybrid retrieval, isolated v2.5 handling,
+  manifest-visible mandatory sources, and byte-verified citation resolution;
+- pinned SDK address verification, health-gated gateway reads at one observed
+  block, five narrow live operations, and deterministic numeric renderers;
+- policy-first routing over every golden handling mode, entity extraction,
+  evidence-supported claim assembly, refusals, and bounded triage payloads;
+- a blocking 125-question product evaluator with deterministic live replay,
+  version isolation, exact claim-support checks, and immutable reports;
+- approval that binds the exact evaluation to a new release identity only when
+  every manifest gate is `true`;
+- a privacy-mode, long-polling Telegram adapter with durable offsets, bounded
+  admission, threaded replies, exact answer splitting, and confirmation-gated
+  handoff drafts;
+- compare-and-swap activation, immutable switch history, pointer-only rollback,
+  scrubbed audit records, runtime composition, and dependency monitoring;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
   changing the corpus.
 
-This is the substrate for the product, not the product itself. In particular,
-`address_assertions_hold` and `eval_not_regressed` remain `null` in current build
-records, and nothing performs a reviewed atomic promotion.
+Raw corpus build records retain `null` placeholders for checks that require the
+SDK and completed index. `release.py --fetch-sdk`, `eval/product_eval.py`, and
+`promotion.py` resolve those gates at their proper boundaries. Production
+activation remains a separate, attributable operator action.
 
 ## Required build order
 
@@ -83,76 +113,75 @@ The implementation provides:
 - one machine-readable release record carrying corpus gates, waivers, index
   identity, hashes, source refs, and tier counts.
 
-Downstream gates remain visible rather than being guessed: the current release
-is not promotable while `address_assertions_hold` and `eval_not_regressed` are
-`null`.
+Downstream gates remain visible rather than being guessed: a candidate is not
+promotable while `address_assertions_hold` or `eval_not_regressed` is `null`.
 
-### 2. Build scoped retrieval and citation resolution
+### 2. Scoped retrieval and citation resolution — implemented
 
-`embed/index.py` returns nearest chunks, but it does not implement the retrieval
-policy required by the manifest.
+`retrieval.py` loads an immutable release and exposes typed `RetrievalRequest`,
+`RetrievalResponse`, `Evidence`, and `Citation` objects. It refuses an artifact
+whose manifest, corpus, index record, payload hash, embedding identity, or chunk
+count does not match the release.
 
-Build next:
+The implementation provides:
 
-- a retrieval API whose request explicitly carries chain, public protocol
+- a retrieval API whose request carries chain, public protocol
   version, requested tiers, and result limits;
 - Tier A and Tier B searches that remain separate through ranking;
-- lexical matching for contract names, function signatures, addresses, and
-  exact protocol vocabulary, combined with semantic results within each tier;
+- BM25-style lexical matching and exact identifier/address bonuses fused with
+  semantic results independently within each tier;
 - v2.0 as the default deployed corpus and an isolated v2.5 path that activates
   only when the user explicitly names v2.5;
 - enforcement of `always_cite`, prerelease preambles, deployment status, and
   source-version filters;
 - a citation resolver that turns a hit into a stable source path and Markdown
   anchor or Solidity location; and
-- a hard prohibition on quoting chunks marked `synthesised: true`.
+- a hard prohibition on quoting chunks marked `synthesised: true`, plus a
+  corpus-byte comparison before every quote.
 
-Retrieval should return typed evidence objects, not answer prose. Each object
-must carry enough provenance for a later citation validator to prove that the
-quoted bytes came from the named corpus build.
+`eval/retrieval_eval.py` runs `eval/labels.yaml` through this actual retriever,
+not through the model-comparison splitter. Retrieval returns evidence only; it
+does not generate answer prose.
 
-**Complete when:** retrieval labels run against the actual built corpus rather
-than the evaluation harness's simplified Markdown splitter; exact identifiers
-are findable; v2.5 cannot bleed into a general question; and every returned quote
-resolves to byte-exact source.
+### 3. Live-state tools and deterministic renderers — implemented
 
-### 3. Build live-state tools and deterministic renderers
+`live.py` keeps changeable state outside the corpus and outside model-authored
+prose. It loads the exact SDK package pinned by version, npm SRI digest, and
+registry `gitHead`, then checks every asserted mainnet deployment key.
 
-Anything that changes without a corpus promotion belongs here, not in the vector
-index and not in model-authored prose.
-
-Build next:
+The implementation provides:
 
 - SDK artifact loading and enforcement of every address under
   `addresses.assertions` in `manifest.yaml`;
-- contract resolution by SDK key, especially `MarketLensV2`, never by a reused
-  human-readable name;
-- a Wildcat Data Gateway client that names the pinned mainnet release explicitly;
-- a health and lag gate checked before every live answer;
-- block-number propagation from the query through the rendered response;
-- narrow typed operations for registry, market, account, withdrawal queue, and
-  borrower-to-markets facts; and
+- key-only contract resolution—`MarketLens` is refused while `MarketLensV2` is
+  asserted and available;
+- a Wildcat Data Gateway client that names `mainnet/v2.0.30` explicitly and has
+  no provider fallback;
+- a health, integrity, circuit, redundancy, and zero-lag check immediately
+  before every GraphQL request;
+- queries pinned to the checked indexed block, with exact `_meta` block
+  agreement required in the response;
+- typed registry, market, account, withdrawal-queue, and borrower-to-markets
+  operations; and
 - deterministic renderers for every numeric or market-state response.
 
-The model may eventually choose a typed operation. It must not generate, round,
-compare, or characterize the returned figures. Borrower aggregation may show
-public facts, but the tool schema must not contain scoring, ranking, reliability,
-or inferred-intent fields.
+Token amounts and basis points are formatted with integer arithmetic. Every
+renderer appends the Ethereum block and gateway release. Borrower aggregation
+contains public market facts only—no score, rank, reliability, risk, or inferred
+intent. `release.py --fetch-sdk` binds a successful address check into
+`address_assertions_hold`; without it, that gate remains `null`.
 
-**Complete when:** every live output is reproducible from a typed fixture, names
-its observed block and gateway release, declines while the gateway is unhealthy,
-and makes no model-authored financial claim.
+### 4. Question router and answer engine — implemented
 
-### 4. Build the question router and answer engine
+`agent.py` routes before calling retrieval, live state, or a language writer. It
+extracts chain, public version, market, lender, and borrower addresses first,
+then selects one reviewed handling mode.
 
-Only after corpus evidence and live operations have stable contracts should a
-model decide how to answer a natural-language question.
-
-Build next:
+The implementation provides:
 
 - a router for the modes already represented in `eval/golden-v1.yaml`:
   `corpus`, `live`, `corpus+live`, premise correction, refusal, refusal with a
-  destination, and triage-and-handoff;
+  destination, triage-and-handoff, and the set's one partial-answer case;
 - entity and version extraction before retrieval or live queries;
 - answer assembly that keeps corpus explanation separate from deterministic live
   values;
@@ -164,85 +193,119 @@ Build next:
   and
 - a triage payload that collects only the details a human actually needs.
 
-The answer engine is not a general chatbot. Advice, borrower trust assessments,
-intent inference, unsupported chains, and unreleased behavior are refusals. A
-refusal should offer an explicit escalation action rather than paging someone
-automatically.
+The dependency-free `ExtractiveWriter` emits only exact corpus substrings. A
+future language writer plugs into the same typed contract: every claim must name
+an evidence ID and an exact supporting quote supplied to it. The engine verifies
+both against the loaded corpus before adding a commit-pinned citation. It then
+appends the deterministic live block without exposing it to the writer.
 
-**Complete when:** every factual sentence is backed by validated corpus evidence
-or a deterministic live result; unsupported questions decline consistently; and
-the same typed inputs produce the same non-model portions of the answer.
+Advice, borrower assessment, inferred intent, unsupported chains, private
+lender lists, and prompt/private-context extraction are refused. Handoffs are
+prepared but never sent without a separate explicit confirmation. The router's
+handling mode matches all 125 reviewed golden questions; answer quality and
+claim support are enforced by the blocking stage-5 gate.
 
-### 5. Build end-to-end evaluation and promotion gates
+### 5. End-to-end evaluation and promotion gates — implemented
 
 The existing embedding comparison chose a model. It does not test the product
 described above.
 
-Build next:
+`eval/product_eval.py` runs every reviewed question through the real router,
+retriever, citation resolver, answer engine, and typed fixture-backed live
+client. It publishes a content-addressed record under
+`artifacts/evaluations/<evaluation_id>/evaluation.json`.
 
-- an evaluator that runs the 125 golden questions through the real router,
-  retriever, answer engine, citation resolver, and fixture-backed live tools;
+The implementation provides:
+
+- execution of all 125 golden questions through the real router, retriever,
+  answer engine, citation resolver, and fixture-backed live tools;
 - blocking checks for citation existence and claim support;
 - version and deployment correctness, including prerelease isolation;
 - calibrated abstention on known-unanswerable and out-of-scope questions;
 - deterministic live-value and block-number checks;
-- regression reports grouped by answer mode and risk, not only one aggregate
-  score;
-- explicit human approval of corpus diffs; and
-- enforcement of `address_assertions_hold`, `corpus_diff_reviewed`, and
-  `eval_not_regressed` before promotion.
+- address-free registry discovery for natural "which markets are registered"
+  questions;
+- reporting by reviewed mode and conservative risk class, with every failed ID;
+- nine declared corpus gaps that must abstain or route elsewhere rather than
+  receiving credit for a plausible-looking answer; and
+- `promotion.py`, which verifies the immutable evaluation and current evaluator
+  hashes, refuses failed or altered reports, and creates a distinct evaluated
+  release only when every required gate is exactly `true`.
 
-Corpus gaps remain documentation work. The evaluator should report them without
-rewarding the system for inventing an answer.
+The current claim gate is deliberately strict: claims must be exact extracted
+evidence. A future paraphrasing writer remains blocked until a separately pinned
+semantic verifier exists.
 
-**Complete when:** no artifact can become active with a failed or `null` blocking
-gate, and a reviewer can reproduce every changed answer from its corpus build,
-live fixture, and evaluation record.
+Approval does not activate a release. It produces the only artifact stage 7 may
+later activate, retaining the candidate, live fixture hash, tool hashes, per-case
+results, and evaluation identity needed for reproduction.
 
-### 6. Add the Telegram adapter
+### 6. Telegram adapter — implemented
 
 Telegram is an interface over the tested answer engine, not the place where
 retrieval or policy should live.
 
-Build next:
+`telegram.py` implements the interface without moving retrieval or policy into
+the transport. `TELEGRAM.md` states its runtime and privacy boundaries.
 
-- long-polling with `getUpdates`, avoiding a public webhook and inbound TLS
-  surface;
-- group privacy mode so Aleph receives commands and mentions rather than every
-  room message;
+The implementation provides:
+
+- startup checks that require long polling, an absent webhook, and enabled group
+  privacy mode;
+- message-only `getUpdates` polling with an atomically persisted offset;
+- private questions plus reliable group commands and replies, while ambient
+  room text is ignored and plain mentions remain subject to Telegram delivery;
+- a default-closed peer-bot allowlist whose only capability is an explicitly
+  targeted `/ask@AlephBot` command;
 - message parsing, reply threading, length-aware formatting, and stable citation
   links;
-- explicit escalation and triage handoff controls;
+- an allowlisted handoff draft and preview followed by a separate explicit
+  `/confirm_handoff`, with the default destination disabled;
 - rate limits and bounded concurrency; and
 - user-facing failure messages for unavailable live data, unsupported questions,
   and internal errors.
 
-**Complete when:** Telegram integration tests prove that the adapter passes typed
-requests and renders typed responses without changing their evidence, figures,
-refusal state, or citations.
+`test_telegram.py` passes real fixture-backed answer-engine output through the
+adapter. It checks unchanged citation text, topic/reply identity, exact
+reconstruction of split answers, send-failure checkpoint behavior, bounded
+admission, fixed internal-error text, and the no-confirmation/no-handoff rule.
 
-### 7. Add production deployment and operations
+### 7. Production deployment and operations — implemented
 
 The final stage turns a tested artifact into a service without weakening its
 replay and rollback guarantees.
 
-Build next:
+`activation.py`, `serve.py`, `audit.py`, and `monitor.py` implement the runtime
+boundary. `ops/OPERATIONS.md` is the operator runbook and `ops/systemd/` contains
+hardened service and timer templates.
 
-- atomic activation of a fully built corpus/index pair;
-- rollback by pointer change while retaining the previous artifact;
+The implementation provides:
+
+- compare-and-swap activation after re-verifying the release, corpus, index,
+  evaluation, manifest policy, and every required gate;
+- immutable activation records and atomic pointer replacement;
+- rollback as a new pointer generation while retaining every artifact;
 - separate processes and credentials for ingestion, embedding, query serving,
   and any future signing authority;
-- scheduled `sdk-watch.py` execution as an alarm, never an automatic rebuild;
-- gateway, model-runtime, Telegram, and evaluation monitoring;
+- a daily `sdk-watch.py` alarm that never rebuilds or edits the manifest;
+- one-shot active-release, model-runtime, gateway, Telegram, and evaluation
+  monitoring suitable for a five-minute supervisor timer;
+- a credential-free gateway preflight report backed by one authenticated,
+  health-checked, block-pinned registry query;
 - structured audit records carrying corpus build ID, model identity, route,
   citations, live block, and refusal reason;
-- the retention and text-scrubbing boundary for user questions; and
+- HMAC-only question fingerprints, no raw question/answer/address retention,
+  owner-only daily audit files, and bounded retention; and
 - operational runbooks for stale data, model mismatch, address drift, failed
   promotion, and rollback.
 
-**Complete when:** a bad candidate cannot replace the active artifact, every
-served answer identifies the evidence/runtime state behind it, and rollback does
-not require rebuilding.
+The checked tests prove that a raw, failed, null-gated, changed, or incoherent
+candidate cannot become active; every served answer audit identifies its
+evidence/runtime state; and rollback does not rebuild or delete anything.
+The reference query service is active under these controls. A fresh deployment
+still requires an operator-owned host, gateway credential, Telegram credential,
+and attributable activation. A human support destination is optional for the
+answer service and mandatory only before enabling handoff delivery.
 
 ## Explicitly outside the v1 sequence
 
@@ -289,6 +352,7 @@ pip install pyyaml numpy
 python3 release.py \
   --manifest manifest.yaml \
   --solc ingest/solc-container \
+  --fetch-sdk \
   --artifacts artifacts
 ```
 
@@ -306,9 +370,29 @@ python3 ingest/chunkers/test_solidity.py --solc ingest/solc-container
 python3 ingest/test_build.py
 python3 embed/test_embed.py
 python3 test_release.py
+python3 test_retrieval.py
+python3 test_live.py
+python3 test_agent.py
+python3 test_evaluation.py
+python3 test_telegram.py
+python3 test_operations.py
+
+# After building both main and prerelease evidence releases:
+python3 eval/product_eval.py \
+  --manifest manifest.yaml \
+  --release artifacts/releases/<main_release_id>/release.json \
+  --prerelease artifacts/releases/<v25_release_id>/release.json \
+  --embedder ollama:bge-m3
+
+python3 promotion.py \
+  --release artifacts/releases/<main_release_id>/release.json \
+  --evaluation artifacts/evaluations/<evaluation_id>/evaluation.json
 
 # Optional real-model smoke test
 python3 embed/test_embed.py --model ollama:bge-m3
+
+# Authenticated Data Gateway preflight (source credentials into the environment)
+python3 gateway_smoke.py
 ```
 
 ## Repository map
@@ -318,6 +402,24 @@ manifest.yaml                 executable corpus and runtime policy
 aleph-ingestion-manifest.md   rationale and current limitations
 release.py                    manifest -> immutable corpus/index release
 test_release.py               release coherence and immutability checks
+retrieval.py                  scoped hybrid retrieval + citation resolver
+test_retrieval.py             scope, isolation, ranking and quote checks
+live.py                       SDK address gate, gateway reads and renderers
+gateway_smoke.py              authenticated block-pinned gateway preflight
+test_live.py                  lag, block, address and numeric fixtures
+agent.py                      routing, refusals and answer assembly
+ANSWERING.md                  answer-path contracts and failure boundaries
+test_agent.py                 golden routing and assembly adversarial checks
+promotion.py                  all-gates-true evaluated release approval
+test_evaluation.py            product gate and approval adversarial checks
+telegram.py                   privacy-mode long-polling interface adapter
+TELEGRAM.md                   Telegram delivery and handoff boundaries
+test_telegram.py              parsing, delivery, offset and handoff integration
+activation.py                 verified atomic activation and rollback history
+audit.py                      scrubbed append-only answer provenance
+serve.py                      production query/Telegram composition
+monitor.py                    active/model/gateway/Telegram one-shot checks
+test_operations.py            activation, audit, composition and monitor checks
 
 ingest/
   build.py                    manifest -> validated corpus build
@@ -341,9 +443,13 @@ eval/
   golden-v1.yaml              125 questions and expected handling modes
   labels.yaml                 retrieval labels for consequential questions
   embed_compare.py            Markdown-only model comparison harness
+  retrieval_eval.py           labels against an immutable release retriever
+  product_eval.py             blocking 125-question product evaluation
+  live-fixture-v1.json        deterministic typed promotion fixture
   RUNBOOK.md                  recorded model decision and rerun procedure
 
 sdk-watch.py                  mainnet SDK deployment-map change detector
+ops/                          production runbook and hardened systemd templates
 ```
 
 `manifest.yaml` is the configuration source of truth. If this README disagrees

@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic mainnet-shaped state for product promotion evaluation; not a current-state snapshot.",
+  "entities": {
+    "market": "0x1111111111111111111111111111111111111111",
+    "borrower": "0x2222222222222222222222222222222222222222",
+    "asset": "0x3333333333333333333333333333333333333333",
+    "lender": "0x4444444444444444444444444444444444444444"
+  },
+  "health": {
+    "deployments": [{
+      "chainId": 1,
+      "releaseName": "v2.0.30",
+      "state": "ready",
+      "readyProviders": 2,
+      "replicas": [
+        {"providerId": "fixture-one", "state": "ready", "integrity": "verified", "circuit": "closed", "lagBlocks": 0, "indexedBlock": 100, "observedHead": 100},
+        {"providerId": "fixture-two", "state": "ready", "integrity": "verified", "circuit": "closed", "lagBlocks": 0, "indexedBlock": 100, "observedHead": 100}
+      ]
+    }]
+  },
+  "responses": {
+    "registry": {
+      "_meta": {"block": {"number": 100}},
+      "markets": [{
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market", "symbol": "WILD-USDC",
+        "borrower": "0x2222222222222222222222222222222222222222",
+        "isClosed": false, "isRegistered": true, "decimals": 6,
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6}
+      }]
+    },
+    "market": {
+      "_meta": {"block": {"number": 100}},
+      "market": {
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market", "symbol": "WILD-USDC",
+        "borrower": "0x2222222222222222222222222222222222222222",
+        "isClosed": false, "isRegistered": true, "decimals": 6,
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6},
+        "totalAssets": "123456789", "maxTotalSupply": "1000000000",
+        "scaledTotalSupply": "110000000", "scaledPendingWithdrawals": "10",
+        "normalizedUnclaimedWithdrawals": "20", "pendingWithdrawalExpiry": "0",
+        "annualInterestBips": 1125, "reserveRatioBips": 1000,
+        "delinquencyFeeBips": 500, "delinquencyGracePeriod": 86400,
+        "withdrawalBatchDuration": 86400, "isDelinquent": true,
+        "timeDelinquent": 3661
+      }
+    },
+    "account": {
+      "_meta": {"block": {"number": 100}},
+      "market": {
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market", "symbol": "WILD-USDC", "decimals": 6,
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6},
+        "lenders": [{
+          "address": "0x4444444444444444444444444444444444444444",
+          "scaledBalance": "1200000", "totalDeposited": "5000000",
+          "totalInterestEarned": "12000", "numPendingWithdrawalBatches": 2,
+          "role": "Null"
+        }]
+      }
+    },
+    "withdrawals": {
+      "_meta": {"block": {"number": 100}},
+      "market": {
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market",
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6},
+        "withdrawalBatches": [{
+          "expiry": 1700000000, "isClosed": false, "isCompleted": false,
+          "scaledTotalAmount": "5000000", "scaledAmountBurned": "1000000",
+          "normalizedAmountPaid": "2000000", "normalizedTotalAmount": "5000000",
+          "totalInterestEarned": "1000"
+        }]
+      }
+    },
+    "borrower_markets": {
+      "_meta": {"block": {"number": 100}},
+      "markets": [{
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market", "symbol": "WILD-USDC",
+        "borrower": "0x2222222222222222222222222222222222222222",
+        "isClosed": false, "isRegistered": true, "decimals": 6,
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6}
+      }]
+    }
+  }
+}
