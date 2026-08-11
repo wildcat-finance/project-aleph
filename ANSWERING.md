@@ -49,7 +49,7 @@ supplies answer prose.
 | `easter_egg` | an exact vegan-question shape plus a fair coin | one terse verdict and no evidence, tools, or elaboration |
 
 `eval/golden-v1.yaml` is the reviewed routing contract. `test_agent.py` requires
-all 127 questions to enter their expected mode. The rules describe the question
+all 133 questions to enter their expected mode. The rules describe the question
 shapes rather than matching question IDs, so new wording still reaches the same
 policy boundary.
 
@@ -86,7 +86,7 @@ alone.
 
 ## Evaluation boundary
 
-The blocking evaluator runs all 127 golden questions, not a sample. Fixture
+The blocking evaluator runs all 133 golden questions, not a sample. Fixture
 addresses complete live-shaped questions without changing their reviewed route,
 and fixture GraphQL responses pass through `GatewayClient` parsing and the same
 deterministic renderers used by the answer engine. Each live case is executed
@@ -114,6 +114,13 @@ bulk lender addresses, expose system/private context, or answer for unsupported
 chains. It also refuses hateful/self-harm coercion before retrieval. Historical
 borrow, repayment, deposit, and withdrawal questions are routed to the market
 CSV exporter because this runtime reads current state, not transaction history.
+
+A bare mainnet market address or canonical Wildcat lender-market URL is a live
+object. Address-bound APR, reserve-ratio, capacity, delinquency, and grace-period
+questions use the typed market read even when they omit “current”; the renderer
+returns the requested field plus block and gateway provenance. The same field
+question without an address asks for the market contract. Mechanism questions
+such as “how does the reserve ratio work?” remain corpus-backed.
 A refusal can name a destination and offer to prepare a handoff, but it cannot
 contact anyone.
 

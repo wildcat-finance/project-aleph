@@ -48,6 +48,7 @@ class Route:
     reason: str
     entities: Entities
     live_operation: str | None = None
+    live_field: str | None = None
     destination: str | None = None
     refusal_reason: str | None = None
     triage_kind: str | None = None
@@ -107,7 +108,7 @@ def extract_entities(question: str) -> Entities:
     chain_id = 1
     explicit_chains = {chain for name, chain in _CHAIN_NAMES.items()
                        if re.search(rf"\b{re.escape(name)}\b", lower)}
-    numeric = re.search(r"\bchain(?:\s+id)?\s*[:#]?\s*(\d+)\b", lower)
+    numeric = re.search(r"\bchain(?:\s*id)?\s*[:=#]?\s*(\d+)\b", lower)
     if numeric:
         explicit_chains.add(int(numeric.group(1)))
     if len(explicit_chains) > 1:
@@ -223,6 +224,13 @@ class Router:
         r"market status|penalty status|remaining capacity)\b|"
         r"when will .*claim|how many hours|no longer accruing|"
         r"market is in penalty|ever been delinquent", re.I)
+    _market_url = re.compile(
+        r"https?://app\.wildcat\.finance/lender/market/"
+        r"0x[0-9a-f]{40}(?:[/?#][^\s]*)?", re.I)
+    _market_summary = re.compile(
+        r"\b(?:market summary|summari[sz]e (?:this|the) market|"
+        r"what can you tell me about (?:this|the) market|"
+        r"tell me about (?:this|the) market)\b", re.I)
     _mechanism = re.compile(
         r"\b(why|how|what does|what happens|difference|criteria|process|"
         r"include|mean|when does|do i need)\b", re.I)
@@ -317,7 +325,8 @@ class Router:
                          triage_kind="technical_failure")
         if self._corpus_live.search(question):
             return Route(RouteMode.CORPUS_LIVE, "mechanism plus current state",
-                         entities, live_operation=self._operation(question))
+                         entities, live_operation=self._operation(question),
+                         live_field=self._market_field(question))
         if self._correction.search(question):
             return Route(RouteMode.CORRECT, "false or inapplicable premise", entities)
         if self._point.search(question):
@@ -327,19 +336,34 @@ class Router:
         if self._intent.search(question):
             if self._live.search(question):
                 return Route(RouteMode.PARTIAL, "public fact plus private intent",
-                             entities, live_operation=self._operation(question))
+                             entities, live_operation=self._operation(question),
+                             live_field=self._market_field(question))
             return Route(RouteMode.REFUSE, "borrower intent is unknowable", entities,
                          refusal_reason="inferred_intent")
         if self._corpus_only.search(question):
             return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
+        live_field = self._market_field(question)
+        addressed = self._addressed_market(question, entities)
+        field_request = self._market_field_request(question, live_field)
+        if addressed or field_request:
+            if addressed and self._market_field_mechanism(question, live_field):
+                return Route(
+                    RouteMode.CORPUS_LIVE,
+                    "market mechanism plus addressed live field", entities,
+                    live_operation="market", live_field=live_field)
+            return Route(
+                RouteMode.LIVE, "addressed market state", entities,
+                live_operation="market", live_field=live_field)
         live = bool(self._live.search(question))
         mechanism = bool(self._mechanism.search(question))
         if live and mechanism:
             return Route(RouteMode.CORPUS_LIVE, "mechanism plus current state",
-                         entities, live_operation=self._operation(question))
+                         entities, live_operation=self._operation(question),
+                         live_field=live_field)
         if live:
             return Route(RouteMode.LIVE, "current public state", entities,
-                         live_operation=self._operation(question))
+                         live_operation=self._operation(question),
+                         live_field=live_field)
         if (self._underspecified_followup.search(question)
                 and not self._domain.search(question)):
             return Route(RouteMode.CLARIFY, "underspecified follow-up", entities,
@@ -365,6 +389,48 @@ class Router:
         if re.search(r"withdrawal|batch|queue|ongoing cycle", lower):
             return "withdrawals"
         return "market"
+
+    @classmethod
+    def _addressed_market(cls, question: str, entities: Entities) -> bool:
+        if entities.market_address is None:
+            return False
+        stripped = question.strip().strip(".,;:!?()[]{}<>")
+        return bool(
+            _ETH_ADDRESS.fullmatch(stripped)
+            or cls._market_url.search(question)
+            or cls._market_summary.search(question))
+
+    @staticmethod
+    def _market_field(question: str) -> str | None:
+        lower = question.lower()
+        fields = (
+            ("grace_period", r"\b(?:delinquency\s+)?grace\s+period\b|\bgrace\b"),
+            ("reserve_ratio", r"\breserve\s+ratio\b"),
+            ("capacity", r"\b(?:remaining\s+)?capacity\b"),
+            ("delinquency", r"\bdelinquen\w*\b|\bpenalty\s+status\b"),
+            ("apr", r"\bapr\b|\bannual\s+interest(?:\s+rate)?\b"),
+        )
+        for name, pattern in fields:
+            if re.search(pattern, lower):
+                return name
+        return None
+
+    @staticmethod
+    def _market_field_request(question: str, field: str | None) -> bool:
+        if field is None:
+            return False
+        lower = question.lower()
+        return bool(re.search(
+            r"^\s*(?:what(?:'s|\s+is)|show|check|give me|read|"
+            r"how\s+(?:long|much))\b", lower))
+
+    @staticmethod
+    def _market_field_mechanism(question: str, field: str | None) -> bool:
+        if field is None or re.search(r"\bhow\s+(?:long|much)\b", question, re.I):
+            return False
+        return bool(re.search(
+            r"\b(?:how does|why|what does|when does|explain)\b", question,
+            re.I))
 
     @staticmethod
     def _destination(question: str) -> str:
@@ -590,7 +656,8 @@ class AnswerEngine:
                     text=f"I need {missing} before I can read current state.",
                     route=route, refusal_reason="missing_entity")
             try:
-                live_rendered = render_live(self._read_live(route))
+                live_rendered = render_live(
+                    self._read_live(route), field=route.live_field)
             except (GatewayUnavailable, LiveError) as error:
                 return self._abstain(route, f"current state unavailable: {error}")
 

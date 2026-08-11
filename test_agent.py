@@ -99,15 +99,45 @@ def run(tmp: pathlib.Path) -> None:
     check("natural registry discovery selects the address-free live operation",
           registry_route.mode == agent.RouteMode.LIVE
           and registry_route.live_operation == "registry")
+    market = test_live.MARKET
+    market_url = ("https://app.wildcat.finance/lender/market/" + market
+                  + "?chainId=1")
+    addressed_cases = {
+        market: None,
+        market_url: None,
+        f"What can you tell me about this market {market_url}": None,
+        f"What's the APR for market {market}?": "apr",
+        f"How long is the grace period for market {market}?": "grace_period",
+        "What is the remaining capacity?": "capacity",
+    }
+    for question, field in addressed_cases.items():
+        route = router.route(question)
+        check(f"addressed live market: {question[:36]}",
+              route.mode == agent.RouteMode.LIVE
+              and route.live_operation == "market"
+              and route.live_field == field,
+              f"{route.mode.value}/{route.live_operation}/{route.live_field}")
+    check("market-field mechanism questions remain corpus-backed",
+          router.route("How does the reserve ratio work?").mode
+          == agent.RouteMode.CORPUS)
+    unsupported_url = router.route(market_url.replace("chainId=1", "chainId=8453"))
+    check("a market URL cannot bypass the chain boundary",
+          unsupported_url.mode == agent.RouteMode.REFUSE_POINT
+          and unsupported_url.refusal_reason == "unsupported_chain")
+    check("addressed advice remains a refusal",
+          router.route(f"Should I lend to market {market}?").mode
+          == agent.RouteMode.REFUSE)
+    check("addressed history remains owned by the transaction exporter",
+          router.route(f"When was the last deposit in market {market}?").mode
+          == agent.RouteMode.REFUSE_POINT)
     golden = yaml.safe_load(pathlib.Path("eval/golden-v1.yaml").read_bytes())
     routed = [(item["id"], item["expected"],
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 127 golden questions enter their reviewed handling mode",
-          len(routed) == 127 and not wrong, str(wrong[:5]))
+    check("all 133 golden questions enter their reviewed handling mode",
+          len(routed) == 133 and not wrong, str(wrong[:5]))
 
-    market = test_live.MARKET
     lender = test_live.LENDER
     borrower = test_live.BORROWER
     entities = agent.extract_entities(
@@ -129,6 +159,24 @@ def run(tmp: pathlib.Path) -> None:
           registry_answer.status == "answered"
           and registry_answer.live is not None
           and registry_answer.live.operation == "registry")
+    bare_market = engine.answer(market)
+    url_market = engine.answer(market_url)
+    check("bare addresses and market URLs return the same live summary",
+          bare_market.status == url_market.status == "answered"
+          and bare_market.live is not None and url_market.live is not None
+          and bare_market.live.text == url_market.live.text
+          and "Example Market" in bare_market.text)
+    apr = engine.answer(f"What's the APR for market {market}?")
+    grace = engine.answer(f"How long is the grace period for market {market}?")
+    check("addressed field questions return compact deterministic values",
+          "APR: 11.25%" in apr.text and "Reserve ratio" not in apr.text
+          and "Delinquency grace period: 1d" in grace.text
+          and "APR:" not in grace.text)
+    missing_field = engine.answer("What is the reserve ratio?")
+    check("a live field without an address asks for the market contract",
+          missing_field.status == "needs_input"
+          and "market contract address" in missing_field.text
+          and not missing_field.citations)
 
     class ForbiddenTool:
         def __getattr__(self, name):
