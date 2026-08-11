@@ -142,6 +142,13 @@ and CR/CRLF input. It assigns GitBook-style anchors across all headings,
 including headings too small to emit as chunks, so duplicate numbering matches
 the renderer.
 
+A headingless note may instead use repeated standalone strong paragraphs as
+visible section titles. The chunker recognizes that reviewed convention only
+when the document has no renderer headings, after excluding fences, comments,
+HTML blocks, lists, blockquotes, and paragraph continuations. These evidence
+units retain the exact `**title**` bytes and carry no invented GitBook anchor.
+Mixed documents continue to split only on real headings.
+
 Short sections may be omitted, but an otherwise empty document is emitted as a
 single whole-document chunk. Coverage is computed from emitted documents, not
 from discovered filenames.
@@ -182,9 +189,19 @@ documentation page. Missing required metadata is fatal unless
 `--allow-missing-metadata` is supplied, in which case the waiver is recorded.
 The pinned `aleph-v0.3` docs satisfy both required fields on every legal page.
 
-`ingest/schema.py` then rejects duplicate IDs, empty required fields, invalid
-tiers or source types, inconsistent synthesized flags, and oversize model or
-embedding text. Cross-source collisions are checked after namespacing.
+`ingest/schema.py` then rejects duplicate IDs, duplicate normalized content
+inside one source file, empty required fields, invalid tiers or source types,
+inconsistent synthesized flags, sliced Markdown above 10,000 characters,
+large whole-document fallbacks, repeated strong sections in a headingless
+slice, orphan emphasis markers at chunk edges, and oversize model or embedding
+text. Cross-source collisions are checked after namespacing; identical text in
+different sources is retained so its distinct authority remains visible.
+
+`ingest/audit_corpus.py` complements the blocking schema gate with a complete
+deterministic inventory. It flags all legal, synthesised, duplicate,
+whole-document, nested-strong, and 2,000-character-plus chunks for review and
+writes both machine-readable JSON and a human queue. Audit disposition is
+structural only and never certifies the source text as factually correct.
 
 ## 5. Corpus identity and output
 

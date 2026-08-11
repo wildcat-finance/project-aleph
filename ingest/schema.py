@@ -30,11 +30,24 @@ that are attacker-writable free text. Both are worse than carrying two fields.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
 SOURCE_TYPES = ("solidity", "markdown")
 TIERS = ("A", "B")
+MARKDOWN_SLICED_MAX_CHARS = 10_000
+WHOLE_DOCUMENT_MAX_CHARS = 500
+_STRONG_SECTION = re.compile(
+    r"(?m)^ {0,3}(?:\*\*[^*\r\n][^*\r\n]*?\*\*"
+    r"|__[^_\r\n][^_\r\n]*?__)[ \t]*$")
+_ORPHAN_MARKUP = re.compile(r"^ {0,3}(?:\*|\*\*|_|__)[ \t]*$")
+
+
+def _orphan_markup_at_edge(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    return bool(lines and (_ORPHAN_MARKUP.fullmatch(lines[0])
+                           or _ORPHAN_MARKUP.fullmatch(lines[-1])))
 
 
 @dataclass
@@ -102,6 +115,24 @@ def validate(chunks: list[Chunk], oversize_chars: int = 24_000,
         if n > 1:
             problems.append(f"duplicate id ({n}x): {cid}")
 
+    # Exact duplicate evidence inside one source file is almost always a
+    # chunk-boundary error. Identical prose in different canonical/published
+    # sources is permitted and remains visible to the audit report.
+    content_seen: dict[tuple[str, str, str], str] = {}
+    for c in chunks:
+        namespace = c.id.partition(":")[0] if ":" in c.id else ""
+        normalized = " ".join(c.model_text.split())
+        if not normalized:
+            continue
+        key = (namespace, c.path, hashlib.sha256(normalized.encode()).hexdigest())
+        previous = content_seen.get(key)
+        if previous is not None:
+            problems.append(
+                f"{c.id}: duplicate content in {c.path}; also emitted as "
+                f"{previous}")
+        else:
+            content_seen[key] = c.id
+
     for c in chunks:
         if c.source_type not in SOURCE_TYPES:
             problems.append(f"{c.id}: unknown source_type {c.source_type!r}")
@@ -139,6 +170,25 @@ def validate(chunks: list[Chunk], oversize_chars: int = 24_000,
             problems.append(
                 f"{c.id}: kind={c.kind!r} is assembled but not flagged "
                 "synthesised — it would be quoted as source")
+        if c.source_type == "markdown" and not c.synthesised:
+            if len(c.model_text) > MARKDOWN_SLICED_MAX_CHARS:
+                problems.append(
+                    f"{c.id}: sliced Markdown is {len(c.model_text)} chars; "
+                    f"review and split it below {MARKDOWN_SLICED_MAX_CHARS}")
+            strong_sections = _STRONG_SECTION.findall(c.model_text)
+            if (len(strong_sections) > 1
+                    and c.detail.get("heading_level", 0) == 0):
+                problems.append(
+                    f"{c.id}: contains {len(strong_sections)} standalone "
+                    "strong section titles; split them into evidence units")
+            if (c.detail.get("whole_document")
+                    and len(c.model_text) > WHOLE_DOCUMENT_MAX_CHARS):
+                problems.append(
+                    f"{c.id}: accidental whole-document chunk is "
+                    f"{len(c.model_text)} chars; review its structure")
+            if _orphan_markup_at_edge(c.model_text):
+                problems.append(
+                    f"{c.id}: contains an isolated Markdown delimiter")
 
     return problems
 

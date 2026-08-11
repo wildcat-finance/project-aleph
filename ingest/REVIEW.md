@@ -37,6 +37,7 @@ Run the dependency-light suites:
 python3 ingest/chunkers/test_markdown.py
 python3 ingest/chunkers/test_solidity.py
 python3 ingest/test_build.py
+python3 ingest/test_audit_corpus.py
 python3 embed/test_embed.py
 python3 test_release.py
 python3 test_retrieval.py
@@ -104,6 +105,31 @@ The recorded suites contain 142 Solidity assertions and 113 Markdown
 assertions. Exit code is the failure count. Compiler-backed Solidity assertions
 must run before treating the full 142 as exercised.
 
+## Audit an existing corpus
+
+Run the structural inventory before reviewing a corpus diff:
+
+```bash
+python3 ingest/audit_corpus.py \
+  --chunks artifacts/corpus/<build_id>/chunks.jsonl \
+  --json ingest/audits/<build_id>/inventory.json \
+  --report ingest/audits/<build_id>/REPORT.md \
+  --fail-on-blockers
+```
+
+The JSON gives every chunk a size, visible-boundary count, source tier,
+warnings, blockers, duplicate references, and disposition. The Markdown report
+is the human review queue. `auto-pass` means a named structural rule covers the
+chunk; it is not a factual endorsement. Legal, synthesised, duplicated,
+whole-document, nested-strong, and 2,000-character-plus chunks remain visible
+for explicit review even when they do not block a build.
+
+The active 1,616-chunk corpus is inventoried in
+[`audits/1a78817a47146c00/REPORT.md`](audits/1a78817a47146c00/REPORT.md). Its one
+release-blocking defect is the headingless Known Issues slice containing six
+standalone strong-titled topics. The revised chunker emits those as six
+byte-exact, anchorless evidence units.
+
 ## Review priorities
 
 ### Citation integrity
@@ -133,9 +159,11 @@ signature, not only by name.
 ### Fail-loud boundaries
 
 Confirm that missing include matches, zero-chunk units, unreadable navigation,
-path traversal, symlinks, duplicate IDs, empty model text, oversize embedding
-text, schema disagreement, dirty local checkouts, wrong refs, and signature
-failures stop the build without publishing a partial artifact.
+path traversal, symlinks, duplicate IDs or same-file content, empty model text,
+pathological sliced Markdown, large whole-document fallback, repeated strong
+sections in a headingless slice, orphan edge markup, oversize embedding text,
+schema disagreement, dirty local checkouts, wrong refs, and signature failures
+stop the build without publishing a partial artifact.
 
 Tests should call the production entry point rather than reimplementing the
 logic under test. Several historical regressions stayed green because a test
@@ -158,6 +186,9 @@ asserted on its own copy of a merge or coverage calculation.
   renderer change.
 - Whole-document fallback chunks are coarser than ordinary section chunks, and
   retrieval quality for that grain has not been isolated in evaluation.
+- Standalone strong paragraphs become boundaries only in headingless notes.
+  Mixed documents retain renderer headings as their sole authoritative split
+  points; their nested strong labels remain visible in the audit queue.
 - A developer can bypass the pinned compiler wrapper by passing a local solc.
   `--expect-solc` checks the version when used; only the container pins the
   compiler artifact.
@@ -182,6 +213,9 @@ ingest/chunkers/verify_anchors.py
 ingest/chunkers/test_solidity.py
 ingest/chunkers/test_markdown.py
 ingest/test_build.py
+ingest/audit_corpus.py
+ingest/test_audit_corpus.py
+ingest/audits/
 ingest/ADVERSARIAL.md
 ingest/PIPELINE.md
 manifest.yaml

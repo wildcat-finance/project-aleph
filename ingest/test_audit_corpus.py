@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Focused checks for the deterministic corpus structural audit."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+
+
+HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("audit_corpus", HERE / "audit_corpus.py")
+audit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(audit)
+
+
+def row(cid: str, text: str, **overrides) -> dict:
+    value = {
+        "id": cid,
+        "path": "docs/test.md",
+        "source_type": "markdown",
+        "tier": "A",
+        "kind": "section",
+        "synthesised": False,
+        "display_text": text,
+        "model_text": text,
+        "embed_text": text,
+        "detail": {},
+    }
+    value.update(overrides)
+    return value
+
+
+def main() -> int:
+    rows = [
+        row("source:clean", "# Clean\n\nOne coherent section with useful prose."),
+        row("source:bad", "**One**\n\nFirst topic.\n\n**Two**\n\nSecond topic."),
+        row("source:whole", "x" * 600,
+            detail={"whole_document": True}),
+        row("source:duplicate", "# Clean\n\nOne coherent section with useful prose."),
+    ]
+    result = audit.inventory(rows, "0" * 64)
+    by_id = {item["id"]: item for item in result["chunks"]}
+    assert result["chunk_count"] == 4
+    assert by_id["source:bad"]["blockers"] == ["multiple-strong-sections"]
+    assert "large-whole-document" in by_id["source:whole"]["blockers"]
+    assert by_id["source:clean"]["duplicate_ids"] == ["source:duplicate"]
+    assert by_id["source:clean"]["disposition"] == "review-required"
+    assert "source:bad" in audit.markdown_report(result)
+
+    ledger = {
+        "schema_version": 1,
+        "corpus_sha256": result["corpus_sha256"],
+        "audit_id": result["audit_id"],
+        "reviewer": "test-reviewer",
+        "reviews": [
+            {"id": "source:clean", "decision": "coherent",
+             "rationale": "Distinct source authority is intentional."},
+            {"id": "source:duplicate", "decision": "coherent",
+             "rationale": "Distinct source authority is intentional."},
+        ],
+    }
+    reviewed = audit.apply_reviews(result, ledger)
+    reviewed_by_id = {item["id"]: item for item in reviewed["chunks"]}
+    assert reviewed["dispositions"]["reviewed-pass"] == 2
+    assert reviewed_by_id["source:clean"]["review"]["reviewer"] == "test-reviewer"
+    assert reviewed_by_id["source:bad"]["disposition"] == "blocked"
+
+    ruled = audit.inventory([
+        row("source:legal", "A legal section.", path="legal/terms.md"),
+        row("source:index", "Generated index.", synthesised=True),
+    ], "2" * 64)
+    legal_ids = ["source:legal"]
+    synth_ids = ["source:index"]
+    rules = {
+        "schema_version": 1,
+        "corpus_sha256": ruled["corpus_sha256"],
+        "audit_id": ruled["audit_id"],
+        "reviewer": "test-reviewer",
+        "rules": [
+            {"name": "legal", "warning": "legal", "decision": "coherent",
+             "rationale": "One heading-bounded legal section.",
+             "expected_count": 1,
+             "expected_ids_sha256": audit._ids_digest(legal_ids)},
+            {"name": "generated", "warning": "synthesised",
+             "decision": "coherent",
+             "rationale": "One deterministic generated unit.",
+             "expected_count": 1,
+             "expected_ids_sha256": audit._ids_digest(synth_ids)},
+        ],
+    }
+    ruled = audit.apply_reviews(ruled, rules)
+    assert ruled["dispositions"] == {"reviewed-pass": 2}
+
+    oversized = audit.inventory(
+        [row("source:large", "x" * 2_001)], "1" * 64)
+    missing_exception = {
+        "schema_version": 1,
+        "corpus_sha256": oversized["corpus_sha256"],
+        "audit_id": oversized["audit_id"],
+        "reviewer": "test-reviewer",
+        "reviews": [{"id": "source:large", "decision": "coherent",
+                     "rationale": "One indivisible section."}],
+    }
+    refused = ""
+    try:
+        audit.apply_reviews(oversized, missing_exception)
+    except audit.AuditError as error:
+        refused = str(error)
+    assert "size_exception" in refused
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "chunks.jsonl"
+        source.write_text("\n".join(json.dumps(item) for item in rows) + "\n")
+        loaded, digest = audit.load_chunks(source)
+        assert loaded == rows
+        assert len(digest) == 64
+    print("corpus audit checks pass")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
