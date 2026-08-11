@@ -3,8 +3,9 @@
 `telegram.py` is a transport over `AnswerEngine`. It does not route questions,
 retrieve evidence, query live state, rewrite answers, or decide refusals. The
 adapter selects relevant Telegram messages, passes their text to the engine, and
-delivers eligible human-facing answers as native Rich Messages with an exact
-plain-message fallback.
+delivers the returned text: native Rich Messages where eligible, cosmetic
+entity rendering as the universal fallback, and byte-exact plain text for peer
+bots, commands, and the final fallback rung.
 
 ## Startup boundary
 
@@ -54,30 +55,55 @@ operator has identified a specific peer and enabled Telegram's
 for one of the participating bots.
 
 Replies preserve the originating forum topic and use `reply_parameters`.
-Human-facing engine answers of at most 32,768 characters first use
-`sendRichMessage`. The adapter maps only Aleph's reviewed `Explanation`,
-`Premise correction`, `Current state`, and `Sources` labels to native headings;
-the answer remains held separately as the unchanged fallback payload and source
-URLs are copied byte-for-byte.
 
-Set `ALEPH_TELEGRAM_RICH_MESSAGES=false` to disable rich delivery immediately on
-the next service restart. The default is `true`. If Telegram refuses or does not
-support `sendRichMessage`, the adapter sends the original answer without a parse
-mode, disables link previews, and splits it at stable boundaries under the
-4,096-character limit. Joining those chunks recreates the exact engine output.
-Answers above the rich limit use this fallback directly, so a partially sent
-rich answer can never be duplicated by a later fallback.
+## Rendering
 
-Only a definite Bot API refusal triggers fallback. A timeout, lost response, or
-other ambiguous transport failure does not send a second representation; it
-leaves the update uncheckpointed for retry. This distinction prevents a rich
-answer accepted by Telegram from being duplicated by a speculative plain send.
+Human-facing engine answers descend a three-rung delivery ladder — native rich
+message, entity-rendered HTML, exact plain text. Each rung falls through to the
+next only on a definite Bot API refusal; a timeout, lost response, or other
+ambiguous transport failure never sends a second representation and instead
+leaves the update uncheckpointed for retry. This distinction prevents an answer
+accepted by Telegram from being duplicated by a speculative resend.
 
-Commands, handoff previews, and answers to approved peer bots always stay on the
-plain-text contract. The peer rule preserves Project Null's end-to-end outcome
-capture, which currently observes Telegram text replies. Rich drafts are not
-sent: `sendRichMessageDraft` creates an ephemeral 30-second preview and Aleph has
-no streaming answer path that could justify that additional lifecycle yet.
+Answers of at most 32,768 characters first use `sendRichMessage`. The adapter
+maps only Aleph's reviewed `Explanation`, `Premise correction`,
+`Current state`, and `Sources` labels to native headings; the answer remains
+held separately as the unchanged fallback payload and source URLs are copied
+byte-for-byte. Set `ALEPH_TELEGRAM_RICH_MESSAGES=false` to disable rich
+delivery immediately on the next service restart; the default is `true`.
+Answers above the rich limit skip this rung, so a partially sent rich answer
+can never be duplicated by a later fallback.
+
+When rich delivery is refused, unsupported, disabled, or oversized, answers
+with the engine's section structure are rendered with classic Telegram HTML
+entities, which every client can display: section headings are bold, inline
+`[n]` citation markers link to their sources, full-length hex values become
+tap-to-copy `code` spans, and the trailing Sources section collapses into an
+expandable quotation. Inside it each URL is tucked behind a shortened label —
+the file name and the breadcrumb's most specific segment — while the plain
+fallback keeps the full citation line. The first two sources also repeat as
+URL buttons under the final message, so the primary evidence is one tap away
+without expanding the quotation. The visible text is otherwise the answer's
+own bytes — markup is added only after every byte is HTML-escaped, so answer
+text can never be reinterpreted. The renderer verifies that the plain fallback
+of its chunks reconstructs the exact engine output and refuses to send
+otherwise. If Telegram definitively refuses a rendered chunk, the adapter
+resends that chunk's exact plain bytes without buttons.
+
+Commands, handoff previews, refusals, rate-limit notices, and answers to
+approved peer bots always stay on the plain-text contract with no parse mode.
+The peer rule preserves Project Null's end-to-end outcome capture, which
+currently observes Telegram text replies. Rich drafts are not sent:
+`sendRichMessageDraft` creates an ephemeral 30-second preview and Aleph has no
+streaming answer path that could justify that additional lifecycle yet.
+
+A best-effort `typing` chat action precedes engine answers for human askers
+and is renewed about every five seconds until the answer is ready; its failure
+never blocks an answer. Link previews are disabled on every rung. Responses
+longer than Telegram's 4,096-character limit are split at stable text
+boundaries — plain chunks join to recreate the exact engine output, and
+rendered chunks are bounded by visible length with headroom for Telegram's
+double-width counting of astral characters.
 
 ## Delivery and load boundaries
 
@@ -111,10 +137,16 @@ that no destination is configured and sends nothing.
 
 The implementation follows the current Telegram Bot API contracts for
 [`getUpdates`](https://core.telegram.org/bots/api#getupdates),
-[`sendMessage`](https://core.telegram.org/bots/api#sendmessage), and
+[`sendMessage`](https://core.telegram.org/bots/api#sendmessage),
 [`sendRichMessage`](https://core.telegram.org/bots/api#sendrichmessage),
-[`InputRichMessage`](https://core.telegram.org/bots/api#inputrichmessage), and
-[`ReplyParameters`](https://core.telegram.org/bots/api#replyparameters). Group
+[`InputRichMessage`](https://core.telegram.org/bots/api#inputrichmessage),
+[`ReplyParameters`](https://core.telegram.org/bots/api#replyparameters),
+[`sendChatAction`](https://core.telegram.org/bots/api#sendchataction),
+[`InlineKeyboardMarkup`](https://core.telegram.org/bots/api#inlinekeyboardmarkup)
+restricted to stateless `url` buttons, and the
+[HTML formatting style](https://core.telegram.org/bots/api#html-style),
+restricted to `b`, `a`, `code`, and `blockquote expandable` — entity types
+stable since Bot API 7.3 (May 2024). Group
 delivery assumptions follow Telegram's
 [`Privacy Mode`](https://core.telegram.org/bots/features#privacy-mode) rules.
 The narrow peer-bot path follows Telegram's

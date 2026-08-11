@@ -7,6 +7,8 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import agent
@@ -32,8 +34,10 @@ class FakeAPI:
         self.calls = []
         self.sent = []
         self.rich_sent = []
+        self.actions = []
         self.next_message_id = 1000
         self.fail_send = False
+        self.fail_html = False
         self.fail_rich = False
         self.lose_rich_response = False
 
@@ -46,9 +50,14 @@ class FakeAPI:
             return {"url": self.webhook, "pending_update_count": 0}
         if method == "getUpdates":
             return self.updates
+        if method == "sendChatAction":
+            self.actions.append(payload)
+            return True
         if method == "sendMessage":
             if self.fail_send:
                 raise telegram.TelegramError("fixture send failed")
+            if self.fail_html and "parse_mode" in payload:
+                raise telegram.TelegramRefused("fixture html send refused")
             self.sent.append(payload)
             self.next_message_id += 1
             return {"message_id": self.next_message_id}
@@ -151,7 +160,7 @@ def run(tmp: pathlib.Path) -> None:
     check("one update is answered and checkpointed", service.run_once() == 1
           and service.offset_store.load() == 11)
     text = "".join(payload["text"] for payload in api.sent)
-    check("the answer engine's citation text reaches Telegram unchanged",
+    check("the answer engine's citations reach Telegram with source links",
           "Sources" in text and "/blob/" in text)
     check("delivery replies to the triggering message and disables previews",
           api.sent[0]["reply_parameters"]["message_id"] == 110
@@ -192,10 +201,22 @@ def run(tmp: pathlib.Path) -> None:
         tmp / "rich-fallback", StaticEngine(rich_text), fallback_api,
         rich_messages=True)
     fallback.run_once()
-    check("a refused rich call falls back to the original plain answer",
+    check("a refused rich call falls back to entity-rendered delivery",
           not fallback_api.rich_sent and len(fallback_api.sent) == 1
-          and fallback_api.sent[0]["text"] == rich_text
+          and fallback_api.sent[0].get("parse_mode") == "HTML"
+          and "<blockquote expandable><b>Sources</b>" in fallback_api.sent[0]["text"]
           and fallback.offset_store.load() == 13)
+    fully_plain_api = FakeAPI([update(12, "question")])
+    fully_plain_api.fail_rich = fully_plain_api.fail_html = True
+    fully_plain = adapter(
+        tmp / "rich-plain-fallback", StaticEngine(rich_text), fully_plain_api,
+        rich_messages=True)
+    fully_plain.run_once()
+    check("refused rich and html renderings still deliver the exact answer",
+          not fully_plain_api.rich_sent and len(fully_plain_api.sent) == 1
+          and fully_plain_api.sent[0]["text"] == rich_text
+          and "parse_mode" not in fully_plain_api.sent[0]
+          and fully_plain.offset_store.load() == 13)
 
     irregular = "Sources\n\nAn operator-authored source note"
     check("unrecognized source records remain byte-for-byte intact",
@@ -255,13 +276,21 @@ def run(tmp: pathlib.Path) -> None:
         update(28, "/confirm_handoff", chat_id=-1, chat_type="supergroup",
                user_id=500, is_bot=True),
     ])
-    peer_engine = CountingEngine(StaticEngine())
+    peer_answer = ("Explanation\n\nPeer bots parse answer bytes. [1]\n\n"
+                   "Sources\n\n[1] docs/a.md › A: "
+                   "https://github.com/wildcat-finance/wildcat-docs/blob/c0ffee/docs/a.md")
+    peer_engine = CountingEngine(StaticEngine(peer_answer))
     peer = adapter(tmp / "peer", peer_engine, peer_api,
                    peer_bot_ids=(500,), rich_messages=True)
     peer.process_updates(peer_api.updates)
     check("only allowlisted bots can issue explicitly targeted questions",
           peer_engine.questions == ["approved question"]
           and len(peer_api.sent) == 1)
+    check("peer bots receive exact plain bytes, no markup, no typing hint",
+          "parse_mode" not in peer_api.sent[0]
+          and "reply_markup" not in peer_api.sent[0]
+          and peer_api.sent[0]["text"] == peer_answer
+          and not peer_api.actions)
     check("peer bots cannot use ambient, untargeted, or handoff paths",
           peer.offset_store.load() == 29 and not peer.pending)
     check("peer-bot answers remain plain for end-to-end outcome capture",
@@ -344,6 +373,103 @@ def run(tmp: pathlib.Path) -> None:
     check("per-chat/user admission is bounded before the answer engine",
           rate_engine.questions == ["one"]
           and "rate-limited" in rate_api.sent[1]["text"])
+
+    print("\nTG5 — human answers render richly, fall back safely, stay exact")
+    answer_text = (
+        "Explanation\n\n"
+        "Cycles start with the first request & <cover> all lenders. [1]\n\n"
+        "Escrow 0x" + "ab" * 20 + " releases funds. [2]\n\n"
+        "Sources\n\n"
+        "[1] overview/faqs.md › FAQs › Withdrawals: "
+        "https://github.com/wildcat-finance/wildcat-docs/blob/abc/overview/faqs.md#when\n"
+        "[2] docs/Terminology.md › Withdrawal Cycle: "
+        "https://github.com/wildcat-finance/v2-protocol/blob/def/docs/Terminology.md#cycle")
+    rendered = telegram.format_message(answer_text)
+    check("structured answers render headings, links, and expandable sources",
+          rendered is not None and len(rendered) == 1
+          and rendered[0].html.startswith("<b>Explanation</b>")
+          and '<blockquote expandable><b>Sources</b>\n[1] <a href="'
+          in rendered[0].html
+          and rendered[0].html.endswith("</a></blockquote>")
+          and '">[1]</a>' in rendered[0].html
+          and "<code>0x" in rendered[0].html)
+    check("markup never rewrites answer bytes",
+          rendered[0].plain == answer_text
+          and "&amp; &lt;cover&gt;" in rendered[0].html
+          and rendered[0].html.count("https://") == 4)
+    check("source labels shrink to file name and most specific segment",
+          ">faqs.md › Withdrawals</a>" in rendered[0].html
+          and ">Terminology.md › Withdrawal Cycle</a>" in rendered[0].html
+          and "› FAQs" not in rendered[0].html)
+    check("the two leading sources become url buttons on the final chunk",
+          rendered[0].buttons == (
+              ("[1] faqs.md",
+               "https://github.com/wildcat-finance/wildcat-docs/blob/abc/overview/faqs.md#when"),
+              ("[2] Terminology.md",
+               "https://github.com/wildcat-finance/v2-protocol/blob/def/docs/Terminology.md#cycle")))
+    stitched = "Explanation\n\n" + "\n\n".join(
+        f"claim number {index} about the protocol. [1]" for index in range(300)
+    ) + ("\n\nSources\n\n[1] docs/guide.md › Guide: "
+         "https://github.com/wildcat-finance/wildcat-docs/blob/abc/docs/guide.md")
+    packed = telegram.format_message(stitched)
+    check("long rich answers pack into bounded chunks that rejoin exactly",
+          packed is not None and len(packed) > 1
+          and "\n\n".join(chunk.plain for chunk in packed) == stitched
+          and all(chunk.html.count("<blockquote")
+                  == chunk.html.count("</blockquote") for chunk in packed)
+          and not packed[0].buttons
+          and packed[-1].buttons == (
+              ("[1] guide.md",
+               "https://github.com/wildcat-finance/wildcat-docs/blob/abc/docs/guide.md"),))
+    check("unstructured replies stay plain",
+          telegram.format_message("Use /ask <question>.") is None)
+
+    rich_api = FakeAPI([update(80, "/ask What does exactIdentifier(uint256) do?")])
+    rich_service = adapter(tmp / "entity-rich", real_engine, rich_api)
+    rich_service.run_once()
+    ordered = [method for method, _ in rich_api.calls
+               if method in ("sendChatAction", "sendMessage")]
+    check("humans get a typing hint, then an HTML answer with tucked sources",
+          ordered[0] == "sendChatAction"
+          and rich_api.sent[0].get("parse_mode") == "HTML"
+          and "<blockquote expandable><b>Sources</b>" in rich_api.sent[0]["text"]
+          and rich_api.sent[0]["link_preview_options"] == {"is_disabled": True})
+    keyboard = rich_api.sent[-1].get("reply_markup", {}).get("inline_keyboard")
+    check("the final message carries url buttons for the leading sources",
+          keyboard and len(keyboard) == 1 and 1 <= len(keyboard[0]) <= 2
+          and all(button["url"].startswith("https://github.com/")
+                  and button["text"].startswith("[")
+                  for button in keyboard[0]))
+
+    refresh_api = FakeAPI([])
+    refresh_service = adapter(tmp / "refresh", StaticEngine(), refresh_api)
+    asker = telegram.Incoming(
+        update_id=1, chat_id=5, chat_type="private", message_id=2, user_id=9,
+        text="q", thread_id=None, reply_to_bot=False, peer_bot=False)
+
+    def slow_answer():
+        deadline = time.monotonic() + 5
+        while len(refresh_api.actions) < 3 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        return telegram.Outgoing("slow answer")
+
+    with ThreadPoolExecutor(max_workers=1) as slow_pool:
+        collected = refresh_service._await_answer(
+            asker, slow_pool.submit(slow_answer), interval=0.02)
+    check("the typing hint refreshes while a slow answer is prepared",
+          collected.text == "slow answer" and len(refresh_api.actions) >= 3
+          and all(action["chat_id"] == 5 for action in refresh_api.actions))
+
+    fallback_api = FakeAPI([update(81, "/ask What does exactIdentifier(uint256) do?")])
+    fallback_api.fail_html = True
+    fallback_service = adapter(tmp / "fallback", real_engine, fallback_api)
+    fallback_service.run_once()
+    check("a refused HTML rendering still delivers the exact plain answer",
+          fallback_api.sent
+          and all("parse_mode" not in payload and "reply_markup" not in payload
+                  for payload in fallback_api.sent)
+          and "Sources" in fallback_api.sent[-1]["text"]
+          and fallback_service.offset_store.load() == 82)
 
     print("\nTG4 — handoff requires a separate explicit confirmation")
     sink = FakeSink()

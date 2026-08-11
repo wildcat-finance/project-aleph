@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -238,6 +238,126 @@ class RateLimiter:
             return True
 
 
+_CITATION_MARKER = re.compile(r"\[(\d+)\]")
+_HEX_VALUE = re.compile(r"\b0x(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{40})\b")
+
+
+def _escape_html(text: str) -> str:
+    """Escape text so Telegram's HTML parser cannot reinterpret answer bytes."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+@dataclass(frozen=True)
+class RenderedChunk:
+    """One sendMessage payload: HTML text plus its exact plain-text fallback."""
+    html: str
+    plain: str
+    buttons: tuple[tuple[str, str], ...] = ()
+
+
+def _short_label(label: str) -> str:
+    """Compress a breadcrumb to its file name and most specific segment."""
+    segments = label.split(" › ")
+    if len(segments) < 2:
+        return label
+    name = segments[0].rsplit("/", 1)[-1].strip() or segments[0]
+    return f"{name} › {segments[-1]}"
+
+
+def _button_label(number: int, label: str) -> str:
+    """Name a source button by citation number and file name."""
+    name = label.split(" › ", 1)[0].rsplit("/", 1)[-1].strip() or "source"
+    return f"[{number}] {name}"[:64]
+
+
+def _trailing_sources(paragraphs: list[str]) -> dict[int, tuple[str, str]] | None:
+    """Parse a final 'Sources' section into {number: (label, url)}."""
+    if len(paragraphs) < 2 or paragraphs[-2] != "Sources":
+        return None
+    links: dict[int, tuple[str, str]] = {}
+    for line in paragraphs[-1].split("\n"):
+        matched = _SOURCE_CITATION.fullmatch(line)
+        if matched is None or int(matched.group("number")) in links:
+            return None
+        links[int(matched.group("number"))] = (
+            matched.group("label"), matched.group("url"))
+    return links or None
+
+
+def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | None:
+    """Render a structured answer as Telegram HTML chunks, or None to stay plain.
+
+    The visible text is the answer's own bytes: markup only bolds the section
+    headings, links citation markers, makes hex values copyable, and tucks the
+    source URLs behind their labels inside a collapsed expandable quotation.
+    Every chunk carries its exact plain bytes as a fallback rendering. The
+    visible-length limit stays under Telegram's 4096 so that astral characters,
+    which Telegram counts double, cannot push a chunk over the wire limit.
+    """
+    if not 1 <= limit <= 4096:
+        raise TelegramError("Telegram message limit must be between 1 and 4096")
+    paragraphs = text.split("\n\n")
+    links = _trailing_sources(paragraphs)
+    if links is None and not any(item in _RICH_HEADINGS for item in paragraphs):
+        return None
+    body = paragraphs[:-2] if links else paragraphs
+
+    fragments: list[tuple[str, str, int]] = []
+    for paragraph in body:
+        if paragraph in _RICH_HEADINGS:
+            fragments.append(
+                (paragraph, f"<b>{_escape_html(paragraph)}</b>", len(paragraph)))
+            continue
+        html = _HEX_VALUE.sub(
+            lambda matched: f"<code>{matched.group(0)}</code>",
+            _escape_html(paragraph))
+        if links:
+            html = _CITATION_MARKER.sub(
+                lambda matched: (
+                    f'<a href="{_escape_html(links[int(matched.group(1))][1])}">'
+                    f"{matched.group(0)}</a>"
+                    if int(matched.group(1)) in links else matched.group(0)),
+                html)
+        fragments.append((paragraph, html, len(paragraph)))
+    if links:
+        lines = ["<b>Sources</b>"]
+        visible = len("Sources")
+        for number in sorted(links):
+            label, url = links[number]
+            display = _short_label(label)
+            lines.append(f'[{number}] <a href="{_escape_html(url)}">'
+                         f"{_escape_html(display)}</a>")
+            visible += 1 + len(f"[{number}] {display}")
+        fragments.append(("\n\n".join(paragraphs[-2:]),
+                          "<blockquote expandable>" + "\n".join(lines)
+                          + "</blockquote>", visible))
+
+    chunks: list[RenderedChunk] = []
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+    used = 0
+    for plain, html, visible in fragments:
+        if visible > limit:
+            return None
+        if plain_parts and used + 2 + visible > limit:
+            chunks.append(RenderedChunk(
+                "\n\n".join(html_parts), "\n\n".join(plain_parts)))
+            plain_parts, html_parts, used = [], [], 0
+        used += (2 if plain_parts else 0) + visible
+        plain_parts.append(plain)
+        html_parts.append(html)
+    chunks.append(RenderedChunk("\n\n".join(html_parts), "\n\n".join(plain_parts)))
+    if links:
+        # The two leading sources repeat as buttons under the final message,
+        # reachable without expanding the quotation.
+        buttons = tuple((_button_label(number, links[number][0]),
+                         links[number][1]) for number in sorted(links)[:2])
+        chunks[-1] = RenderedChunk(chunks[-1].html, chunks[-1].plain, buttons)
+    if "\n\n".join(chunk.plain for chunk in chunks) != text:
+        raise TelegramError("message renderer changed answer bytes")
+    return tuple(chunks)
+
+
 def split_message(text: str, limit: int = 4096) -> tuple[str, ...]:
     """Split without changing bytes, preferring paragraph and line boundaries."""
     if not text:
@@ -382,7 +502,7 @@ class TelegramAdapter:
                         "Please wait before asking again.")
                 else:
                     future = pool.submit(self._answer, question)
-                    response = future.result()
+                    response = self._await_answer(incoming, future)
                 self._send(incoming, response)
                 self.offset_store.save(update_id + 1)
                 checkpoint = update_id + 1
@@ -554,20 +674,16 @@ class TelegramAdapter:
             self._install_handoff(incoming, outgoing)
             return
         reply_to = incoming.message_id
-        for chunk in split_message(outgoing.text):
-            payload = {
-                "chat_id": incoming.chat_id, "text": chunk,
-                "reply_parameters": {
-                    "message_id": reply_to,
-                    "allow_sending_without_reply": False,
-                },
-                "link_preview_options": {"is_disabled": True},
-            }
-            if incoming.thread_id is not None:
-                payload["message_thread_id"] = incoming.thread_id
-            sent = self.api.call("sendMessage", payload)
-            if isinstance(sent, dict) and isinstance(sent.get("message_id"), int):
-                reply_to = sent["message_id"]
+        # Engine answers for humans carry cosmetic entity rendering; peer
+        # bots and command replies keep exact plain bytes.
+        rendered = (format_message(outgoing.text)
+                    if outgoing.rich and not incoming.peer_bot else None)
+        if rendered is None:
+            for chunk in split_message(outgoing.text):
+                reply_to = self._send_chunk(incoming, chunk, reply_to)
+        else:
+            for chunk in rendered:
+                reply_to = self._send_rendered(incoming, chunk, reply_to)
         self._install_handoff(incoming, outgoing)
 
     def _send_rich(self, incoming: Incoming, outgoing: Outgoing) -> bool:
@@ -590,14 +706,80 @@ class TelegramAdapter:
             return False
         return True
 
+    def _send_chunk(self, incoming: Incoming, text: str, reply_to: int,
+                    parse_mode: str | None = None,
+                    buttons: tuple[tuple[str, str], ...] = ()) -> int:
+        payload = {
+            "chat_id": incoming.chat_id, "text": text,
+            "reply_parameters": {
+                "message_id": reply_to,
+                "allow_sending_without_reply": False,
+            },
+            "link_preview_options": {"is_disabled": True},
+        }
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
+        if buttons:
+            payload["reply_markup"] = {"inline_keyboard": [
+                [{"text": label, "url": url} for label, url in buttons]]}
+        if incoming.thread_id is not None:
+            payload["message_thread_id"] = incoming.thread_id
+        sent = self.api.call("sendMessage", payload)
+        if isinstance(sent, dict) and isinstance(sent.get("message_id"), int):
+            return sent["message_id"]
+        return reply_to
+
+    def _send_rendered(self, incoming: Incoming, chunk: RenderedChunk,
+                       reply_to: int) -> int:
+        # Markup is cosmetic: if Telegram definitively refuses the HTML
+        # rendering, the exact plain bytes still ship, split as any oversized
+        # answer is. Ambiguous transport failures propagate instead, leaving
+        # the update unconfirmed rather than risking a duplicate delivery.
+        try:
+            return self._send_chunk(incoming, chunk.html, reply_to, "HTML",
+                                    chunk.buttons)
+        except TelegramRefused:
+            for piece in split_message(chunk.plain):
+                reply_to = self._send_chunk(incoming, piece, reply_to)
+            return reply_to
+
+    def _await_answer(self, incoming: Incoming, future,
+                      interval: float = 4.5) -> Outgoing:
+        """Collect the engine's answer, refreshing the typing hint meanwhile.
+
+        Telegram shows a chat action for about five seconds, so slow answers
+        need the hint renewed until the reply is ready to send.
+        """
+        if not 0 < interval <= 60:
+            raise TelegramError("typing refresh interval must be within (0, 60]")
+        if incoming.peer_bot:
+            return future.result()
+        while True:
+            self._typing(incoming)
+            try:
+                return future.result(timeout=interval)
+            except FutureTimeout:
+                continue
+
+    def _typing(self, incoming: Incoming) -> None:
+        """Best-effort typing hint; a failure never blocks or delays the answer."""
+        payload = {"chat_id": incoming.chat_id, "action": "typing"}
+        if incoming.thread_id is not None:
+            payload["message_thread_id"] = incoming.thread_id
+        try:
+            self.api.call("sendChatAction", payload)
+        except TelegramError:
+            pass
+
     def _install_handoff(self, incoming: Incoming, outgoing: Outgoing) -> None:
-        if outgoing.pending_handoff is not None:
-            kind, allowed, required = outgoing.pending_handoff
-            handoff_id = hashlib.sha256(
-                f"{incoming.chat_id}:{incoming.user_id}:{incoming.update_id}".encode()
-            ).hexdigest()[:16]
-            self.pending[(incoming.chat_id, incoming.user_id)] = PendingHandoff(
-                handoff_id, kind, tuple(allowed), tuple(required), {})
+        if outgoing.pending_handoff is None:
+            return
+        kind, allowed, required = outgoing.pending_handoff
+        handoff_id = hashlib.sha256(
+            f"{incoming.chat_id}:{incoming.user_id}:{incoming.update_id}".encode()
+        ).hexdigest()[:16]
+        self.pending[(incoming.chat_id, incoming.user_id)] = PendingHandoff(
+            handoff_id, kind, tuple(allowed), tuple(required), {})
 
 
 def main() -> int:
