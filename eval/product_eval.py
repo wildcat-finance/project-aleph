@@ -155,6 +155,8 @@ def _expected_status(mode: RouteMode, corpus_gap: bool) -> set[str]:
         return {"refused"}
     if mode == RouteMode.TRIAGE:
         return {"needs_handoff"}
+    if mode == RouteMode.CLARIFY:
+        return {"needs_input"}
     return {"answered"}
 
 

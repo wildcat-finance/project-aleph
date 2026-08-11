@@ -45,9 +45,10 @@ supplies answer prose.
 | `refuse` | policy only | refusal and optional user-controlled handoff offer |
 | `refuse+point` | policy and destination map | refusal naming the correct owner or tool |
 | `triage` | policy only | the minimum fields needed for a later human handoff |
+| `clarify` | policy only | one request for the missing subject or behaviour |
 
 `eval/golden-v1.yaml` is the reviewed routing contract. `test_agent.py` requires
-all 125 questions to enter their expected mode. The rules describe the question
+all 126 questions to enter their expected mode. The rules describe the question
 shapes rather than matching question IDs, so new wording still reaches the same
 policy boundary.
 
@@ -78,7 +79,7 @@ alone.
 
 ## Evaluation boundary
 
-The blocking evaluator runs all 125 golden questions, not a sample. Fixture
+The blocking evaluator runs all 126 golden questions, not a sample. Fixture
 addresses complete live-shaped questions without changing their reviewed route,
 and fixture GraphQL responses pass through `GatewayClient` parsing and the same
 deterministic renderers used by the answer engine. Each live case is executed

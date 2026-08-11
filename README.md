@@ -54,7 +54,7 @@ The checked-in code already provides:
   block, five narrow live operations, and deterministic numeric renderers;
 - policy-first routing over every golden handling mode, entity extraction,
   evidence-supported claim assembly, refusals, and bounded triage payloads;
-- a blocking 125-question product evaluator with deterministic live replay,
+- a blocking 126-question product evaluator with deterministic live replay,
   version isolation, exact claim-support checks, and immutable reports;
 - approval that binds the exact evaluation to a new release identity only when
   every manifest gate is `true`;
@@ -63,7 +63,7 @@ The checked-in code already provides:
   handoff drafts;
 - compare-and-swap activation, immutable switch history, pointer-only rollback,
   scrubbed audit records, runtime composition, and dependency monitoring;
-- a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
+- a 126-question golden set, retrieval labels, and the recorded `bge-m3` model
   comparison; and
 - `sdk-watch.py`, which detects mainnet SDK deployment-map changes without
   changing the corpus.
@@ -181,7 +181,8 @@ The implementation provides:
 
 - a router for the modes already represented in `eval/golden-v1.yaml`:
   `corpus`, `live`, `corpus+live`, premise correction, refusal, refusal with a
-  destination, triage-and-handoff, and the set's one partial-answer case;
+  destination, clarification, triage-and-handoff, and the set's one
+  partial-answer case;
 - entity and version extraction before retrieval or live queries;
 - answer assembly that keeps corpus explanation separate from deterministic live
   values;
@@ -202,7 +203,7 @@ appends the deterministic live block without exposing it to the writer.
 Advice, borrower assessment, inferred intent, unsupported chains, private
 lender lists, and prompt/private-context extraction are refused. Handoffs are
 prepared but never sent without a separate explicit confirmation. The router's
-handling mode matches all 125 reviewed golden questions; answer quality and
+handling mode matches all 126 reviewed golden questions; answer quality and
 claim support are enforced by the blocking stage-5 gate.
 
 ### 5. End-to-end evaluation and promotion gates — implemented
@@ -217,7 +218,7 @@ client. It publishes a content-addressed record under
 
 The implementation provides:
 
-- execution of all 125 golden questions through the real router, retriever,
+- execution of all 126 golden questions through the real router, retriever,
   answer engine, citation resolver, and fixture-backed live tools;
 - blocking checks for citation existence and claim support;
 - version and deployment correctness, including prerelease isolation;
@@ -443,11 +444,11 @@ embed/
   test_embed.py               index and backend behavior checks
 
 eval/
-  golden-v1.yaml              125 questions and expected handling modes
+  golden-v1.yaml              126 questions and expected handling modes
   labels.yaml                 retrieval labels for consequential questions
   embed_compare.py            Markdown-only model comparison harness
   retrieval_eval.py           labels against an immutable release retriever
-  product_eval.py             blocking 125-question product evaluation
+  product_eval.py             blocking 126-question product evaluation
   live-fixture-v1.json        deterministic typed promotion fixture
   RUNBOOK.md                  recorded model decision and rerun procedure
 

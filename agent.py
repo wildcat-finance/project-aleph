@@ -26,6 +26,7 @@ class RouteMode(str, Enum):
     REFUSE_POINT = "refuse+point"
     TRIAGE = "triage"
     PARTIAL = "partial"
+    CLARIFY = "clarify"
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,15 @@ class Router:
         r"track loan history.*original deposit.*current balance|"
         r"findings from the audit.*resolved|do you have a discord|"
         r"checking on the platform every day", re.I)
+    _underspecified_followup = re.compile(
+        r"^\s*(?:"
+        r"why\s+(?:is|does|did)\s+(?:it|this|that)\s+"
+        r"(?:do(?:ing|es|ne)?\s+)?(?:it|this|that|so|again)"
+        r"(?:\s+again)?|"
+        r"why\s+did\s+(?:it|this|that)\s+happen(?:\s+again)?|"
+        r"how\s+does\s+(?:it|this|that)\s+work|"
+        r"what\s+does\s+(?:it|this|that)\s+mean"
+        r")\s*[?.!]*\s*$", re.I)
     _domain = re.compile(
         r"wildcat|protocol|market|borrow|lender|withdr|deposit|repa(?:y|id)|"
         r"interest|\bapr\b|rate|reserve|delinquen|penalt|claim|cycle|capacity|"
@@ -316,6 +326,10 @@ class Router:
         if live:
             return Route(RouteMode.LIVE, "current public state", entities,
                          live_operation=self._operation(question))
+        if (self._underspecified_followup.search(question)
+                and not self._domain.search(question)):
+            return Route(RouteMode.CLARIFY, "underspecified follow-up", entities,
+                         refusal_reason="missing_context")
         if not self._domain.search(question):
             return Route(RouteMode.REFUSE_POINT, "outside Wildcat scope", entities,
                          destination="Wildcat support",
@@ -435,6 +449,12 @@ class AnswerEngine:
 
     def answer(self, question: str) -> Answer:
         route = self.router.route(question)
+        if route.mode == RouteMode.CLARIFY:
+            return Answer(
+                status="needs_input", mode=route.mode,
+                text=("I need the subject and behaviour you mean before I can "
+                      "answer with evidence."),
+                route=route, refusal_reason="missing_context")
         if route.mode == RouteMode.REFUSE:
             return self._refusal(route)
         if route.mode == RouteMode.REFUSE_POINT:

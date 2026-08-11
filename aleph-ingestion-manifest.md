@@ -227,7 +227,8 @@ with the named corpus bytes and refuses synthesized retrieval aids as quotes.
 
 ## 9. Evaluation
 
-`eval/golden-v1.yaml` contains 125 questions clustered from support traffic.
+`eval/golden-v1.yaml` contains 125 questions clustered from support traffic plus
+one human-reviewed synthetic Project Null routing regression.
 `eval/labels.yaml` supplies retrieval labels for 25 consequential corpus
 questions. Nine entries identify genuine corpus gaps rather than pretending a
 retrieval model can answer from absent documentation.
