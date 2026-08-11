@@ -11,7 +11,7 @@ from typing import Callable, Protocol
 
 from live import GatewayUnavailable, LiveError, RenderedLive, render_live
 from retrieval import (Citation, CitationError, Evidence, RetrievalError,
-                       RetrievalRequest, ScopeError)
+                       RetrievalRequest, ScopeError, expand_query)
 
 
 class AnswerError(Exception):
@@ -291,7 +291,7 @@ class Router:
             r"(?:[,;]\s*|\band\s+)explain(?:\s+(?:it|this|that))?"
             r"(?:\s+to me)?\s+(?:like|as if)\b.*$", "", question,
             flags=re.I).strip(" \t,;:.-")
-        return focused or question
+        return expand_query(focused or question)
 
     def route(self, question: str) -> Route:
         if not question.strip():
