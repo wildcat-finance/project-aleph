@@ -143,6 +143,11 @@ def run(tmp: pathlib.Path) -> None:
           apr_correction.mode == agent.RouteMode.CORRECT
           and "borrower can change APR" in router.evidence_query(
               "Has Wildcat changed the APR on my market?", apr_correction))
+    batch_loss = (
+        "I queued 1,000 market tokens and got less back. Is the invariant broken?")
+    check("withdrawal-loss evidence and claim selection share one expansion",
+          "scaled tokens distributed evenly" in router.evidence_query(
+              batch_loss, router.route(batch_loss)))
 
     lender = test_live.LENDER
     borrower = test_live.BORROWER

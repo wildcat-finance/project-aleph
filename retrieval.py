@@ -196,7 +196,7 @@ def _terms(text: str) -> list[str]:
     return [_normalise_term(term) for term in _TOKEN.findall(text)]
 
 
-def _expand_query(query: str) -> str:
+def expand_query(query: str) -> str:
     """Map one reviewed user idiom to the protocol vocabulary it omits.
 
     Users describe the withdrawal-batch interest-sharing rule as queueing a
@@ -206,6 +206,8 @@ def _expand_query(query: str) -> str:
     thresholds, or answer prose.
     """
     lower = query.casefold()
+    if "scaled tokens distributed evenly" in lower:
+        return query
     nominal_loss = (
         re.search(r"\bqueu(?:e|ed|ing)\b", lower)
         and re.search(r"\b(?:got|received?|getting)\b.*\b(?:less|fewer)\b", lower)
@@ -351,7 +353,7 @@ class Retriever:
         request.validate()
         artifact, version = self._select(request)
         embedder = self.embedders[version]
-        query = _expand_query(request.query)
+        query = expand_query(request.query)
         vector = embedder.embed([query], kind="query")[0]
         identity = embedder.identity()
         results: dict[str, tuple[Evidence, ...]] = {}
