@@ -260,6 +260,7 @@ needs correction.
 ## License
 
 Project Aleph is licensed under the [Apache License 2.0](LICENSE).
+Copyright 2026 Wildcat Labs.
 
 ---
 
