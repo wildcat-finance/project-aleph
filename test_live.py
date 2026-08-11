@@ -125,6 +125,18 @@ class FakeTransport:
                              "totalDeposited": "5000000",
                              "totalInterestEarned": "12000",
                              "numPendingWithdrawalBatches": 2, "role": "Null"}]}
+            data["market"]["lenders"][0]["withdrawals"] = [
+                {"scaledAmount": "2000000",
+                 "normalizedAmountWithdrawn": "500000",
+                 "isCompleted": False,
+                 "batch": {"scaledTotalAmount": "4000000",
+                           "normalizedAmountPaid": "3000000"}},
+                {"scaledAmount": "1000000",
+                 "normalizedAmountWithdrawn": "0",
+                 "isCompleted": False,
+                 "batch": {"scaledTotalAmount": "2000000",
+                           "normalizedAmountPaid": "500000"}},
+            ]
         elif "query Withdrawals(" in query:
             data["market"] = {
                 "id": MARKET, "name": "Example Market",
@@ -203,6 +215,8 @@ def run(tmp: pathlib.Path) -> None:
     check("every typed result propagates the observed block and release",
           all(result.block_number == 100 and result.gateway_release == "v2.0.30"
               for result in (market, registry, account, withdrawals, borrower)))
+    check("account claimable is allocated exactly across pending batches",
+          account.value.claimable_withdrawals == 1_250_000)
     smoke_transport = FakeTransport()
     smoke = gateway_smoke.check(
         str(manifest), client=live.GatewayClient(
@@ -246,12 +260,31 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("the client never falls back when its dedicated token is absent",
           "token is absent" in refused and not no_token.post_calls, refused)
+    class IncompleteAccountTransport(FakeTransport):
+        def post_json(self, url: str, body: dict, token: str) -> dict:
+            payload = super().post_json(url, body, token)
+            if "query Account(" in body["query"]:
+                payload["data"]["market"]["lenders"][0][
+                    "numPendingWithdrawalBatches"] = 3
+            return payload
+    incomplete = IncompleteAccountTransport()
+    refused = ""
+    try:
+        live.GatewayClient(
+            str(manifest), incomplete, "test").account(MARKET, LENDER)
+    except live.LiveError as error:
+        refused = str(error)
+    check("an incomplete account withdrawal page fails closed",
+          "2 of 3 pending withdrawal batches" in refused, refused)
 
     print("\nL4 — numeric and state prose is produced only by deterministic code")
     rendered_market = live.render_live(market)
+    rendered_account = live.render_live(account)
     rendered_withdrawals = live.render_live(withdrawals)
     check("integer token units are formatted without floating point",
-          "123.456789 USDC" in rendered_market.text, rendered_market.text)
+          "123.456789 USDC" in rendered_market.text
+          and "Claimable withdrawals: 1.25 USDC" in rendered_account.text,
+          rendered_account.text)
     check("basis points and durations have stable exact formatting",
           "APR: 11.25%" in rendered_market.text
           and "Time delinquent: 1h 1m 1s" in rendered_market.text)
