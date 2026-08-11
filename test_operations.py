@@ -120,8 +120,12 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("a raw candidate with a null eval gate is refused",
           "not promotable" in refused, refused)
-    first_pointer = store.activate(
-        first["release_id"], "operator@example", "initial production release")
+    previous_umask = os.umask(0o077)
+    try:
+        first_pointer = store.activate(
+            first["release_id"], "operator@example", "initial production release")
+    finally:
+        os.umask(previous_umask)
     active_path, active, loaded = store.load_active()
     check("activation atomically points at the exact promotable bytes",
           active["release_id"] == first["release_id"]
@@ -133,6 +137,12 @@ def run(tmp: pathlib.Path) -> None:
           and activation_record["reason"] == "initial production release"
           and activation_record["evaluation_id"] == first["evaluation"]["evaluation_id"]
           and activation_record["previous_release_id"] is None)
+    check("hardened operator umask still publishes runtime-readable metadata",
+          stat.S_IMODE(pointer_path.parent.stat().st_mode) == 0o755
+          and stat.S_IMODE(pointer_path.stat().st_mode) == 0o444
+          and stat.S_IMODE(activation_path.parents[1].stat().st_mode) == 0o755
+          and stat.S_IMODE(activation_path.parent.stat().st_mode) == 0o555
+          and stat.S_IMODE(activation_path.stat().st_mode) == 0o444)
     refused = ""
     try:
         store.activate(second["release_id"], "operator", "race",
@@ -158,6 +168,11 @@ def run(tmp: pathlib.Path) -> None:
           rollback_record["kind"] == "rollback"
           and rollback_record["previous_release_id"] == second["release_id"]
           and (root / "releases" / second["release_id"]).is_dir())
+    rollback_path = root / rollback_pointer["activation_path"]
+    check("rollback publishes the same read-only runtime handoff",
+          stat.S_IMODE(pointer_path.stat().st_mode) == 0o444
+          and stat.S_IMODE(rollback_path.parent.stat().st_mode) == 0o555
+          and stat.S_IMODE(rollback_path.stat().st_mode) == 0o444)
 
     original_verifier = activation.verify_tool_hashes
     activation.verify_tool_hashes = lambda expected: (_ for _ in ()).throw(
@@ -177,6 +192,7 @@ def run(tmp: pathlib.Path) -> None:
     original_pointer = pointer_path.read_bytes()
     damaged = json.loads(pointer_path.read_text())
     damaged["release_id"] = second["release_id"]
+    pointer_path.chmod(0o644)
     pointer_path.write_text(json.dumps(damaged))
     refused = ""
     try:
@@ -186,6 +202,7 @@ def run(tmp: pathlib.Path) -> None:
     check("pointer corruption is detected before serving",
           "disagree" in refused, refused)
     pointer_path.write_bytes(original_pointer)
+    pointer_path.chmod(0o444)
 
     print("\nO3 — audit records preserve provenance and discard content")
     logger = audit.AuditLogger(
