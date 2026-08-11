@@ -104,6 +104,14 @@ HTML7_LINE = re.compile(
     rb"^ {0,3}(?:<([A-Za-z][A-Za-z0-9-]*)(?:" + _ATTR + rb")*[ \t]*/?>"
     rb"|</([A-Za-z][A-Za-z0-9-]*)[ \t]*>)[ \t]*$")
 CODE_SPAN = re.compile(rb"(`+)(.+?)\1")
+# Some pinned protocol notes use a standalone strong paragraph as a visible
+# section title instead of a Markdown heading. GitBook renders no anchor for
+# it, but treating six such titles as one section created a multi-topic
+# citation chunk. Keep this deliberately narrow: one complete strong span,
+# alone in a top-level paragraph, with no nested emphasis marker.
+STRONG_SECTION = re.compile(
+    rb"^ {0,3}(?:\*\*([^*\r\n][^*\r\n]*?)\*\*"
+    rb"|__([^_\r\n][^_\r\n]*?)__)[ \t]*$")
 
 MAX_HEADING_LEVEL = 4          # H5/H6 stay inside their parent section
 
@@ -340,7 +348,8 @@ def _inline_lookahead(lines: list[tuple[int, bytes]], idx: int) -> bytes:
     return b"\n".join(out)
 
 
-def scan_structure(blob: bytes, start: int):
+def scan_structure(blob: bytes, start: int,
+                   strong_sections: list[tuple[int, bytes]] | None = None):
     """
     Return (headings, invisible_spans).
 
@@ -358,6 +367,11 @@ def scan_structure(blob: bytes, start: int):
     valid code span is visible example markup and is not recorded; both kinds
     inside type 6/7 raw-HTML blocks are invisible in exactly the way bare
     ones are, so they are.
+
+    When `strong_sections` is supplied, it receives standalone bold paragraph
+    boundaries found by this same state machine. The optional output preserves
+    the long-standing two-value return contract for callers that only need
+    renderer headings and invisible spans.
     """
     headings: list[tuple[int, int, bytes]] = []
     comments: list[tuple[int, int]] = []
@@ -519,6 +533,17 @@ def scan_structure(blob: bytes, start: int):
             if not container_blank:
                 continue          # lazy continuation of the container's paragraph
             container_open = False  # blank line then unindented text ends it
+
+        # A complete strong span at the start of a top-level paragraph is a
+        # reviewed pseudo-heading convention in the pinned protocol notes.
+        # It is tested here, after fences/comments/HTML/containers have been
+        # excluded, so examples and list emphasis cannot become boundaries.
+        if strong_sections is not None and not para:
+            strong = STRONG_SECTION.match(sline)
+            if strong:
+                strong_sections.append((offset,
+                                        strong.group(1) or strong.group(2)))
+                continue
 
         para.append((offset, sline))
 
@@ -705,7 +730,15 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
     blob = path.read_bytes()
     rel = str(path.relative_to(root))
     front, body_start = split_frontmatter(blob)
-    headings, comments = scan_structure(blob, body_start)
+    strong_sections: list[tuple[int, bytes]] = []
+    headings, comments = scan_structure(blob, body_start, strong_sections)
+    # Mixed documents already have authoritative renderer boundaries. A bold
+    # paragraph within one of those sections may be a parameter label, callout
+    # or signature field rather than a new topic. The reviewed convention is
+    # limited to headingless notes whose visible structure consists of
+    # repeated strong titles (Known Issues is the motivating pinned source).
+    if headings:
+        strong_sections = []
     ancestors = (hierarchy or {}).get(rel, [])
 
     # Anchors are assigned over every rendered heading, in order, before any
@@ -715,22 +748,45 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
     # that skipped headings the size filter later discarded.
     anchor_of = assign_anchors(headings)
 
-    boundary = [(o, l, r) for o, l, r in headings if l <= MAX_HEADING_LEVEL]
-    spans: list[tuple[int, int, int, str, str | None]] = []
+    # Strong section titles have no renderer anchor. Give each one a logical
+    # level immediately below the active real heading, or level 1 in a
+    # headingless note. This preserves useful breadcrumbs without inventing a
+    # fragment identifier that GitBook does not serve.
+    boundary: list[tuple[int, int, bytes, str | None, str]] = []
+    active: dict[int, str] = {}
+    strong_by_offset = dict(strong_sections)
+    for off, kind, payload in sorted(
+            [(o, "heading", (l, r)) for o, l, r in headings
+             if l <= MAX_HEADING_LEVEL]
+            + [(o, "strong", raw) for o, raw in strong_sections],
+            key=lambda item: item[0]):
+        if kind == "heading":
+            level, raw = payload
+            active[level] = heading_text(raw)
+            for deeper in [k for k in active if k > level]:
+                active.pop(deeper)
+            boundary.append((off, level, raw, anchor_of[off], "heading"))
+        else:
+            raw = strong_by_offset[off]
+            level = min((max(active) + 1) if active else 1,
+                        MAX_HEADING_LEVEL)
+            boundary.append((off, level, raw, None, "strong"))
+
+    spans: list[tuple[int, int, int, str, str | None, str]] = []
     if boundary and boundary[0][0] > body_start:
-        spans.append((body_start, boundary[0][0], 0, "", None))
+        spans.append((body_start, boundary[0][0], 0, "", None, "intro"))
     elif not boundary:
-        spans.append((body_start, len(blob), 0, "", None))
-    for i, (off, level, raw) in enumerate(boundary):
+        spans.append((body_start, len(blob), 0, "", None, "intro"))
+    for i, (off, level, raw, anchor, style) in enumerate(boundary):
         end = boundary[i + 1][0] if i + 1 < len(boundary) else len(blob)
-        spans.append((off, end, level, heading_text(raw), anchor_of[off]))
+        spans.append((off, end, level, heading_text(raw), anchor, style))
 
     # Chunk IDs are counted over the same pre-filter span list, so which ID a
     # section gets does not depend on whether its earlier namesake happened to
     # clear the size filter.
     seen_ids: dict[str, int] = {}
     uids: list[str] = []
-    for start, end, level, text, anchor in spans:
+    for start, end, level, text, anchor, style in spans:
         base = f"{rel}#{anchor or (gitbook_id(text) or 'section') if text else 'intro'}"
         n = seen_ids.get(base, 0)
         seen_ids[base] = n + 1
@@ -739,7 +795,7 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
     chunks: list[Chunk] = []
     trail: dict[int, str] = {}
 
-    for (start, end, level, text, anchor), uid in zip(spans, uids):
+    for (start, end, level, text, anchor, style), uid in zip(spans, uids):
         # The trail is updated BEFORE the size filter. Doing it after meant a
         # heading whose own body was too short never entered the trail, so its
         # descendants inherited their grandparent instead — 309 of 452 live
@@ -778,6 +834,7 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                 "heading_path": heading_path,
                 "nav_path": ancestors,
                 "anchor": anchor,
+                "boundary_style": style,
                 "description": front.get("description"),
                 "effective_date": front.get("effective_date"),
                 "doc_version": front.get("doc_version"),
@@ -820,13 +877,15 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
 
     # A document with headings is worth indexing even when no single section
     # clears the size filter — five navigation pages were dropped entirely.
-    if chunks or headings or front.get("description"):
+    if chunks or headings or strong_sections or front.get("description"):
         chunks.append(document_index(rel, front, headings, ancestors,
-                                     line_number(blob, body_start)))
+                                     line_number(blob, body_start),
+                                     strong_sections=strong_sections))
     return chunks
 
 
-def document_index(rel, front, headings, ancestors, line) -> Chunk:
+def document_index(rel, front, headings, ancestors, line,
+                   strong_sections=()) -> Chunk:
     """
     One synthesised chunk per document listing its headings.
 
@@ -835,6 +894,7 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
     answerable from any single function. Assembled, so it is flagged.
     """
     lines = [f"{'  ' * (lvl - 1)}{heading_text(raw)}" for _, lvl, raw in headings]
+    lines.extend(heading_text(raw) for _, raw in strong_sections)
     desc = front.get("description") or ""
     nav = " › ".join(ancestors)
     body = (f"{rel} — contents\n\n"
@@ -858,7 +918,8 @@ def document_index(rel, front, headings, ancestors, line) -> Chunk:
                 "effective_date": front.get("effective_date"),
                 "doc_version": front.get("doc_version"),
                 "nav_path": ancestors,
-                "heading_count": len(headings)},
+                "heading_count": len(headings) + len(strong_sections),
+                "strong_section_count": len(strong_sections)},
     )
 
 

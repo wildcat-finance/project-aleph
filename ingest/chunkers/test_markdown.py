@@ -864,6 +864,41 @@ def test_template_chrome() -> None:
           repr((model, spans)))
 
 
+def test_strong_section_boundaries() -> None:
+    print("\nM24 — standalone strong paragraphs are reviewed section boundaries")
+    doc = ("**Avoiding delinquency fees**\n\n"
+           "Closing a penalized market changes the remaining timer behavior. "
+           "This sentence makes the first issue long enough to retain.\n\n"
+           "**Bad hooks implementations**\n\n"
+           "A reverting hook can disable the corresponding market function. "
+           "This sentence makes the second issue long enough to retain.\n")
+    chunks = [c for c in chunk_text(doc) if not c.synthesised]
+    check("each bold-titled issue becomes one chunk",
+          [c.detail.get("heading") for c in chunks]
+          == ["Avoiding delinquency fees", "Bad hooks implementations"],
+          str([c.detail.get("heading") for c in chunks]))
+    check("a pseudo-heading never invents a GitBook anchor",
+          all(c.detail.get("anchor") is None for c in chunks))
+    check("the exact strong markup remains citable",
+          chunks[0].display_text.startswith("**Avoiding delinquency fees**"))
+    check("one issue cannot bleed into the other",
+          "Bad hooks" not in chunks[0].model_text
+          and "delinquency" not in chunks[1].model_text)
+    check("the boundary convention is machine-visible",
+          all(c.detail.get("boundary_style") == "strong" for c in chunks))
+
+    protected = (
+        "# Real\n\n" + LONG + "\n\n"
+        "```md\n**Inside a fence**\n```\n\n"
+        "- **Inside a list**\n\n"
+        "ordinary paragraph\n**Not separated from its paragraph**\n\n"
+        "Trailing prose that is long enough for the real section to survive.\n")
+    protected_chunks = [c for c in chunk_text(protected) if not c.synthesised]
+    check("code, list emphasis, and paragraph emphasis do not split",
+          [c.detail.get("heading") for c in protected_chunks] == ["Real"],
+          str([c.detail.get("heading") for c in protected_chunks]))
+
+
 # --------------------------------------------------------------------------
 
 def main() -> int:
@@ -901,6 +936,7 @@ def main() -> int:
         test_coverage_counts_emitted_documents(pathlib.Path(td), capture)
     test_lazy_list_continuation()
     test_multiline_code_span()
+    test_strong_section_boundaries()
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
 
