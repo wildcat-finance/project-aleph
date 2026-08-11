@@ -31,7 +31,7 @@ meta:
   version: 1
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; 1 reviewed synthetic Project Null probe
   period: 2025-02-13 – 2026-08-05
-  count: 126
+  count: 133
   corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -865,6 +865,37 @@ questions:
   provenance: user_requested_easter_egg
   note: Flip a fair coin, return one of the two reviewed confident verdicts, and refuse
     to elaborate. Do not retrieve, cite, read live state, clarify, or offer a handoff.
+
+  # ====================================================================
+  # P. Addressed live-market objects
+  # ====================================================================
+- id: p01
+  question: '0x1111111111111111111111111111111111111111'
+  expected: live
+  provenance: developer_room_regression
+  note: A bare market contract is an explicit live object, not a corpus query.
+- id: p02
+  question: https://app.wildcat.finance/lender/market/0x1111111111111111111111111111111111111111?chainId=1
+  expected: live
+  provenance: developer_room_regression
+- id: p03
+  question: What can you tell me about this market https://app.wildcat.finance/lender/market/0x1111111111111111111111111111111111111111?chainId=1
+  expected: live
+  provenance: developer_room_regression
+- id: p04
+  question: What's the APR for market 0x1111111111111111111111111111111111111111?
+  expected: live
+  provenance: developer_room_regression
+- id: p05
+  question: How long is the grace period for market 0x1111111111111111111111111111111111111111?
+  expected: live
+  provenance: developer_room_regression
+- id: p06
+  question: What is the reserve ratio?
+  expected: live
+  provenance: developer_room_regression
+  note: The route is live before the address is supplied; the answer asks for exactly the
+    market contract and retrieves no corpus prose.
 what_v0_missed:
 - 'Volume is not where I guessed. The largest single category in the public channel is not
   protocol questions at all — it is BD outreach, partnership requests, job applications, listing
