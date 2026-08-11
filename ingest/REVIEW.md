@@ -115,11 +115,12 @@ surface, or document index is synthesized and no ordinary slice is mislabeled.
 
 ### Model/display separation
 
-Verify that comment removal changes only `model_text`, never `display_text`.
-Solidity documentation must be determined from solc's attached documentation
-range rather than comment syntax. Markdown hidden text must not enter model
-context through malformed fences, code spans, raw HTML, lazy continuation, or
-comments.
+Verify that invisible-span removal — HTML comments and GitBook `{% … %}`
+template tags — changes only `model_text`, never `display_text`. Solidity
+documentation must be determined from solc's attached documentation range
+rather than comment syntax. Markdown hidden text must not enter model context
+through malformed fences, code spans, raw HTML, lazy continuation, comments,
+or template tags sharing a line with visible prose.
 
 ### Inheritance and ABI agreement
 

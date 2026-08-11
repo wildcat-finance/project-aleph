@@ -135,6 +135,8 @@ For `wildcat-docs`, `SUMMARY.md` supplies the cross-document GitBook hierarchy
 but is not itself indexed.
 
 The structural pass handles ATX and setext headings, fenced code, HTML comments,
+GitBook `{% … %}` template tags (stripped from model text wherever they sit on a
+line, kept when they are visible example markup inside fences or code spans),
 CommonMark HTML blocks, inline code spans, lazy list and blockquote continuation,
 and CR/CRLF input. It assigns GitBook-style anchors across all headings,
 including headings too small to emit as chunks, so duplicate numbering matches
@@ -151,7 +153,7 @@ Every chunk separates evidence from model input:
 | Field | Contents | Consumer |
 |---|---|---|
 | `display_text` | byte-exact source slice | citation and human display |
-| `model_text` | visible source with non-documentation comments removed | model context |
+| `model_text` | visible source with non-documentation comments and template chrome removed | model context |
 | `embed_text` | model text plus breadcrumb, kind, exposure, and aliases | embedder |
 
 Solidity natspec remains in `model_text` only when solc attaches it as

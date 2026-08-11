@@ -62,6 +62,13 @@ THEMATIC = re.compile(rb"^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$")
 BLOCKQUOTE = re.compile(rb"^ {0,3}>")
 LIST_ITEM = re.compile(rb"^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)")
 TEMPLATE_LINE = re.compile(rb"^ {0,3}\{%")        # GitBook {% hint %} etc.
+# A complete GitBook template tag anywhere on a line. GitBook's templating
+# runs before rendering, so tag bytes never reach the published page — even
+# when a tag shares its line with visible prose, which is how a live corpus
+# chunk carried `{% hint style="info" %} **prose** … {% endhint %}` into an
+# answer. An unclosed `{%` matches nothing and stays literal text: the
+# fail-safe direction, matching the code-span rule above.
+TEMPLATE_TAG = re.compile(rb"\{%.*?%\}")
 INDENTED_CODE = re.compile(rb"^(?: {4}|\t)")
 
 # CommonMark HTML blocks. Type 1 runs to an explicit closing tag; types 3-5 to
@@ -297,6 +304,21 @@ def _scan_comments(line: bytes, offset: int, in_comment: bool,
             pos = begin + 4
 
 
+def _scan_templates(line: bytes, offset: int,
+                    templates: list[tuple[int, int]],
+                    code_ranges: list[tuple[int, int]]) -> None:
+    """
+    Record complete GitBook template tags on one line as (start, end) byte
+    spans. `line` is the structure line with comment bytes already blanked,
+    so a tag inside a comment is never recorded twice, and a tag inside a
+    valid code span is visible example markup and is skipped.
+    """
+    for m in TEMPLATE_TAG.finditer(line):
+        if any(a <= m.start() < b for a, b in code_ranges):
+            continue
+        templates.append((offset + m.start(), offset + m.end()))
+
+
 def _inline_lookahead(lines: list[tuple[int, bytes]], idx: int) -> bytes:
     """
     The rest of the current block, for deciding whether a backtick delimiter
@@ -320,7 +342,7 @@ def _inline_lookahead(lines: list[tuple[int, bytes]], idx: int) -> bytes:
 
 def scan_structure(blob: bytes, start: int):
     """
-    Return (headings, comment_spans).
+    Return (headings, invisible_spans).
 
     headings: [(offset, level, text)] for every heading that is genuinely a
     heading — outside fences, comments and raw HTML blocks — at every level 1
@@ -328,14 +350,18 @@ def scan_structure(blob: bytes, start: int):
     must be counted over all of them, because the renderer numbers duplicates
     over what it renders, not over what this chunker later keeps.
 
-    comment_spans: [(start, end)] byte ranges of HTML comments that a reader
-    of the rendered page cannot see, for removal from model_text by span.
-    Comments inside fenced code are visible example markup and are not
-    recorded; comments inside type 6/7 raw-HTML blocks are invisible in
-    exactly the way bare comments are, so they are.
+    invisible_spans: sorted [(start, end)] byte ranges that a reader of the
+    rendered page cannot see, for removal from model_text by span: HTML
+    comments, and complete GitBook `{% … %}` template tags, whose bytes the
+    templating pass consumes before the page renders — wherever they sit on a
+    line, not only when they open it. Either kind inside fenced code or a
+    valid code span is visible example markup and is not recorded; both kinds
+    inside type 6/7 raw-HTML blocks are invisible in exactly the way bare
+    ones are, so they are.
     """
     headings: list[tuple[int, int, bytes]] = []
     comments: list[tuple[int, int]] = []
+    templates: list[tuple[int, int]] = []
 
     fence_char, fence_len = b"", 0
     in_comment, comment_start = False, -1
@@ -387,14 +413,19 @@ def scan_structure(blob: bytes, start: int):
             if not line.strip():
                 html_until_blank = False
                 continue
-            # comments inside the block are still invisible text
-            _, in_comment, comment_start, open_ticks = _scan_comments(
+            # comments and template tags inside the block are invisible text;
+            # markdown inline rules do not apply here, so no code spans shield
+            sline, in_comment, comment_start, open_ticks = _scan_comments(
                 line, offset, False, comment_start, comments, open_ticks, ahead)
+            _scan_templates(sline, offset, templates, [])
             continue
 
         # -- normal state -----------------------------------------------------
+        prev_ticks = open_ticks
         sline, in_comment, comment_start, open_ticks = _scan_comments(
             line, offset, False, comment_start, comments, open_ticks, ahead)
+        _scan_templates(sline, offset, templates,
+                        _code_span_ranges(sline, prev_ticks, ahead)[0])
 
         if not sline.strip():
             para = []
@@ -494,22 +525,23 @@ def scan_structure(blob: bytes, start: int):
     if in_comment:
         # unterminated: everything from the opener onward is comment
         comments.append((comment_start, len(blob)))
-    return headings, comments
+    return headings, sorted(comments + templates)
 
 
-def strip_comments_by_span(blob: bytes, chunk_start: int, chunk_end: int,
-                           comments) -> str:
+def strip_invisible_spans(blob: bytes, chunk_start: int, chunk_end: int,
+                          spans) -> str:
     """
-    Remove HTML comments from a chunk using spans found by the structural scan.
+    Remove reader-invisible bytes — HTML comments and GitBook template tags —
+    from a chunk using spans found by the structural scan.
 
     A regex over the chunk cannot do this: a comment opening before the chunk
     and closing inside it leaves an orphan `-->` and, worse, leaves the comment
-    body looking like ordinary prose. Comments inside fenced code are not in
-    `comments` at all, so example markup shown to a reader survives intact.
+    body looking like ordinary prose. Spans inside fenced code are not in
+    `spans` at all, so example markup shown to a reader survives intact.
     """
     keep: list[bytes] = []
     cursor = chunk_start
-    for c_start, c_end in comments:
+    for c_start, c_end in spans:
         if c_end <= chunk_start or c_start >= chunk_end:
             continue
         s = max(c_start, chunk_start)
@@ -718,7 +750,7 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
                 trail.pop(deeper)
 
         body = blob[start:end].decode("utf-8", "replace")
-        model = strip_comments_by_span(blob, start, end, comments)
+        model = strip_invisible_spans(blob, start, end, comments)
         # A section whose visible content is empty — all HTML comment, say —
         # quotes nothing while still taking an index slot and a citation.
         if not model.strip():
@@ -759,7 +791,7 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
     # one — so when nothing survived, the whole body is the chunk.
     if not chunks:
         whole = blob[body_start:].decode("utf-8", "replace")
-        whole_model = strip_comments_by_span(blob, body_start, len(blob),
+        whole_model = strip_invisible_spans(blob, body_start, len(blob),
                                              comments)
         if whole_model.strip():
             chunks.append(Chunk(

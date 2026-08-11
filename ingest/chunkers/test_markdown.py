@@ -759,14 +759,14 @@ def test_multiline_code_span() -> None:
             b"and ends`` after.\n")
     _, comments = md.scan_structure(blob, 0)
     check("no comment is recorded inside the span", comments == [], str(comments))
-    model = md.strip_comments_by_span(blob, 0, len(blob), comments)
+    model = md.strip_invisible_spans(blob, 0, len(blob), comments)
     check("the visible text survives into model_text",
           "visible literal inside code" in model, repr(model))
 
     # and a genuine comment on the far side of the span is still removed
     blob2 = (b"``open\nclose`` then <!-- really a comment --> tail\n")
     _, c2 = md.scan_structure(blob2, 0)
-    model2 = md.strip_comments_by_span(blob2, 0, len(blob2), c2)
+    model2 = md.strip_invisible_spans(blob2, 0, len(blob2), c2)
     check("a real comment after the span is still stripped",
           "really a comment" not in model2 and "tail" in model2, repr(model2))
 
@@ -782,7 +782,7 @@ def test_multiline_code_span() -> None:
          b"open ` here\n\nlater ` tick <!-- HIDDEN --> tail\n"),
     ]:
         _, spans = md.scan_structure(doc, 0)
-        model = md.strip_comments_by_span(doc, 0, len(doc), spans)
+        model = md.strip_invisible_spans(doc, 0, len(doc), spans)
         check(f"{name}: the comment is still found and removed",
               "HIDDEN" not in model, repr(model))
         check(f"{name}: the visible prose survives",
@@ -792,6 +792,76 @@ def test_multiline_code_span() -> None:
     check("an unmatched delimiter does not swallow the next heading",
           [(l, md.heading_text(r)) for _, l, r in h] == [(1, "Real Heading")],
           str(h))
+
+
+def test_template_chrome() -> None:
+    print("\nM23 — GitBook template chrome never reaches model text")
+    doc = (
+        "# Day-To-Day Usage\n"
+        "\n"
+        '{% hint style="info" %} **This Gitbook recently underwent '
+        "substantial changes.**\n"
+        "\n"
+        "Fire a message to the maintainer and watch it happen! "
+        "{% endhint %}\n"
+        "\n"
+        "# Examples\n"
+        "\n"
+        "Prose introducing the example, long enough to clear the size "
+        "filter comfortably.\n"
+        "\n"
+        "```text\n"
+        '{% hint style="info" %} shown literally inside a fence '
+        "{% endhint %}\n"
+        "```\n"
+        "\n"
+        "Inline `{% raw %}` stays visible, and an unclosed {% opener stays "
+        "literal prose.\n"
+        "\n"
+        "{% tabs %}\n"
+        "Visible tab content survives while the wrapper chrome disappears.\n"
+        "{% endtabs %}\n")
+    chunks = chunk_text(doc)
+    usage = next(c for c in chunks if c.detail["heading"] == "Day-To-Day Usage")
+    examples = next(c for c in chunks if c.detail["heading"] == "Examples")
+    check("the production hint block keeps its prose and loses its tags",
+          "{%" not in usage.model_text
+          and "**This Gitbook recently underwent substantial changes.**"
+          in usage.model_text
+          and "Fire a message to the maintainer" in usage.model_text,
+          repr(usage.model_text))
+    check("display_text still quotes the file byte-for-byte",
+          '{% hint style="info" %}' in usage.display_text
+          and "{% endhint %}" in usage.display_text
+          and usage.model_text
+          == usage.display_text.replace('{% hint style="info" %}', "")
+                               .replace("{% endhint %}", ""),
+          repr(usage.display_text))
+    check("tags inside a fence remain visible example markup",
+          '{% hint style="info" %} shown literally inside a fence '
+          "{% endhint %}" in examples.model_text, repr(examples.model_text))
+    check("tags inside a code span remain visible; an unclosed {% is literal",
+          "`{% raw %}`" in examples.model_text
+          and "an unclosed {% opener stays literal prose"
+          in examples.model_text, repr(examples.model_text))
+    check("whole-line wrapper chrome disappears while its content survives",
+          "{% tabs %}" not in examples.model_text
+          and "{% endtabs %}" not in examples.model_text
+          and "Visible tab content survives" in examples.model_text,
+          repr(examples.model_text))
+    check("embed_text inherits the clean model text",
+          "{% tabs %}" not in examples.embed_text)
+
+    blob = b"Prose <!-- {% hidden %} --> tail {% gone %} end\n"
+    _, spans = md.scan_structure(blob, 0)
+    model = md.strip_invisible_spans(blob, 0, len(blob), spans)
+    check("a tag inside a comment is stripped once, with the comment",
+          model == "Prose  tail  end\n"
+          and spans == sorted(spans)
+          and all(a < b for a, b in spans)
+          and all(spans[i][1] <= spans[i + 1][0]
+                  for i in range(len(spans) - 1)),
+          repr((model, spans)))
 
 
 # --------------------------------------------------------------------------
@@ -810,6 +880,7 @@ def main() -> int:
     test_line_endings_and_indentation()
     test_inline_comments()
     test_raw_html_blocks()
+    test_template_chrome()
     test_setext_paragraph_state()
     test_renderer_anchor_algorithm()
     with tempfile.TemporaryDirectory() as td:
