@@ -31,8 +31,11 @@ class FakeAPI:
         self.webhook = webhook
         self.calls = []
         self.sent = []
+        self.rich_sent = []
         self.next_message_id = 1000
         self.fail_send = False
+        self.fail_rich = False
+        self.lose_rich_response = False
 
     def call(self, method: str, payload=None):
         self.calls.append((method, payload or {}))
@@ -47,6 +50,14 @@ class FakeAPI:
             if self.fail_send:
                 raise telegram.TelegramError("fixture send failed")
             self.sent.append(payload)
+            self.next_message_id += 1
+            return {"message_id": self.next_message_id}
+        if method == "sendRichMessage":
+            if self.fail_rich:
+                raise telegram.TelegramRefused("fixture rich send refused")
+            if self.lose_rich_response:
+                raise telegram.TelegramError("fixture rich response lost")
+            self.rich_sent.append(payload)
             self.next_message_id += 1
             return {"message_id": self.next_message_id}
         raise AssertionError(method)
@@ -103,11 +114,12 @@ def update(update_id: int, text: str, *, chat_id: int = 1,
 
 def adapter(tmp: pathlib.Path, engine, api: FakeAPI,
             sink=None, limit: int = 20,
-            peer_bot_ids: tuple[int, ...] = ()) -> telegram.TelegramAdapter:
+            peer_bot_ids: tuple[int, ...] = (),
+            rich_messages: bool = False) -> telegram.TelegramAdapter:
     result = telegram.TelegramAdapter(
         engine, api, telegram.OffsetStore(str(tmp / "offset.json")),
         handoff_sink=sink, max_workers=3, user_limit=limit,
-        peer_bot_ids=peer_bot_ids)
+        peer_bot_ids=peer_bot_ids, rich_messages=rich_messages)
     result.startup()
     return result
 
@@ -149,6 +161,59 @@ def run(tmp: pathlib.Path) -> None:
           poll["allowed_updates"] == ["message"] and poll["offset"] == 0
           and poll["timeout"] == 30)
 
+    rich_text = (
+        "Explanation\n\nEvidence-backed answer.\n\nSources\n\n"
+        "https://github.com/wildcat-finance/project-aleph/blob/abc/file.md#L1")
+    rich_api = FakeAPI([update(11, "question", thread_id=88)])
+    rich = adapter(
+        tmp / "rich", StaticEngine(rich_text), rich_api, rich_messages=True)
+    rich.run_once()
+    rich_payload = rich_api.rich_sent[0]
+    markdown = rich_payload["rich_message"]["markdown"]
+    check("eligible answers use one native rich message with section headings",
+          len(rich_api.rich_sent) == 1 and not rich_api.sent
+          and markdown.startswith("## Explanation")
+          and "## Sources" in markdown
+          and "https://github.com/wildcat-finance/project-aleph/blob/abc/"
+              "file.md#L1" in markdown)
+    check("rich delivery preserves reply and forum-topic identity",
+          rich_payload["reply_parameters"]["message_id"] == 111
+          and rich_payload["message_thread_id"] == 88
+          and rich.offset_store.load() == 12)
+
+    fallback_api = FakeAPI([update(12, "question")])
+    fallback_api.fail_rich = True
+    fallback = adapter(
+        tmp / "rich-fallback", StaticEngine(rich_text), fallback_api,
+        rich_messages=True)
+    fallback.run_once()
+    check("a refused rich call falls back to the original plain answer",
+          not fallback_api.rich_sent and len(fallback_api.sent) == 1
+          and fallback_api.sent[0]["text"] == rich_text
+          and fallback.offset_store.load() == 13)
+
+    ambiguous_api = FakeAPI([update(14, "question")])
+    ambiguous_api.lose_rich_response = True
+    ambiguous = adapter(
+        tmp / "rich-ambiguous", StaticEngine(rich_text), ambiguous_api,
+        rich_messages=True)
+    refused = ""
+    try:
+        ambiguous.run_once()
+    except telegram.TelegramError as error:
+        refused = str(error)
+    check("an ambiguous rich failure never risks a duplicate plain fallback",
+          "response lost" in refused and not ambiguous_api.sent
+          and ambiguous.offset_store.load() == 0)
+
+    command_api = FakeAPI([update(13, "/help")])
+    command = adapter(
+        tmp / "rich-command", StaticEngine(), command_api,
+        rich_messages=True)
+    command.run_once()
+    check("commands remain on the plain-text contract",
+          len(command_api.sent) == 1 and not command_api.rich_sent)
+
     group_api = FakeAPI([
         update(20, "ambient room text", chat_id=-1, chat_type="supergroup"),
         update(21, "@AlephTestBot How does the withdrawal cycle work?",
@@ -182,13 +247,15 @@ def run(tmp: pathlib.Path) -> None:
     ])
     peer_engine = CountingEngine(StaticEngine())
     peer = adapter(tmp / "peer", peer_engine, peer_api,
-                   peer_bot_ids=(500,))
+                   peer_bot_ids=(500,), rich_messages=True)
     peer.process_updates(peer_api.updates)
     check("only allowlisted bots can issue explicitly targeted questions",
           peer_engine.questions == ["approved question"]
           and len(peer_api.sent) == 1)
     check("peer bots cannot use ambient, untargeted, or handoff paths",
           peer.offset_store.load() == 29 and not peer.pending)
+    check("peer-bot answers remain plain for end-to-end outcome capture",
+          len(peer_api.sent) == 1 and not peer_api.rich_sent)
 
     print("\nTG3 — length, failures, rate limits, and offsets fail safely")
     long_text = ("paragraph line\n\n" * 700) + "stable-source-link"
@@ -202,6 +269,18 @@ def run(tmp: pathlib.Path) -> None:
     check("long replies chain to the preceding Telegram message",
           len(long_api.sent) == len(chunks)
           and long_api.sent[1]["reply_parameters"]["message_id"] == 1001)
+
+    oversized_text = ("oversized paragraph\n\n" * 1800) + "final source"
+    oversized_api = FakeAPI([update(31, "question")])
+    oversized = adapter(
+        tmp / "oversized-rich", StaticEngine(oversized_text), oversized_api,
+        rich_messages=True)
+    oversized.run_once()
+    check("answers above the rich limit use the exact legacy chain",
+          len(oversized_text) > telegram.RICH_MESSAGE_LIMIT
+          and not oversized_api.rich_sent and len(oversized_api.sent) > 1
+          and "".join(item["text"] for item in oversized_api.sent)
+              == oversized_text)
 
     error_api = FakeAPI([update(40, "question")])
     error_service = adapter(
@@ -222,6 +301,31 @@ def run(tmp: pathlib.Path) -> None:
         refused = str(error)
     check("a failed send does not confirm the update",
           "send failed" in refused and send_service.offset_store.load() == 0)
+
+    failed_fallback_api = FakeAPI([update(51, "question")])
+    failed_fallback_api.fail_rich = failed_fallback_api.fail_send = True
+    failed_fallback = adapter(
+        tmp / "failed-rich-fallback", StaticEngine(), failed_fallback_api,
+        rich_messages=True)
+    refused = ""
+    try:
+        failed_fallback.run_once()
+    except telegram.TelegramError as error:
+        refused = str(error)
+    check("failed rich and plain sends leave the update unconfirmed",
+          "send failed" in refused
+          and failed_fallback.offset_store.load() == 0)
+
+    check("the rich-message operator switch is fail-loud",
+          telegram.rich_messages_enabled("true") is True
+          and telegram.rich_messages_enabled("OFF") is False)
+    refused = ""
+    try:
+        telegram.rich_messages_enabled("maybe")
+    except telegram.TelegramError as error:
+        refused = str(error)
+    check("invalid rich-message configuration is rejected",
+          "must be true or false" in refused)
 
     rate_api = FakeAPI([update(60, "one"), update(61, "two")])
     rate_engine = CountingEngine(StaticEngine())

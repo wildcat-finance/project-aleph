@@ -116,6 +116,12 @@ bot's numeric Telegram ID (or a comma-separated allowlist), verify Bot-to-Bot
 Communication Mode, and restart the query service. An allowlisted peer still has
 access only to explicitly targeted `/ask@AlephBot` commands.
 
+`ALEPH_TELEGRAM_RICH_MESSAGES` is an optional non-secret kill switch. It defaults
+to `true`, causing eligible human-facing answers to attempt Telegram Rich
+Messages before the existing plain-text path. Set it to `false` and restart the
+query service to force legacy delivery. Peer-bot answers and command/handoff
+messages remain plain regardless of this setting.
+
 The audit log contains route and evidence provenance, not raw question text,
 answer text, user IDs, wallet/market/borrower addresses, or exception messages.
 Daily files are mode `0600`; `serve.py` removes days older than the configured
@@ -150,7 +156,8 @@ idempotent destination are explicitly configured.
 - active pointer, immutable activation, promotable release, and evaluation;
 - active index identity and the running embedding model artifact;
 - pinned gateway release health, integrity, circuit state, and zero lag; and
-- Telegram authentication, privacy mode, and absent webhook.
+- Telegram authentication, privacy mode, absent webhook, approved-peer count,
+  and configured rich-message mode.
 
 The supplied timer runs this check every five minutes. Alert on any nonzero
 exit. The service manager separately alerts on query-process restarts.
@@ -170,4 +177,5 @@ updates the manifest or rebuilds Aleph.
 | Failed evaluation or corpus review | Leave the current pointer unchanged. Read per-ID regressions and corpus diff. |
 | Bad active answers | Roll back the pointer, restart query service, retain artifacts and audit provenance. |
 | Telegram privacy disabled or webhook present | Stop polling; correct BotFather/webhook state before restart. |
+| Telegram Rich Messages render or copy badly | Set `ALEPH_TELEGRAM_RICH_MESSAGES=false`, restart the query service, and retain the plain fallback while investigating the client/API behavior. |
 | Suspected credential exposure | Stop the affected process, rotate only that credential, and do not place replacements in the repository. |
