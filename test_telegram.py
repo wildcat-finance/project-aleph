@@ -35,6 +35,7 @@ class FakeAPI:
         self.sent = []
         self.rich_sent = []
         self.actions = []
+        self.menus = []
         self.next_message_id = 1000
         self.fail_send = False
         self.fail_html = False
@@ -52,6 +53,9 @@ class FakeAPI:
             return self.updates
         if method == "sendChatAction":
             self.actions.append(payload)
+            return True
+        if method == "setMyCommands":
+            self.menus.append(payload)
             return True
         if method == "sendMessage":
             if self.fail_send:
@@ -169,9 +173,13 @@ def run(tmp: pathlib.Path) -> None:
     check("polling is message-only and uses the durable offset",
           poll["allowed_updates"] == ["message"] and poll["offset"] == 0
           and poll["timeout"] == 30)
+    check("startup registers the always-relevant command menu",
+          api.menus
+          and [item["command"] for item in api.menus[0]["commands"]]
+          == ["ask", "help", "privacy"])
 
     rich_text = (
-        "Explanation\n\nEvidence-backed answer.\n\nSources\n\n"
+        "Explanation\n\nEvidence-backed answer. [1]\n\nSources\n\n"
         "[1] docs/file.md › Stable section: "
         "https://github.com/wildcat-finance/project-aleph/blob/abc/file.md#L1")
     rich_api = FakeAPI([update(11, "question", thread_id=88)])
@@ -180,16 +188,30 @@ def run(tmp: pathlib.Path) -> None:
     rich.run_once()
     rich_payload = rich_api.rich_sent[0]
     markdown = rich_payload["rich_message"]["markdown"]
-    check("eligible answers use one native rich message with section headings",
+    source_url = ("https://github.com/wildcat-finance/project-aleph"
+                  "/blob/abc/file.md#L1")
+    check("eligible answers use one escaped rich message with compact sources",
           len(rich_api.rich_sent) == 1 and not rich_api.sent
-          and markdown.startswith("## Explanation")
-          and "## Sources" in markdown
-          and "1. [docs/file.md › Stable section](https://github.com/"
-              "wildcat-finance/project-aleph/blob/abc/file.md#L1)" in markdown)
+          and markdown == (
+              f"Evidence\\-backed answer\\. [\\[1\\]]({source_url})\n\n"
+              "## Sources\n\n"
+              f"1. [file\\.md › Stable section]({source_url})"))
     check("rich citations hide long URLs behind readable numbered labels",
           "[1] docs/file.md" not in markdown
-          and markdown.count("https://github.com/wildcat-finance/"
-                             "project-aleph/blob/abc/file.md#L1") == 1)
+          and markdown.count(source_url) == 2)
+    multi_section = telegram.rich_markdown(
+        "Explanation\n\nCycles cover lenders. [1]\n\n"
+        "Current state\n\nReserve ratio met at block 19.\n\n"
+        "Sources\n\n[1] docs/a.md › A: https://github.com/w/d/blob/c/a.md")
+    check("multi-section answers keep every reviewed heading",
+          "## Explanation" in multi_section
+          and "## Current state" in multi_section)
+    injected = telegram.rich_markdown(
+        "Explanation\n\n# Day-To-Day {% hint %} **bold** [x](y)\n\n"
+        "Sources\n\n[1] a.md › A: https://example.invalid/a")
+    check("corpus markdown renders as literal text, never as markup",
+          "\\# Day\\-To\\-Day \\{% hint %\\} \\*\\*bold\\*\\* \\[x\\]\\(y\\)"
+          in injected and "# Day-To-Day" not in injected)
     check("rich delivery preserves reply and forum-topic identity",
           rich_payload["reply_parameters"]["message_id"] == 111
           and rich_payload["message_thread_id"] == 88
@@ -219,9 +241,9 @@ def run(tmp: pathlib.Path) -> None:
           and fully_plain.offset_store.load() == 13)
 
     irregular = "Sources\n\nAn operator-authored source note"
-    check("unrecognized source records remain byte-for-byte intact",
+    check("unrecognized source records survive, escaped but never dropped",
           telegram.rich_markdown(irregular)
-          == "## Sources\n\nAn operator-authored source note")
+          == "## Sources\n\nAn operator\\-authored source note")
 
     ambiguous_api = FakeAPI([update(14, "question")])
     ambiguous_api.lose_rich_response = True
@@ -385,14 +407,23 @@ def run(tmp: pathlib.Path) -> None:
         "[2] docs/Terminology.md › Withdrawal Cycle: "
         "https://github.com/wildcat-finance/v2-protocol/blob/def/docs/Terminology.md#cycle")
     rendered = telegram.format_message(answer_text)
-    check("structured answers render headings, links, and expandable sources",
+    check("structured answers render links and expandable sources",
           rendered is not None and len(rendered) == 1
-          and rendered[0].html.startswith("<b>Explanation</b>")
+          and rendered[0].html.startswith("Cycles start")
           and '<blockquote expandable><b>Sources</b>\n[1] <a href="'
           in rendered[0].html
           and rendered[0].html.endswith("</a></blockquote>")
           and '">[1]</a>' in rendered[0].html
           and "<code>0x" in rendered[0].html)
+    check("a lone Explanation heading yields to the answer body",
+          "<b>Explanation</b>" not in rendered[0].html)
+    sectioned = telegram.format_message(
+        "Explanation\n\nA claim. [1]\n\nCurrent state\n\nReserve met.\n\n"
+        "Sources\n\n[1] docs/a.md › A: https://github.com/w/d/blob/c/a.md")
+    check("multi-section answers keep bold headings in the entity rung",
+          sectioned is not None
+          and "<b>Explanation</b>" in sectioned[0].html
+          and "<b>Current state</b>" in sectioned[0].html)
     check("markup never rewrites answer bytes",
           rendered[0].plain == answer_text
           and "&amp; &lt;cover&gt;" in rendered[0].html
