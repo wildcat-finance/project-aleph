@@ -1,0 +1,42 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  executable-gates:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install numpy pyyaml
+      - name: Run executable gates
+        run: |
+          python test_agent.py
+          python test_live.py
+          python test_retrieval.py
+          python test_release.py
+          python test_telegram.py
+          python test_operations.py
+          python test_evaluation.py
+          python ingest/test_audit_corpus.py
+          python ingest/test_build.py
+          python ingest/chunkers/test_markdown.py
+          python ingest/chunkers/test_solidity.py
+          python embed/test_embed.py
+      - name: Compile Python sources
+        run: >-
+          python -m compileall -q
+          activation.py agent.py audit.py gateway_smoke.py live.py monitor.py
+          promotion.py release.py retrieval.py sdk-watch.py serve.py telegram.py
+          embed eval ingest
