@@ -31,7 +31,7 @@ meta:
   version: 1
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; reviewed Project Null and production Telegram regressions
   period: 2025-02-13 – 2026-08-05
-  count: 150
+  count: 153
   corpus_gaps: '8 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -934,6 +934,27 @@ questions:
   expected: refuse
   provenance: production_project_null_regression
   note: Malformed address-like noise must not trigger a live clarification or any tool call.
+- id: p13
+  question: 'My wallet balance rose but my transferable and claimable amounts differ: explain
+    the three values without treating them as interchangeable.'
+  expected: corpus
+  provenance: production_project_null_corpus_gap
+  note: Distinguish wallet-held rebasing market tokens, policy-bounded transferability and
+    funded underlying assets available to claim.
+- id: p14
+  question: 'A market is delinquent while my withdrawal is queued: separate the effects on
+    interest, payment and claim timing.'
+  expected: corpus
+  provenance: production_project_null_corpus_gap
+  note: Keep withdrawal interest, batch funding and cycle/claim timing separate; do not infer
+    a live claimable amount from delinquency alone.
+- id: p15
+  question: 'A wallet satisfies one access provider but not another: which layer decides
+    whether it may deposit, and what evidence is still missing?'
+  expected: corpus
+  provenance: production_project_null_corpus_gap
+  note: Explain the shipped alternative-provider access flow, the hook instance's decision
+    and the market/provider evidence required for a wallet-specific verdict.
 
   # ====================================================================
   # Q. Reviewed Project Null export e168ea3628343c39c9cf

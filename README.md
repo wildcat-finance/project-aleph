@@ -5,9 +5,9 @@ answers protocol questions from an immutable, versioned corpus and reads current
 mainnet state through narrow, typed Data Gateway operations.
 
 Aleph is running in the reference production deployment. Its published
-documentation is pinned at `wildcat-docs@aleph-v0.4`; its live-data boundary is
+documentation is pinned at `wildcat-docs@aleph-v0.5`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 150-case product
+`bge-m3` embedding identity. Every release must pass the 153-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,

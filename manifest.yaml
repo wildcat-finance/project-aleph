@@ -49,8 +49,8 @@ embedding:
     still rejects oversize embedding text so future source growth cannot be
     truncated silently.
   markdown_headroom: >
-    Measured at wildcat-docs@dced3f3, not assumed: 548 chunks across 64
-    documents, median 518 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
+    Measured at wildcat-docs@09f8015, not assumed: 554 chunks across 64
+    documents, median 530 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
     against a limit of 8,192. Prose sections are longer than Solidity chunks,
     as expected, and still less than half the budget.
   revisit_when: >
@@ -186,11 +186,11 @@ sources:
     repo: wildcat-finance/wildcat-docs
     ref:
       kind: tag
-      tag: aleph-v0.4
-      commit: dced3f3843258aa063fb6d6369cf434d5dfa4957
+      tag: aleph-v0.5
+      commit: 09f80156ab897920c1fba9fcdcbaa78fb3eb8e6c
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
-      supersedes: aleph-v0.3 / fe0e50c079b227cdd3ac14f8a1657a7c072b6446
+      supersedes: aleph-v0.4 / dced3f3843258aa063fb6d6369cf434d5dfa4957
     notes: >
       Content is human-written, so a Tier B citation means reviewed published
       documentation. Agent navigation files are excluded. Documentation for
@@ -201,17 +201,15 @@ sources:
       does. Ref immutability is by convention here — never move a tag, cut the
       next one.
 
-      At aleph-v0.4, the deprecated V1 tree is unpublished at source as well as
-      excluded here, recovered GitBook-only pages are present, the ?ask
-      documentation is corrected, the FAQ contains 31 headings, and the
-      downloadable market CSV exporter has a complete documentation page,
-      including its snapshot, verification, quarantine, and optional
-      FIFO/LIFO/pro-rata position-analysis boundaries. FAQ anchor
+      At aleph-v0.5, the documentation directly distinguishes wallet
+      market-token balance, transferability and claimable underlying assets;
+      separates delinquency effects across interest, payment/liquidity and
+      claim timing; and explains AccessControlHooks provider composition plus
+      the evidence needed for a wallet-specific deposit decision. It retains
+      the v0.4 publication corrections, market CSV exporter boundaries, legal
+      metadata and affected-lender responsibility boundaries. FAQ anchor
       changes demonstrate why citations carry the corpus build that produced
       them rather than assuming fragments remain stable across promotions.
-      All legal pages carry effective_date and doc_version frontmatter, and the
-      affected-lender guide identifies Wildcat Labs as the Juris host and the
-      Foundation as the claim-data recipient and handler.
 
       The exporter ships as `using-wildcat/wildcat-market-csv.skill`, a zip
       containing agent instructions, sitting outside `skills/**`. It is not

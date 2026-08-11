@@ -70,7 +70,7 @@ git -C v2-protocol checkout aleph-v2.1.0
 git -C v2-protocol rev-parse HEAD
 
 git clone https://github.com/wildcat-finance/wildcat-docs.git
-git -C wildcat-docs checkout aleph-v0.4
+git -C wildcat-docs checkout aleph-v0.5
 git -C wildcat-docs rev-parse HEAD
 ```
 

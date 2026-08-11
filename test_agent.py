@@ -180,8 +180,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 150 golden questions enter their reviewed handling mode",
-          len(routed) == 150 and not wrong, str(wrong[:5]))
+    check("all 153 golden questions enter their reviewed handling mode",
+          len(routed) == 153 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     governance_correction = router.route(
         "Where is the governance vote that changed this market's APR?")
@@ -439,6 +439,34 @@ def run(tmp: pathlib.Path) -> None:
           bool(clipped) and not re.search(
               r"(?:^|\n)\s*(?:[-*+]|\d+[.)]|#{1,6}|`{3,}|~{3,})\s*$",
               clipped))
+    check("excerpt truncation ends at a complete sentence",
+          clipped.endswith("."), repr(clipped))
+
+    focused_faq = replace(
+        correct_role,
+        id=("wildcat-docs:overview/faqs.md#"
+            "if-my-wallet-satisfies-one-role-provider-but-not-another"),
+        breadcrumb=("Overview › FAQs › If my wallet satisfies one role "
+                    "provider but not another, may it deposit?"),
+        display_text=(
+            "### If my wallet satisfies one role provider but not another, "
+            "may it deposit?\n\n"
+            "Approved providers are alternative credential sources.\n\n"
+            "The market hook makes the final access decision.\n\n"
+            "* Check the provider approval.\n"
+            "* Check the credential expiry.\n\n"
+            "See [Access controls](access.md).\n\n***"))
+    focused_faq_draft = agent.ExtractiveWriter().write(
+        "Which layer decides when one access provider passes and another fails?",
+        (focused_faq,), router.route(role_question))
+    focused_faq_text = focused_faq_draft.claims[0].text
+    check("a short directly titled section is kept as a complete answer",
+          "alternative credential sources" in focused_faq_text
+          and "market hook makes the final access decision" in focused_faq_text
+          and "credential expiry" in focused_faq_text
+          and "See [" not in focused_faq_text
+          and focused_faq_text in focused_faq.display_text,
+          focused_faq_text)
 
     class ForgedWriter:
         def write(self, question, evidence, route):
