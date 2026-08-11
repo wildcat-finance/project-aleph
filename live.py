@@ -651,22 +651,51 @@ def _observed(result: LiveResult) -> str:
             f"Data Gateway release {result.gateway_release}.")
 
 
-def render_live(result: LiveResult) -> RenderedLive:
+def render_live(result: LiveResult, field: str | None = None) -> RenderedLive:
     value = result.value
+    if field is not None and not isinstance(value, MarketState):
+        raise LiveError(
+            f"field-specific rendering is unavailable for {type(value).__name__}")
     if isinstance(value, RegistryState):
         lines = [f"Registered markets ({len(value.markets)}):"]
         lines += [f"- {market.name} ({market.symbol}) — {market.address}"
                   for market in value.markets]
     elif isinstance(value, MarketState):
         market, token = value.market, value.market.asset
-        lines = [f"{market.name} ({market.symbol})",
-                 f"Market: {market.address}", f"Borrower: {market.borrower}",
-                 f"Total assets: {format_units(value.total_assets, token.decimals)} {token.symbol}",
-                 f"Maximum supply: {format_units(value.max_total_supply, token.decimals)} {token.symbol}",
-                 f"APR: {format_bips(value.annual_interest_bips)}",
-                 f"Reserve ratio: {format_bips(value.reserve_ratio_bips)}",
-                 f"Delinquent: {'yes' if value.is_delinquent else 'no'}",
-                 f"Time delinquent: {format_duration(value.time_delinquent)}"]
+        remaining_capacity = max(0, value.max_total_supply - value.total_assets)
+        field_lines = {
+            "apr": [f"APR: {format_bips(value.annual_interest_bips)}"],
+            "reserve_ratio": [
+                f"Reserve ratio: {format_bips(value.reserve_ratio_bips)}"],
+            "capacity": [
+                "Remaining capacity: "
+                f"{format_units(remaining_capacity, token.decimals)} "
+                f"{token.symbol}"],
+            "grace_period": [
+                "Delinquency grace period: "
+                f"{format_duration(value.delinquency_grace_period)}"],
+            "delinquency": [
+                f"Delinquent: {'yes' if value.is_delinquent else 'no'}",
+                f"Time delinquent: {format_duration(value.time_delinquent)}",
+                f"Delinquency fee: {format_bips(value.delinquency_fee_bips)}",
+                "Delinquency grace period: "
+                f"{format_duration(value.delinquency_grace_period)}"],
+        }
+        if field is not None:
+            if field not in field_lines:
+                raise LiveError(f"unsupported market field {field!r}")
+            lines = [f"{market.name} ({market.symbol})", *field_lines[field]]
+        else:
+            lines = [
+                f"{market.name} ({market.symbol})",
+                f"Market: {market.address}", f"Borrower: {market.borrower}",
+                f"Total assets: {format_units(value.total_assets, token.decimals)} {token.symbol}",
+                f"Maximum supply: {format_units(value.max_total_supply, token.decimals)} {token.symbol}",
+                *field_lines["capacity"],
+                *field_lines["apr"],
+                *field_lines["reserve_ratio"],
+                *field_lines["delinquency"],
+            ]
     elif isinstance(value, AccountState):
         token = value.asset
         lines = [f"Account {value.lender} in {value.market_name}",

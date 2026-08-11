@@ -7,7 +7,7 @@ mainnet state through narrow, typed Data Gateway operations.
 Aleph is running in the reference production deployment. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.3`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 127-case product
+`bge-m3` embedding identity. Every release must pass the 134-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,
@@ -39,12 +39,12 @@ Aleph also contains one intentionally useless answer: ask whether it is vegan.
 
 ## Where the current boundary is
 
-The live-state tools exist, but routing to them is still too literal. Questions
-that explicitly ask for current state and provide the required address work.
-Bare market addresses, Wildcat market URLs, and natural questions such as “what
-is this market's APR?” can still be treated as corpus questions or ask for an
-address that was already present. Fixing that addressed-market path is active
-work in [issue #29](https://github.com/wildcat-finance/project-aleph/issues/29).
+Aleph treats a bare mainnet market address or canonical Wildcat lender-market
+URL as a live object. Direct APR, reserve-ratio, capacity, delinquency, and
+grace-period questions use the typed market read without requiring the word
+“current”; a missing address produces one targeted clarification. Mechanism
+questions remain corpus-backed, and every live response retains one-block Data
+Gateway provenance.
 
 Aleph does not yet discover a market reliably from an approximate rate, a
 borrower name, or other fuzzy description. That requires indexed live discovery,
@@ -118,39 +118,28 @@ This is tracked in
 the corpus-level follow-up to the answer-integrity guardrails in
 [PR #34](https://github.com/wildcat-finance/project-aleph/pull/34).
 
-### 2. Make addressed market questions live by default
-
-Recognise Ethereum addresses and Wildcat market URLs before semantic routing.
-If a question asks for state-like fields—APR, reserve ratio, capacity,
-delinquency, grace period, or withdrawal state—use the typed live operation even
-when the word “current” is absent. Preserve clarification when the address is
-missing or ambiguous, and retain one-block rendering.
-
-This is tracked in
-[issue #29](https://github.com/wildcat-finance/project-aleph/issues/29).
-
-### 3. Add constrained live discovery
+### 2. Add constrained live discovery
 
 Support market and borrower lookup by stable public identifiers, then consider
 bounded screening such as “markets around 8%.” Discovery must return candidates
 from indexed live facts; it must not guess an address from corpus similarity or
 allow the language writer to rank borrower quality.
 
-### 4. Exercise the Null review loop
+### 3. Exercise the Null review loop
 
 Run bounded mixed probe waves in the developer room as a separate operational
 process. Review and finalise useful cases, keep regression and factual queues
 separate, and open the first corpus-release review at ten approved factual
 proposals. Probe volume alone is not progress; reviewed, reproducible cases are.
 
-### 5. Cut and activate the next evidence release
+### 4. Cut and activate the next evidence release
 
 Apply reviewed chunk and factual changes to a new immutable corpus, rebuild the
 locked embedding index, run retrieval and product evaluation, inspect the corpus
 diff, promote only if every gate is true, and activate with compare-and-swap.
 Keep the previous release available for pointer-only rollback.
 
-### 6. Widen the interface only after the evidence path is stable
+### 5. Widen the interface only after the evidence path is stable
 
 Broaden the Telegram trial after citation relevance, live routing, privacy,
 restart safety, and the Null review workflow hold under developer use. Enable a

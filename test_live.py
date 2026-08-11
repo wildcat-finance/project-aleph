@@ -255,6 +255,16 @@ def run(tmp: pathlib.Path) -> None:
     check("basis points and durations have stable exact formatting",
           "APR: 11.25%" in rendered_market.text
           and "Time delinquent: 1h 1m 1s" in rendered_market.text)
+    check("market summaries expose capacity and grace deterministically",
+          "Remaining capacity: 876.543211 USDC" in rendered_market.text
+          and "Delinquency grace period: 1d" in rendered_market.text)
+    compact_apr = live.render_live(market, field="apr")
+    compact_grace = live.render_live(market, field="grace_period")
+    check("field renderers return only the requested market fact",
+          "APR: 11.25%" in compact_apr.text
+          and "Reserve ratio" not in compact_apr.text
+          and "Delinquency grace period: 1d" in compact_grace.text
+          and "APR:" not in compact_grace.text)
     check("every renderer appends the block and pinned release",
           "Ethereum block 100" in rendered_market.text
           and "release v2.0.30" in rendered_market.text
