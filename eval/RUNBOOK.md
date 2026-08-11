@@ -160,6 +160,22 @@ has `needs_review`. It does not edit the golden file, write corpus evidence, or
 mark anything resolved in Null. Run `python3 test_evaluation.py` after admitting
 accepted cases so every new question traverses the real product path.
 
+## Publish the answer-free coverage silhouette
+
+After a release is promoted and its bound evaluation passes, publish the
+question-generation view that Null may consume:
+
+```bash
+python3 -m eval.coverage \
+  --release artifacts/releases/<release-id>/release.json
+```
+
+The command verifies the supplied release against its manifest, corpus bytes,
+evaluation bytes, golden set, and reviewed topic map, then writes
+`artifacts/coverage/<silhouette-id>/silhouette.json`. Give Null only that file.
+Do not hand over chunks, golden questions, evaluation cases, or retrieval
+evidence. See `eval/COVERAGE.md` for the schema and operator boundary.
+
 ## Build and evaluate the selected release
 
 The manifest records:

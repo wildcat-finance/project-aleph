@@ -29,6 +29,7 @@ jobs:
           python test_telegram.py
           python test_operations.py
           python test_evaluation.py
+          python test_coverage.py
           python test_null_import.py
           python eval/null_import.py \
             --export eval/null-exports/e168ea3628343c39c9cf \

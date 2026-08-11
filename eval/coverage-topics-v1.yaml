@@ -1,0 +1,19 @@
+schema_version: 1
+topics:
+  a: withdrawal-lifecycle
+  b: interest-and-capacity
+  c: market-status
+  d: deposits-wallets-and-transfers
+  e: access-and-lender-criteria
+  f: integration-and-data
+  g: risk-default-and-seniority
+  h: non-protocol-requests
+  i: scams-and-security
+  j: user-interface-and-frontend
+  k: aggregation-boundary
+  l: advice-and-judgement
+  m: adversarial-and-injection
+  n: false-premises
+  o: missing-context
+  p: addressed-live-markets
+  q: reviewed-null-regressions

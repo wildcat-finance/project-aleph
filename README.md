@@ -70,7 +70,8 @@ controlled feedback loop without turning synthetic text into protocol truth.
 
 ```mermaid
 flowchart LR
-    A["Active Aleph release"] --> B["Null sends a synthetic probe"]
+    A["Active Aleph release"] --> S["Answer-free coverage silhouette"]
+    S --> B["Null sends a boundary probe"]
     B --> C["Aleph outcome in Telegram"]
     C --> D["Human review"]
     D --> E["Regression case or factual proposal"]
@@ -81,23 +82,27 @@ flowchart LR
 
 The human boundary is the point of the loop:
 
-1. Null generates an ordinary, awkward, ambiguous, adversarial, or nonsensical
-   question with a private test intent.
-2. Aleph handles that question through the same Telegram surface used by people.
-3. A reviewer judges the outcome. A useful result may become a regression case,
+1. Aleph publishes a content-addressed coverage silhouette for the active
+   evaluated release: topic, route, capability, question-shape, and declared-gap
+   counts, with no chunks, questions, answers, citations, or identities.
+2. Null combines that shape with its checked-in curriculum to generate an
+   ordinary, awkward, ambiguous, adversarial, or nonsensical boundary question
+   with a private test intent. The silhouette is not answer truth.
+3. Aleph handles that question through the same Telegram surface used by people.
+4. A reviewer judges the outcome. A useful result may become a regression case,
    routing fix, live-data requirement, corpus-gap proposal, or rejection test.
-4. Finalisation anonymises the retained question and removes its Telegram
+5. Finalisation anonymises the retained question and removes its Telegram
    linkage. Raw identifiers are retained for no more than 30 days.
-5. Regression candidates and factual corpus proposals remain separate. A
+6. Regression candidates and factual corpus proposals remain separate. A
    reviewer must attach approved evidence to any factual proposal.
-6. Aleph validates each immutable Null regression export and records an explicit
+7. Aleph validates each immutable Null regression export and records an explicit
    disposition for every candidate. Accepted cases enter the golden product
    evaluation, duplicates bind to existing cases, and capability gaps retain a
    linked issue. The importer rejects factual proposals.
-7. Ten human-approved factual proposals trigger an Aleph corpus-release review.
+8. Ten human-approved factual proposals trigger an Aleph corpus-release review.
    Ten is a batching line, not an automatic promotion threshold; consequential
    corrections can be reviewed sooner.
-8. A candidate still has to build, embed, pass evaluation, receive attributable
+9. A candidate still has to build, embed, pass evaluation, receive attributable
    approval, and be activated by an operator.
 
 The first production Null export, `e168ea3628343c39c9cf`, contains fourteen
@@ -108,7 +113,8 @@ disposition from the immutable export bytes.
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train
 itself on Telegram traffic. The cycle strengthens the reviewed corpus and eval
-set, not the bot's beliefs in place.
+set, not the bot's beliefs in place. [`eval/COVERAGE.md`](eval/COVERAGE.md)
+defines the one-way, answer-free coverage handoff.
 
 ## What remains to be built
 
@@ -219,6 +225,7 @@ python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
 python3 test_evaluation.py
+python3 test_coverage.py
 python3 test_telegram.py
 python3 test_operations.py
 ```
