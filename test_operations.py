@@ -40,6 +40,8 @@ class MonitorAPI:
                     "can_read_all_group_messages": False}
         if method == "getWebhookInfo":
             return {"url": "", "pending_update_count": 0}
+        if method == "setMyCommands":
+            return True
         raise AssertionError(method)
 
 
