@@ -398,6 +398,23 @@ def run(tmp: pathlib.Path) -> None:
     check("peer-bot answers remain plain for end-to-end outcome capture",
           len(peer_api.sent) == 1 and not peer_api.rich_sent)
 
+    peer_burst_api = FakeAPI([
+        update(100 + index, f"/ask@AlephTestBot probe {index}", chat_id=-1,
+               chat_type="supergroup", user_id=500, is_bot=True)
+        for index in range(1, 12)
+    ])
+    peer_burst_engine = CountingEngine(StaticEngine())
+    peer_burst = adapter(
+        tmp / "peer-burst", peer_burst_engine, peer_burst_api,
+        peer_bot_ids=(500,))
+    peer_burst.process_updates(peer_burst_api.updates)
+    check("one bounded ten-probe peer burst is admitted",
+          peer_burst_engine.questions == [
+              f"probe {index}" for index in range(1, 11)])
+    check("an eleventh peer probe is limited before the answer engine",
+          len(peer_burst_api.sent) == 11
+          and "rate-limited" in peer_burst_api.sent[-1]["text"])
+
     print("\nTG3 — length, failures, rate limits, and offsets fail safely")
     long_text = ("paragraph line\n\n" * 700) + "stable-source-link"
     chunks = telegram.split_message(long_text)
