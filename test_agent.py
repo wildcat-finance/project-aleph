@@ -131,13 +131,25 @@ def run(tmp: pathlib.Path) -> None:
     check("addressed history remains owned by the transaction exporter",
           router.route(f"When was the last deposit in market {market}?").mode
           == agent.RouteMode.REFUSE_POINT)
+    account_question = (
+        f"How much of account {test_live.LENDER} is claimable in market {market}?")
+    account_route = router.route(account_question)
+    check("addressed claimable questions select the live account operation",
+          account_route.mode == agent.RouteMode.LIVE
+          and account_route.live_operation == "account"
+          and account_route.entities.market_address == market
+          and account_route.entities.account_address == test_live.LENDER)
+    check("addressed withdrawal mechanisms remain corpus-backed",
+          router.route(
+              f"How does a claimable withdrawal work in market {market}?").mode
+          == agent.RouteMode.CORPUS)
     golden = yaml.safe_load(pathlib.Path("eval/golden-v1.yaml").read_bytes())
     routed = [(item["id"], item["expected"],
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 134 golden questions enter their reviewed handling mode",
-          len(routed) == 134 and not wrong, str(wrong[:5]))
+    check("all 135 golden questions enter their reviewed handling mode",
+          len(routed) == 135 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     check("APR ownership corrections retrieve borrower-controlled rate evidence",
           apr_correction.mode == agent.RouteMode.CORRECT
@@ -190,6 +202,23 @@ def run(tmp: pathlib.Path) -> None:
           missing_field.status == "needs_input"
           and "market contract address" in missing_field.text
           and not missing_field.citations)
+    account_answer = engine.answer(account_question)
+    check("addressed claimable is a deterministic live account value",
+          account_answer.status == "answered"
+          and account_answer.live is not None
+          and account_answer.live.operation == "account"
+          and "Claimable withdrawals: 1.25 USDC" in account_answer.text
+          and "Ethereum block 100" in account_answer.text
+          and "release v2.0.30" in account_answer.text)
+    missing_market = engine.answer(
+        f"How much of account {test_live.LENDER} is claimable?")
+    missing_account = engine.answer(
+        f"How much is claimable in market {market}?")
+    check("partial account identifiers request exactly the missing entity",
+          missing_market.status == missing_account.status == "needs_input"
+          and "market contract address" in missing_market.text
+          and "lender wallet address" in missing_account.text
+          and not missing_market.citations and not missing_account.citations)
 
     class ForbiddenTool:
         def __getattr__(self, name):

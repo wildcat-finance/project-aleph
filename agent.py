@@ -231,6 +231,12 @@ class Router:
         r"\b(?:market summary|summari[sz]e (?:this|the) market|"
         r"what can you tell me about (?:this|the) market|"
         r"tell me about (?:this|the) market)\b", re.I)
+    _account_state_request = re.compile(
+        r"\b(?:how much|what(?:'s|\s+is)|show|check|read|give me)\b", re.I)
+    _account_state_term = re.compile(
+        r"\b(?:claimable|balance)\b", re.I)
+    _account_identity_term = re.compile(
+        r"\b(?:account|wallet|lender)\b", re.I)
     _mechanism = re.compile(
         r"\b(why|how|what does|what happens|difference|criteria|process|"
         r"include|mean|when does|do i need)\b", re.I)
@@ -346,6 +352,10 @@ class Router:
                          refusal_reason="inferred_intent")
         if self._corpus_only.search(question):
             return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
+        if self._addressed_account(question, entities):
+            return Route(
+                RouteMode.LIVE, "addressed account state", entities,
+                live_operation="account")
         live_field = self._market_field(question)
         addressed = (
             self._addressed_market(question, entities)
@@ -406,6 +416,15 @@ class Router:
             _ETH_ADDRESS.fullmatch(stripped)
             or cls._market_url.search(question)
             or cls._market_summary.search(question))
+
+    @classmethod
+    def _addressed_account(cls, question: str, entities: Entities) -> bool:
+        return bool(
+            entities.all_addresses
+            and cls._account_state_request.search(question)
+            and (cls._account_state_term.search(question)
+                 or (entities.account_address is not None
+                     and cls._account_identity_term.search(question))))
 
     @staticmethod
     def _market_field(question: str) -> str | None:

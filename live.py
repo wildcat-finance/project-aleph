@@ -290,6 +290,7 @@ class AccountState:
     total_deposited: int
     total_interest_earned: int
     pending_withdrawal_batches: int
+    claimable_withdrawals: int
     role: str
 
 
@@ -360,6 +361,11 @@ _QUERIES = {
         lenders(where: { address: $lender }, first: 1) {
           address scaledBalance totalDeposited totalInterestEarned
           numPendingWithdrawalBatches role
+          withdrawals(where: { isCompleted: false }, first: 1000,
+                      orderBy: id, orderDirection: asc) {
+            scaledAmount normalizedAmountWithdrawn isCompleted
+            batch { scaledTotalAmount normalizedAmountPaid }
+          }
         }
       }
     }""",
@@ -534,6 +540,40 @@ class GatewayClient:
                 raise LiveError(f"market {market} is absent at the observed block")
             accounts = item.get("lenders") or []
             account = accounts[0] if accounts else {}
+            pending = _integer(
+                account.get("numPendingWithdrawalBatches", 0),
+                "numPendingWithdrawalBatches")
+            statuses = account.get("withdrawals") or []
+            if len(statuses) != pending:
+                raise LiveError(
+                    "account response returned "
+                    f"{len(statuses)} of {pending} pending withdrawal batches")
+            claimable = 0
+            for index, status in enumerate(statuses):
+                batch = status["batch"]
+                scaled_total = _integer(
+                    batch["scaledTotalAmount"],
+                    f"withdrawals[{index}].batch.scaledTotalAmount")
+                scaled_amount = _integer(
+                    status["scaledAmount"],
+                    f"withdrawals[{index}].scaledAmount")
+                normalized_paid = _integer(
+                    batch["normalizedAmountPaid"],
+                    f"withdrawals[{index}].batch.normalizedAmountPaid")
+                withdrawn = _integer(
+                    status["normalizedAmountWithdrawn"],
+                    f"withdrawals[{index}].normalizedAmountWithdrawn")
+                if scaled_total == 0:
+                    if scaled_amount != 0:
+                        raise LiveError(
+                            "pending withdrawal has a share of an empty batch")
+                    allocated = 0
+                else:
+                    allocated = normalized_paid * scaled_amount // scaled_total
+                if withdrawn > allocated:
+                    raise LiveError(
+                        "pending withdrawal exceeds its paid batch allocation")
+                claimable += allocated - withdrawn
             return AccountState(
                 market_address=market, market_name=_text(item["name"], "market name"),
                 market_symbol=_text(item["symbol"], "market symbol"),
@@ -543,9 +583,8 @@ class GatewayClient:
                 total_deposited=_integer(account.get("totalDeposited", 0), "totalDeposited"),
                 total_interest_earned=_integer(
                     account.get("totalInterestEarned", 0), "totalInterestEarned"),
-                pending_withdrawal_batches=_integer(
-                    account.get("numPendingWithdrawalBatches", 0),
-                    "numPendingWithdrawalBatches"),
+                pending_withdrawal_batches=pending,
+                claimable_withdrawals=claimable,
                 role=_text(account.get("role") or "Null", "account role"))
         return self._query("account", {"market": market, "lender": lender}, parse)
 
@@ -703,6 +742,7 @@ def render_live(result: LiveResult, field: str | None = None) -> RenderedLive:
                  f"Total deposited: {format_units(value.total_deposited, token.decimals)} {token.symbol}",
                  f"Interest earned: {format_units(value.total_interest_earned, token.decimals)} {token.symbol}",
                  f"Pending withdrawal batches: {value.pending_withdrawal_batches}",
+                 f"Claimable withdrawals: {format_units(value.claimable_withdrawals, token.decimals)} {token.symbol}",
                  f"Role: {value.role}"]
     elif isinstance(value, WithdrawalQueueState):
         lines = [f"Open withdrawal batches for {value.market_name} "

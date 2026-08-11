@@ -57,7 +57,15 @@
           "address": "0x4444444444444444444444444444444444444444",
           "scaledBalance": "1200000", "totalDeposited": "5000000",
           "totalInterestEarned": "12000", "numPendingWithdrawalBatches": 2,
-          "role": "Null"
+          "role": "Null",
+          "withdrawals": [
+            {"scaledAmount": "2000000", "normalizedAmountWithdrawn": "500000",
+             "isCompleted": false,
+             "batch": {"scaledTotalAmount": "4000000", "normalizedAmountPaid": "3000000"}},
+            {"scaledAmount": "1000000", "normalizedAmountWithdrawn": "0",
+             "isCompleted": false,
+             "batch": {"scaledTotalAmount": "2000000", "normalizedAmountPaid": "500000"}}
+          ]
         }]
       }
     },

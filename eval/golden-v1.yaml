@@ -3,8 +3,8 @@
 # Rebuilt from real transcripts: ~2,940 messages across five channels
 # (public Telegram reachout, three borrower groups, one Slack channel with a
 # market maker), Feb 2025 – Aug 2026. 500 question-bearing messages extracted,
-# clustered, and reduced to the recurring shapes below. One additional synthetic
-# Project Null probe is included after human review as a routing regression.
+# clustered, and reduced to the recurring shapes below. Reviewed Project Null
+# and production Telegram cases are included as routing regressions.
 #
 # Supersedes golden-v0.yaml, which was written by guessing. Roughly a third of
 # v0 survived contact with the data. What v0 got wrong is at the bottom under
@@ -29,9 +29,9 @@
 
 meta:
   version: 1
-  sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; 1 reviewed synthetic Project Null probe
+  sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; reviewed Project Null and production Telegram regressions
   period: 2025-02-13 – 2026-08-05
-  count: 134
+  count: 135
   corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -902,6 +902,12 @@ questions:
   provenance: production_telegram_regression
   note: A compact field-plus-address question is an addressed live object even without a
     leading interrogative or the word market.
+- id: p08
+  question: How much of account 0x4444444444444444444444444444444444444444 is claimable in market 0x1111111111111111111111111111111111111111?
+  expected: live
+  provenance: production_project_null_regression
+  note: Both required identifiers are present. Read and deterministically allocate the lender's
+    paid, unwithdrawn batch shares; do not substitute a generic withdrawal explanation.
 what_v0_missed:
 - 'Volume is not where I guessed. The largest single category in the public channel is not
   protocol questions at all — it is BD outreach, partnership requests, job applications, listing
