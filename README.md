@@ -10,12 +10,25 @@ verified production activation, rollback, audit, and monitoring controls.
 
 The shortest honest status is:
 
-> **Aleph's repository build sequence is implemented end to end. Deployment now
-> requires operator-owned infrastructure, service credentials, and a named
-> human-handoff destination.**
+> **Aleph's seven-stage repository sequence is implemented, evaluated, and
+> active in the reference production deployment. Evidence-backed answers,
+> deterministic live reads, Telegram delivery, monitoring, and rollback are
+> operational. Human handoff remains deliberately disabled until an owner and
+> destination are named.**
 
-The remaining work is ordered below by dependency. Later stages should not begin
-by inventing around a missing earlier boundary.
+The implemented dependency order remains below because every future release must
+traverse it unchanged. The remaining operator integrations are narrower and must
+occur in this order:
+
+1. name a human-support owner, destination, retention policy, and idempotent
+   delivery contract before enabling the existing confirmation-gated handoff
+   sink; and
+2. identify and privately rehearse any peer bot before placing its numeric ID in
+   `ALEPH_PEER_BOT_IDS`. The allowlist is empty by default and grants only an
+   explicitly targeted `/ask@AlephBot` capability.
+
+Neither integration is a reason to weaken answering, evidence, privacy, or
+promotion gates in the meantime.
 
 ## Current foundation
 
@@ -46,7 +59,8 @@ The checked-in code already provides:
 - approval that binds the exact evaluation to a new release identity only when
   every manifest gate is `true`;
 - a privacy-mode, long-polling Telegram adapter with durable offsets, bounded
-  admission, threaded replies, exact answer splitting, and confirmed handoffs;
+  admission, threaded replies, exact answer splitting, and confirmation-gated
+  handoff drafts;
 - compare-and-swap activation, immutable switch history, pointer-only rollback,
   scrubbed audit records, runtime composition, and dependency monitoring;
 - a 125-question golden set, retrieval labels, and the recorded `bge-m3` model
@@ -288,8 +302,10 @@ The implementation provides:
 The checked tests prove that a raw, failed, null-gated, changed, or incoherent
 candidate cannot become active; every served answer audit identifies its
 evidence/runtime state; and rollback does not rebuild or delete anything.
-Actually starting the service remains an operator action because the repository
-does not own its host, gateway token, Telegram bot, or human support destination.
+The reference query service is active under these controls. A fresh deployment
+still requires an operator-owned host, gateway credential, Telegram credential,
+and attributable activation. A human support destination is optional for the
+answer service and mandatory only before enabling handoff delivery.
 
 ## Explicitly outside the v1 sequence
 
