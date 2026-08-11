@@ -31,7 +31,7 @@ meta:
   version: 1
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; reviewed Project Null and production Telegram regressions
   period: 2025-02-13 – 2026-08-05
-  count: 143
+  count: 146
   corpus_gaps: '8 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -967,6 +967,34 @@ questions:
   null_candidate_id: candidate_c3a52955aaded6e20056
   note: Ask for the market contract, then return at most three block-pinned borrow events
     with transaction provenance. Never fall back to corpus similarity.
+
+  # ====================================================================
+  # Q2. Reviewed Project Null export af0555894ec430dcae70
+  # ====================================================================
+- id: q08
+  question: How does the withdrawal cycle begin and end?
+  expected: corpus
+  provenance: synthetic_project_null
+  null_export_id: af0555894ec430dcae70
+  null_candidate_id: candidate_409f9b74e17d5c1fa5c3
+  note: Explain the event-driven start and completion of a withdrawal cycle from evidence;
+    do not treat it as a request for one market's current withdrawal state.
+- id: q09
+  question: What does delinquent mean for a Wildcat market?
+  expected: corpus
+  provenance: synthetic_project_null
+  null_export_id: af0555894ec430dcae70
+  null_candidate_id: candidate_45d3bdfa2186950b7005
+  note: Define the protocol state plainly before distinguishing it from a diagnosis of why
+    one live market entered that state.
+- id: q10
+  question: When did Example Borrower last withdraw from its USDC market?
+  expected: live
+  provenance: synthetic_project_null
+  null_export_id: af0555894ec430dcae70
+  null_candidate_id: candidate_ab8027458eec1bfcda47
+  note: A borrower name and asset label do not identify one market contract. Ask for the
+    market address before the bounded, block-pinned history read.
 what_v0_missed:
 - 'Volume is not where I guessed. The largest single category in the public channel is not
   protocol questions at all — it is BD outreach, partnership requests, job applications, listing

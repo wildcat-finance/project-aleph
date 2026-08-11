@@ -150,15 +150,18 @@ tracking issue. Any undispositioned or silently reworded candidate fails closed.
 
 ```bash
 python3 eval/null_import.py \
-  --export eval/null-exports/e168ea3628343c39c9cf \
-  --dispositions eval/null-dispositions-v1.yaml \
-  --golden eval/golden-v1.yaml
+  --export eval/null-exports/af0555894ec430dcae70 \
+  --dispositions eval/null-dispositions-v2.yaml \
+  --golden eval/golden-v1.yaml \
+  --json eval/null-reports/af0555894ec430dcae70/report.json
 ```
 
 The command exits `0` only when every candidate is dispositioned and none still
-has `needs_review`. It does not edit the golden file, write corpus evidence, or
-mark anything resolved in Null. Run `python3 test_evaluation.py` after admitting
-accepted cases so every new question traverses the real product path.
+has `needs_review`. The checked-in report is the exact acknowledgement delivered
+to Null after merge. The command does not edit the golden file, write corpus
+evidence, or mark anything resolved in Null. Run `python3 test_evaluation.py`
+after admitting accepted cases so every new question traverses the real product
+path.
 
 ## Publish the answer-free coverage silhouette
 

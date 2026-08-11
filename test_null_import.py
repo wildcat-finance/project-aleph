@@ -184,6 +184,22 @@ def run(root: pathlib.Path) -> None:
     check("duplicate coverage must name the reviewed Aleph route",
           "route differs" in message, message)
 
+    print("\nN3 — the published production acknowledgement is reproducible")
+    project = pathlib.Path(__file__).resolve().parent
+    production = null_import.disposition_report(
+        str(project / "eval/null-exports/af0555894ec430dcae70"),
+        str(project / "eval/null-dispositions-v2.yaml"),
+        str(project / "eval/golden-v1.yaml"))
+    published = json.loads((
+        project / "eval/null-reports/af0555894ec430dcae70/report.json"
+    ).read_bytes())
+    check("the checked-in report equals the complete deterministic import",
+          published == production
+          and published["candidate_count"] == 24
+          and published["counts"]["accepted"] == 3
+          and published["counts"]["duplicate"] == 21
+          and published["ready"] is True)
+
 
 def main() -> int:
     root = pathlib.Path(tempfile.mkdtemp())

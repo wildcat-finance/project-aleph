@@ -37,3 +37,5 @@ g03: ["deposits", "interest", "lose funds"]
 g05: ["sanction", "escrow"]
 
 l03: ["expired", "priority", "batch"]
+q08: ["withdrawal cycle", "batch duration", "expiry"]
+q09: ["delinquent", "liquidityRequired", "grace period"]

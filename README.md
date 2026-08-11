@@ -7,7 +7,7 @@ mainnet state through narrow, typed Data Gateway operations.
 Aleph is running in the reference production deployment. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.4`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 143-case product
+`bge-m3` embedding identity. Every release must pass the 146-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,
@@ -111,10 +111,12 @@ The human boundary is the point of the loop:
 9. A candidate still has to build, embed, pass evaluation, receive attributable
    approval, and be activated by an operator.
 
-The first production Null export, `e168ea3628343c39c9cf`, contains fourteen
-regression candidates and no factual proposals. Seven add golden cases and seven
-map to existing coverage. `eval/null_import.py` reproduces that complete
-disposition from the immutable export bytes.
+The current checked-in Null export, `af0555894ec430dcae70`, contains 24
+regression candidates and no factual proposals. Three of its newest cases add
+reviewed register or routing coverage; the remaining 21 bind to existing golden
+cases. `eval/null_import.py` reproduces the complete disposition from the
+immutable export bytes, and the resulting checked-in acknowledgement is ready
+for Null to ingest only after this Aleph state is merged.
 
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train

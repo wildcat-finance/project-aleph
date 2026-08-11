@@ -165,8 +165,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 143 golden questions enter their reviewed handling mode",
-          len(routed) == 143 and not wrong, str(wrong[:5]))
+    check("all 146 golden questions enter their reviewed handling mode",
+          len(routed) == 146 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     governance_correction = router.route(
         "Where is the governance vote that changed this market's APR?")
