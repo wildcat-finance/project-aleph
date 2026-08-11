@@ -552,7 +552,7 @@ class ExtractiveWriter:
     _ORPHAN_MARKUP = re.compile(
         r"^\s*(?:[-*+]|\d+[.)]|#{1,6}|`{3,}|~{3,})\s*$")
 
-    def __init__(self, max_claims: int = 1, max_chars: int = 800,
+    def __init__(self, max_claims: int = 1, max_chars: int = 2000,
                  require_topic_match: bool = True):
         self.max_claims = max_claims
         self.max_chars = max_chars
@@ -587,6 +587,20 @@ class ExtractiveWriter:
         # beat a semantically nearby legal paragraph.
         return 4 * len(specific & anchor) + min(1, len(specific & excerpt))
 
+    def _focused_chunk(self, text: str, question: str,
+                       item: Evidence) -> str:
+        """Keep a short, directly titled section intact instead of clipping it."""
+        specific = self._topic_terms(question) - self._GENERIC_TOPICS
+        anchor = self._topic_terms(f"{item.id} {item.breadcrumb}")
+        if len(specific & anchor) < 2:
+            return ""
+        quote = text.strip()
+        quote = re.sub(r"\A#{1,6}[^\n]*\n+", "", quote).lstrip()
+        quote = re.sub(r"\n\s*\nSee \[[^\n]+\].*\Z", "", quote,
+                       flags=re.DOTALL).rstrip()
+        quote = re.sub(r"\n\s*\n(?:\*{3,}|-{3,}|_{3,})\s*\Z", "", quote).rstrip()
+        return quote if 0 < len(quote) <= self.max_chars else ""
+
     def _excerpt(self, text: str, question: str) -> str:
         """Select one relevant, exact paragraph from a corpus chunk."""
         paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text)
@@ -612,13 +626,15 @@ class ExtractiveWriter:
 
         quote = max(candidates, key=score)
         if len(quote) > self.max_chars:
-            boundary = max(quote.rfind(". ", 0, self.max_chars + 1),
-                           quote.rfind("\n", 0, self.max_chars + 1),
-                           quote.rfind(" ", 0, self.max_chars + 1))
+            prefix = quote[:self.max_chars + 1]
+            sentence_ends = [match.end() for match in re.finditer(
+                r"[.!?](?:[\"')\]]*)?(?=\s|$)", prefix)]
+            boundary = sentence_ends[-1] if sentence_ends else -1
             if boundary < 1:
-                boundary = self.max_chars
-            quote = quote[:boundary + (1 if quote[boundary:boundary + 2]
-                                       == ". " else 0)].rstrip()
+                boundary = prefix.rfind("\n\n")
+            if boundary < 1:
+                return ""
+            quote = quote[:boundary].rstrip()
         lines = quote.splitlines()
         while lines and self._ORPHAN_MARKUP.fullmatch(lines[-1]):
             lines.pop()
@@ -639,7 +655,9 @@ class ExtractiveWriter:
         for item in semantically_ranked:
             if item.synthesised or not item.display_text.strip():
                 continue
-            quote = self._excerpt(item.display_text.strip(), question)
+            source_text = item.display_text.strip()
+            quote = (self._focused_chunk(source_text, question, item)
+                     or self._excerpt(source_text, question))
             relevance = self._topic_relevance(question, item, quote)
             if not quote or (self.require_topic_match and relevance <= 0):
                 continue
