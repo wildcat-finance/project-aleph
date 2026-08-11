@@ -69,26 +69,87 @@ def rich_messages_enabled(value: str | None = None) -> bool:
         "ALEPH_TELEGRAM_RICH_MESSAGES must be true or false")
 
 
+_MARKDOWN_SPECIAL = re.compile(r"[_*\[\]()~`>#+\-=|{}.!\\]")
+_ESCAPED_MARKER = re.compile(r"\\\[(\d+)\\\]")
+# A `Label: value` line inside a Current state section. Anchored to the line
+# start and requiring content after the colon, so a sentence ending in a
+# colon, a bullet, or prose with mid-sentence colons never grows a label.
+_STATE_LABEL = re.compile(r"^([A-Za-z][^:<\n]{0,60}?): (?=\S)")
+_STATE_LABEL_HTML = re.compile(r"^([A-Za-z][^:<\n]{0,60}?): (?=\S)", re.M)
+
+
+def _escape_rich(text: str) -> str:
+    """Backslash-escape rich Markdown so answer bytes render as literal text."""
+    return _MARKDOWN_SPECIAL.sub(lambda matched: "\\" + matched.group(0), text)
+
+
+def _rich_url(url: str) -> str:
+    """Escape a URL for a rich Markdown link destination."""
+    return url.replace("\\", "\\\\").replace(")", "\\)")
+
+
 def rich_markdown(text: str) -> str:
-    """Map reviewed sections and citations to native rich Markdown."""
+    """Map reviewed sections and citations to native rich Markdown.
+
+    Only adapter-generated constructs carry markup: reviewed section headings,
+    the numbered source list with compact labels, and linked citation markers.
+    Every other byte is escaped so corpus text can never be reinterpreted as
+    markdown. A lone Explanation heading is dropped from the rendered view —
+    the body speaks for itself and Sources still anchors the message — while
+    multi-section answers keep every heading.
+    """
     if not text:
         raise TelegramError("cannot format an empty rich message")
+    lines = text.split("\n")
+    links = _trailing_sources(text.split("\n\n")) or {}
+    body_headings = [line for line in lines
+                     if line in _RICH_HEADINGS and line != "Sources"]
+    omit_explanation = body_headings == ["Explanation"]
     rendered = []
     in_sources = False
-    for line in text.split("\n"):
+    in_state = False
+    skip_blank = False
+    for index, line in enumerate(lines):
+        if skip_blank and not line:
+            skip_blank = False
+            continue
+        skip_blank = False
         if line in _RICH_HEADINGS:
-            rendered.append(f"## {line}")
             in_sources = line == "Sources"
+            in_state = line == "Current state"
+            if omit_explanation and line == "Explanation":
+                skip_blank = True
+                continue
+            rendered.append(f"## {line}")
             continue
         citation = _SOURCE_CITATION.fullmatch(line) if in_sources else None
         if citation:
-            label = (citation.group("label").replace("\\", "\\\\")
-                     .replace("[", "\\[").replace("]", "\\]"))
-            rendered.append(
-                f'{citation.group("number")}. [{label}]'
-                f'({citation.group("url")})')
-        else:
-            rendered.append(line)
+            label = _escape_rich(_short_label(citation.group("label")))
+            rendered.append(f'{citation.group("number")}. [{label}]'
+                            f'({_rich_url(citation.group("url"))})')
+            continue
+        escaped = _escape_rich(line)
+        escaped = _HEX_VALUE.sub(
+            lambda matched: f"`{matched.group(0)}`", escaped)
+        if in_state:
+            escaped = _STATE_LABEL.sub(r"**\1:** ", escaped, count=1)
+        if links and not in_sources:
+            escaped = _ESCAPED_MARKER.sub(
+                lambda matched: (
+                    f"[\\[{matched.group(1)}\\]]"
+                    f"({_rich_url(links[int(matched.group(1))][1])})"
+                    if int(matched.group(1)) in links else matched.group(0)),
+                escaped)
+        # The rich dialect soft-wraps a single newline into a space, which
+        # collapsed live state into one run-on paragraph. A trailing
+        # backslash is a hard break, keeping one field per line whenever the
+        # next line is more escaped content.
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        if (escaped.strip() and following.strip()
+                and following not in _RICH_HEADINGS
+                and not (in_sources and _SOURCE_CITATION.fullmatch(following))):
+            escaped += "\\"
+        rendered.append(escaped)
     return "\n".join(rendered)
 
 
@@ -311,16 +372,31 @@ def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | 
     if links is None and not any(item in _RICH_HEADINGS for item in paragraphs):
         return None
     body = paragraphs[:-2] if links else paragraphs
+    body_headings = [item for item in body if item in _RICH_HEADINGS]
+    # A lone Explanation heading is dropped from the rendered view; its bytes
+    # ride along in the plain fallback of the paragraph that follows it.
+    omit_explanation = (body_headings == ["Explanation"]
+                        and body and body[-1] != "Explanation")
 
     fragments: list[tuple[str, str, int]] = []
+    carried = ""
+    in_state = False
     for paragraph in body:
+        if omit_explanation and paragraph == "Explanation" and not carried:
+            carried = "Explanation\n\n"
+            continue
+        plain = carried + paragraph
+        carried = ""
         if paragraph in _RICH_HEADINGS:
+            in_state = paragraph == "Current state"
             fragments.append(
-                (paragraph, f"<b>{_escape_html(paragraph)}</b>", len(paragraph)))
+                (plain, f"<b>{_escape_html(paragraph)}</b>", len(paragraph)))
             continue
         html = _HEX_VALUE.sub(
             lambda matched: f"<code>{matched.group(0)}</code>",
             _escape_html(paragraph))
+        if in_state:
+            html = _STATE_LABEL_HTML.sub(r"<b>\1:</b> ", html)
         if links:
             html = _CITATION_MARKER.sub(
                 lambda matched: (
@@ -328,7 +404,7 @@ def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | 
                     f"{matched.group(0)}</a>"
                     if int(matched.group(1)) in links else matched.group(0)),
                 html)
-        fragments.append((paragraph, html, len(paragraph)))
+        fragments.append((plain, html, len(paragraph)))
     if links:
         lines = ["<b>Sources</b>"]
         visible = len("Sources")
@@ -445,7 +521,26 @@ class TelegramAdapter:
         self.identity = BotIdentity(bot_id, username)
         if bot_id in self.peer_bot_ids:
             raise TelegramError("Aleph's own bot ID cannot be a peer bot")
+        self._register_commands()
         return self.identity
+
+    def _register_commands(self) -> None:
+        """Best-effort command-menu registration; failure never blocks startup.
+
+        Only the always-relevant commands appear in the menu. The handoff
+        trio is contextual and is introduced by the triage answer itself.
+        """
+        try:
+            self.api.call("setMyCommands", {"commands": [
+                {"command": "ask",
+                 "description": "Ask a Wildcat Protocol question"},
+                {"command": "help",
+                 "description": "How Aleph answers and cites sources"},
+                {"command": "privacy",
+                 "description": "What Aleph reads"},
+            ]})
+        except TelegramError:
+            pass
 
     def run_once(self, timeout: int = 30) -> int:
         if self.identity is None:
@@ -609,18 +704,33 @@ class TelegramAdapter:
     def _command(self, incoming: Incoming, command: str) -> str:
         name, _, body = command.partition(" ")
         key = (incoming.chat_id, incoming.user_id)
-        if name in ("start", "help"):
-            return ("Ask a Wildcat Protocol question with /ask <question>. In a "
-                    "private chat, plain text also works. Aleph cites pinned "
-                    "evidence and labels live values with their Ethereum block.")
+        if name == "start":
+            return ("Aleph — evidence-bound answers about the Wildcat Protocol.\n\n"
+                    "Try: /ask How do withdrawal cycles work?\n\n"
+                    "In a private chat, plain questions work too. Every answer "
+                    "cites pinned documentation, and live on-chain values name "
+                    "the Ethereum block they were read at. /help covers groups "
+                    "and handoffs; /privacy covers what Aleph reads.")
+        if name == "help":
+            return ("Ask with /ask <question>, or plain text in a private chat. "
+                    f"In groups, use /ask@{self.identity.username} or reply to "
+                    "an Aleph message.\n\n"
+                    "Answers cite pinned Wildcat documentation and contract "
+                    "sources — tap a citation to open the exact document. Live "
+                    "values are read from Ethereum and labelled with their "
+                    "block.\n\n"
+                    "If something needs a human — a stuck transaction, a UI "
+                    "failure — Aleph prepares a handoff and sends nothing until "
+                    "you issue /confirm_handoff.")
         if name == "privacy":
             return ("Aleph processes only messages Telegram delivers to this bot. "
                     "Group privacy mode must remain enabled. Handoffs are never "
                     "sent without /confirm_handoff.")
         if name == "usage":
-            return "Usage: /ask <Wildcat Protocol question>"
+            return ("Usage: /ask <Wildcat Protocol question>\n"
+                    "Example: /ask How do withdrawal cycles work?")
         if name == "unknown":
-            return "Unknown command. Use /ask <question> or /help."
+            return "Unknown command. Try /ask <question> or /help."
         if name == "cancel_handoff":
             self.pending.pop(key, None)
             return "The pending handoff was discarded. Nothing was sent."
