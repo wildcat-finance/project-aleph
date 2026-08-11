@@ -101,6 +101,15 @@ filenames.
 **M6 — pinned refs determine all bytes.** Symlinked documents, symlinked
 navigation, paths outside the root, and unreadable sources are rejected.
 
+**M7 — template chrome does not enter model text.** GitBook `{% … %}` tag bytes
+are removed from model text wherever they sit on a line — not only when they
+open one — while the visible prose they wrap survives. A live corpus chunk
+carried `{% hint style="info" %}` sharing a line with prose into a delivered
+answer. Tag syntax inside fenced code or a valid code span remains visible
+example markup, and an unclosed `{%` is literal text rather than an unbounded
+hiding delimiter. Display text still quotes the file byte-for-byte: the strip
+happens in span selection for model text, never in citation bytes.
+
 ## Why the implementation has these shapes
 
 The following defect classes were found and fixed across four review rounds.
