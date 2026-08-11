@@ -78,6 +78,19 @@ def market_summary() -> dict:
             "asset": {"address": ASSET, "symbol": "USDC", "decimals": 6}}
 
 
+def registry_markets(count: int = 12) -> list[dict]:
+    markets = []
+    for index in range(count, 0, -1):
+        item = market_summary()
+        item.update({
+            "id": f"0x{index:040x}",
+            "name": ("Registry Market " + str(index)) * (20 if index == 12 else 1),
+            "symbol": ("WILD-" + str(index)) * (20 if index == 12 else 1),
+        })
+        markets.append(item)
+    return markets
+
+
 def healthy() -> dict:
     return {"deployments": [{
         "chainId": 1, "releaseName": "v2.0.30", "state": "ready",
@@ -107,7 +120,7 @@ class FakeTransport:
         query = body["query"]
         data = {"_meta": {"block": {"number": self.block}}}
         if "query Registry(" in query:
-            data["markets"] = [market_summary()]
+            data["markets"] = registry_markets()
         elif "query Market(" in query:
             data["market"] = {**market_summary(),
                 "totalAssets": "123456789", "maxTotalSupply": "1000000000",
@@ -245,6 +258,29 @@ def run(tmp: pathlib.Path) -> None:
           all(result.block_number == 100 and result.gateway_release == "v2.0.30"
               for result in (
                   market, registry, account, withdrawals, borrower, history)))
+    registry_render = live.render_live(registry)
+    registry_lines = registry_render.text.splitlines()
+    check("registry rendering states the total and deterministic first page",
+          registry_lines[0] == (
+              "Registered markets (12; showing 1–10 in contract-address order):")
+          and len([line for line in registry_lines if line.startswith("- ")])
+              == live.REGISTRY_PAGE_SIZE
+          and "0x0000000000000000000000000000000000000001"
+              in registry_lines[1]
+          and "0x000000000000000000000000000000000000000a"
+              in registry_lines[10]
+          and "000000000000000000000000000000000000000b"
+              not in registry_render.text)
+    check("registry rendering is byte-stable and fits one Telegram message",
+          registry_render == live.render_live(registry)
+          and len(registry_render.text) <= 4096
+          and registry_render.text.endswith(
+              "Data Gateway release v2.0.30."))
+    check("registry labels and the fetched-result ceiling are explicit",
+          len(live._registry_label("x" * 200)) == live.REGISTRY_LABEL_LIMIT
+          and live._registry_label("line one\n- forged line")
+              == "line one - forged line"
+          and registry.value.query_limit == live.DEFAULT_REGISTRY_LIMIT)
     check("account claimable is allocated exactly across pending batches",
           account.value.claimable_withdrawals == 1_250_000)
     smoke_transport = FakeTransport()

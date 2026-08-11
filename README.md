@@ -53,6 +53,10 @@ name, or other fuzzy description. That requires indexed live discovery, not a
 larger language-model prompt. Transaction-history questions therefore require
 the market contract address. The live path returns at most ten deterministically
 ordered events and does not replace the complete Wildcat market CSV export.
+General registry discovery is similarly bounded: Aleph reports the observed
+count and the first ten markets in contract-address order, then asks for a
+specific market address. It never pours the complete unfiltered registry into a
+Telegram chat.
 
 Corpus answers currently use a strict extractive writer. It selects one coherent,
 topic-relevant source by default and refuses unsupported synthesis. Fluent
