@@ -59,10 +59,10 @@ dispositions:
   golden_id: n03
   rationale: n03 already corrects the same nonexistent governance-vote premise.
 - candidate_id: candidate_c3a52955aaded6e20056
-  status: deferred
-  expected: clarify
-  issue: https://github.com/wildcat-finance/project-aleph/issues/60
-  rationale: The original wording lacks a market address; the addressed follow-up needs the bounded history capability tracked in issue 60.
+  status: accepted
+  expected: live
+  golden_id: q07
+  rationale: The exact question now asks for the market address before the bounded, block-pinned transaction-history read.
 - candidate_id: candidate_c89d7906702a3d6426f6
   status: accepted
   expected: live

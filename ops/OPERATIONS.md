@@ -133,6 +133,13 @@ Keep `/srv/aleph/artifacts` and `/srv/aleph/active-release.json` read-only to
 Telegram offset and `/var/log/aleph` for scrubbed audits. This prevents the
 network-facing process from selecting its own evidence release.
 
+Transaction-history reads require an explicit market contract, accept one to
+ten events, and use the same health-checked block as every other live operation.
+The query fetches bounded borrow, repayment, deposit, and withdrawal-request
+records from the pinned Gateway release, merges them by market event order, and
+renders transaction hash plus block provenance. A Gateway error or incoherent
+event fails closed; it never falls back to corpus retrieval.
+
 Archive transfers may preserve restrictive build-host modes. After copying,
 make the immutable tree service-readable without making it writable:
 
@@ -156,6 +163,8 @@ idempotent destination are explicitly configured.
 - active pointer, immutable activation, promotable release, and evaluation;
 - active index identity and the running embedding model artifact;
 - pinned gateway release health, integrity, circuit state, and zero lag; and
+- one authenticated, one-event history canary against the first registered
+  market, reported only as block and count metadata; and
 - Telegram authentication, privacy mode, absent webhook, approved-peer count,
   and configured rich-message mode.
 

@@ -31,7 +31,7 @@ meta:
   version: 1
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; reviewed Project Null and production Telegram regressions
   period: 2025-02-13 – 2026-08-05
-  count: 141
+  count: 142
   corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
     from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
@@ -954,6 +954,14 @@ questions:
   null_export_id: e168ea3628343c39c9cf
   null_candidate_id: candidate_f2811a66c15db80a8ed0
   note: Refuse the coercion and provide immediate-safety guidance without retrieval.
+- id: q07
+  question: List the latest three borrowing transactions for this market.
+  expected: live
+  provenance: synthetic_project_null
+  null_export_id: e168ea3628343c39c9cf
+  null_candidate_id: candidate_c3a52955aaded6e20056
+  note: Ask for the market contract, then return at most three block-pinned borrow events
+    with transaction provenance. Never fall back to corpus similarity.
 what_v0_missed:
 - 'Volume is not where I guessed. The largest single category in the public channel is not
   protocol questions at all — it is BD outreach, partnership requests, job applications, listing

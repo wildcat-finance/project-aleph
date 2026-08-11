@@ -9,7 +9,10 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Callable, Protocol
 
-from live import GatewayUnavailable, LiveError, RenderedLive, render_live
+from live import (
+    DEFAULT_HISTORY_EVENTS, HISTORY_EVENT_TYPES, MAX_HISTORY_EVENTS,
+    GatewayUnavailable, LiveError, RenderedLive, render_live,
+)
 from retrieval import (Citation, CitationError, Evidence, RetrievalError,
                        RetrievalRequest, ScopeError, expand_query)
 
@@ -49,6 +52,8 @@ class Route:
     entities: Entities
     live_operation: str | None = None
     live_field: str | None = None
+    live_limit: int | None = None
+    live_event_types: tuple[str, ...] = ()
     destination: str | None = None
     refusal_reason: str | None = None
     triage_kind: str | None = None
@@ -171,11 +176,17 @@ class Router:
         r"guarantees? all deposits", re.I)
     _historical_activity = re.compile(
         r"\b(?:last|latest|most recent)\b.{0,100}"
-        r"\b(?:borrow(?:ed|ing)?|withdr(?:aw|ew|awn|awal)|"
-        r"repa(?:y|id|yment)|deposit(?:ed)?)\b|"
+        r"\b(?:transactions?|events?|borrow(?:ed|ing)?|"
+        r"withdr(?:aw|ew|awn|awal)|repa(?:y|id|yment)|deposit(?:ed)?)\b|"
         r"\bwhen\b.{0,100}\b(?:last|latest|most recent)\b.{0,100}"
         r"\b(?:borrow(?:ed|ing)?|withdr(?:aw|ew|awn|awal)|"
-        r"repa(?:y|id|yment)|deposit(?:ed)?)\b", re.I)
+        r"repa(?:y|id|yment)|deposit(?:ed)?)\b|"
+        r"\b(?:show|list|read|give me)\b.{0,40}"
+        r"\b(?:transaction|activity)\s+history\b", re.I)
+    _history_count = re.compile(
+        r"\b(?:last|latest|most recent)\s+(?:the\s+)?"
+        r"(?P<count>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        re.I)
     _advice = re.compile(
         r"should i (?:lend|invest)|trustworth|best repayment|best borrower|"
         r"repayment record|pattern of late|short an asset|guarantee.*apr|"
@@ -321,18 +332,18 @@ class Router:
             return Route(RouteMode.REFUSE_POINT, "unsupported chain", entities,
                          destination="Wildcat support",
                          refusal_reason="unsupported_chain")
-        if self._historical_activity.search(question):
-            return Route(
-                RouteMode.REFUSE_POINT,
-                "historical transaction activity is not a current-state read",
-                entities, destination="Wildcat market CSV exporter",
-                refusal_reason="historical_activity_unavailable")
         if self._action.search(question):
             return Route(RouteMode.TRIAGE, "requested operational action", entities,
                          triage_kind="withdrawal_action")
         if self._triage.search(question):
             return Route(RouteMode.TRIAGE, "user-visible operational failure", entities,
                          triage_kind="technical_failure")
+        if self._historical_activity.search(question):
+            return Route(
+                RouteMode.LIVE, "bounded market transaction history", entities,
+                live_operation="history",
+                live_limit=self._history_limit(question),
+                live_event_types=self._history_event_types(question))
         if self._corpus_live.search(question):
             return Route(RouteMode.CORPUS_LIVE, "mechanism plus current state",
                          entities, live_operation=self._operation(question),
@@ -408,6 +419,33 @@ class Router:
         if re.search(r"withdrawal|batch|queue|ongoing cycle", lower):
             return "withdrawals"
         return "market"
+
+    @classmethod
+    def _history_limit(cls, question: str) -> int:
+        matched = cls._history_count.search(question)
+        if matched is None:
+            return (1 if re.search(r"\b(?:last|latest|most recent)\b",
+                                   question, re.I)
+                    else DEFAULT_HISTORY_EVENTS)
+        words = {
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        }
+        raw = matched.group("count").casefold()
+        requested = words.get(raw, int(raw) if raw.isdecimal() else 0)
+        return min(max(requested, 1), MAX_HISTORY_EVENTS)
+
+    @staticmethod
+    def _history_event_types(question: str) -> tuple[str, ...]:
+        patterns = {
+            "borrow": r"\bborrow(?:ed|ing|s)?\b",
+            "repayment": r"\brepa(?:y|id|ys|ying|yment|yments)\b",
+            "deposit": r"\bdeposit(?:ed|ing|s)?\b",
+            "withdrawal": r"\bwithdr(?:aw|aws|awn|ew|awal|awals|awing)\b",
+        }
+        selected = tuple(kind for kind in HISTORY_EVENT_TYPES
+                         if re.search(patterns[kind], question, re.I))
+        return selected or HISTORY_EVENT_TYPES
 
     @classmethod
     def _addressed_market(cls, question: str, entities: Entities) -> bool:
@@ -731,7 +769,10 @@ class AnswerEngine:
         elif claim_lines:
             sections.append("Explanation\n\n" + "\n\n".join(claim_lines))
         if live_rendered:
-            sections.append("Current state\n\n" + live_rendered.text)
+            heading = ("Transaction history"
+                       if live_rendered.operation == "history"
+                       else "Current state")
+            sections.append(heading + "\n\n" + live_rendered.text)
         if route.mode == RouteMode.PARTIAL:
             sections.append(
                 "I can report public state, but I cannot infer or speak for a "
@@ -759,6 +800,11 @@ class AnswerEngine:
                 entities.market_address, entities.account_address)
         if operation == "withdrawals":
             return self.live_client.withdrawals(entities.market_address)
+        if operation == "history":
+            return self.live_client.history(
+                entities.market_address,
+                limit=route.live_limit or DEFAULT_HISTORY_EVENTS,
+                event_types=route.live_event_types)
         if operation == "market":
             return self.live_client.market(entities.market_address)
         raise AnswerError(f"unsupported live operation {operation!r}")
@@ -768,7 +814,8 @@ class AnswerEngine:
         entities = route.entities
         if route.live_operation == "borrower_markets" and not entities.borrower_address:
             return "the borrower's Ethereum address"
-        if route.live_operation in ("market", "withdrawals") and not entities.market_address:
+        if (route.live_operation in ("market", "withdrawals", "history")
+                and not entities.market_address):
             return "the market contract address"
         if route.live_operation == "account":
             if not entities.market_address:
@@ -792,10 +839,6 @@ class AnswerEngine:
         elif route.refusal_reason == "unsafe_or_abusive":
             text = ("I can't comply with hateful or self-harm coercion. If someone "
                     "may be in immediate danger, contact local emergency services.")
-        elif route.refusal_reason == "historical_activity_unavailable":
-            text = ("This Aleph release can read current state but not transaction "
-                    "history, so I can't determine the latest borrow, repayment, "
-                    "deposit, or withdrawal.")
         elif route.refusal_reason == "outside_answer_boundary":
             text = "I can only answer questions within Aleph's Wildcat Protocol scope."
         if destination:

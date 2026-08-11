@@ -92,6 +92,28 @@
         "isClosed": false, "isRegistered": true, "decimals": 6,
         "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6}
       }]
+    },
+    "history": {
+      "_meta": {"block": {"number": 100}},
+      "market": {
+        "id": "0x1111111111111111111111111111111111111111",
+        "name": "Evaluation Market",
+        "asset": {"address": "0x3333333333333333333333333333333333333333", "symbol": "USDC", "decimals": 6},
+        "borrowRecords": [
+          {"eventIndex": 40, "assetAmount": "4000000", "blockNumber": 100, "blockTimestamp": 1700000400, "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "blockLogIndex": 4},
+          {"eventIndex": 32, "assetAmount": "3200000", "blockNumber": 99, "blockTimestamp": 1700000320, "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "blockLogIndex": 3},
+          {"eventIndex": 20, "assetAmount": "2000000", "blockNumber": 98, "blockTimestamp": 1700000200, "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "blockLogIndex": 2}
+        ],
+        "repaymentRecords": [
+          {"eventIndex": 39, "assetAmount": "3900000", "blockNumber": 100, "blockTimestamp": 1700000390, "transactionHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "blockLogIndex": 3}
+        ],
+        "depositRecords": [
+          {"eventIndex": 38, "assetAmount": "3800000", "blockNumber": 100, "blockTimestamp": 1700000380, "transactionHash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "blockLogIndex": 2}
+        ],
+        "withdrawalRequestRecords": [
+          {"eventIndex": 37, "normalizedAmount": "3700000", "blockNumber": 100, "blockTimestamp": 1700000370, "transactionHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "blockLogIndex": 1}
+        ]
+      }
     }
   }
 }

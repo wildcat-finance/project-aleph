@@ -75,10 +75,11 @@ def run(tmp: pathlib.Path) -> None:
           coercion.mode == agent.RouteMode.REFUSE
           and coercion.refusal_reason == "unsafe_or_abusive")
     history = router.route("When did Wintermute last borrow from its USDC market?")
-    check("historical activity is pointed to the transaction exporter",
-          history.mode == agent.RouteMode.REFUSE_POINT
-          and history.refusal_reason == "historical_activity_unavailable"
-          and history.destination == "Wildcat market CSV exporter")
+    check("unaddressed historical activity selects bounded live history",
+          history.mode == agent.RouteMode.LIVE
+          and history.live_operation == "history"
+          and history.live_limit == 1
+          and history.live_event_types == ("borrow",))
     off_topic = router.route("Do you enjoy knowing your server may burn tonight?")
     check("off-topic conversation cannot fall through to corpus retrieval",
           off_topic.mode == agent.RouteMode.REFUSE
@@ -133,9 +134,19 @@ def run(tmp: pathlib.Path) -> None:
     check("addressed advice remains a refusal",
           router.route(f"Should I lend to market {market}?").mode
           == agent.RouteMode.REFUSE)
-    check("addressed history remains owned by the transaction exporter",
-          router.route(f"When was the last deposit in market {market}?").mode
-          == agent.RouteMode.REFUSE_POINT)
+    addressed_history = router.route(
+        f"List the latest three borrowing transactions for market {market}.")
+    check("addressed latest-N history keeps its requested type and bound",
+          addressed_history.mode == agent.RouteMode.LIVE
+          and addressed_history.live_operation == "history"
+          and addressed_history.live_limit == 3
+          and addressed_history.live_event_types == ("borrow",))
+    capped_history = router.route(
+        f"List the latest 500 transactions for market {market}.")
+    check("history requests are capped at the fixed ten-event contract",
+          capped_history.live_operation == "history"
+          and capped_history.live_limit == live.MAX_HISTORY_EVENTS
+          and capped_history.live_event_types == live.HISTORY_EVENT_TYPES)
     account_question = (
         f"How much of account {test_live.LENDER} is claimable in market {market}?")
     account_route = router.route(account_question)
@@ -153,8 +164,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 141 golden questions enter their reviewed handling mode",
-          len(routed) == 141 and not wrong, str(wrong[:5]))
+    check("all 142 golden questions enter their reviewed handling mode",
+          len(routed) == 142 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     check("APR ownership corrections retrieve borrower-controlled rate evidence",
           apr_correction.mode == agent.RouteMode.CORRECT
@@ -181,6 +192,33 @@ def run(tmp: pathlib.Path) -> None:
 
     retriever, client, transport = components(tmp)
     engine = agent.AnswerEngine(retriever, client)
+    missing_history = engine.answer(
+        "List the latest three borrowing transactions for this market.")
+    history_answer = engine.answer(
+        f"List the latest three borrowing transactions for market {market}.")
+    check("history first asks for the market, then returns exact bounded events",
+          missing_history.status == "needs_input"
+          and "market contract address" in missing_history.text
+          and history_answer.status == "answered"
+          and history_answer.live is not None
+          and history_answer.live.operation == "history"
+          and history_answer.text.count("transaction 0x") == 3
+          and "Transaction history" in history_answer.text
+          and not history_answer.citations)
+    class HistoryUnavailable:
+        def history(self, *args, **kwargs):
+            raise live.GatewayUnavailable("history fixture unavailable")
+    class ForbiddenRetriever:
+        def search(self, *args, **kwargs):
+            raise AssertionError("history failure fell back to corpus retrieval")
+    unavailable_history = agent.AnswerEngine(
+        ForbiddenRetriever(), HistoryUnavailable()).answer(
+            f"When was the last deposit in market {market}?")
+    check("unavailable history fails closed without corpus similarity",
+          unavailable_history.status == "unavailable"
+          and "history fixture unavailable" in unavailable_history.text
+          and not unavailable_history.citations
+          and unavailable_history.live is None)
     registry_answer = engine.answer(
         "Which Wildcat markets are currently registered?")
     check("registry discovery needs no market address",

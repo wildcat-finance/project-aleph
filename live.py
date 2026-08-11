@@ -31,11 +31,21 @@ class GatewayUnavailable(LiveError):
 
 
 _ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_TRANSACTION_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
+HISTORY_EVENT_TYPES = ("borrow", "repayment", "deposit", "withdrawal")
+DEFAULT_HISTORY_EVENTS = 5
+MAX_HISTORY_EVENTS = 10
 
 
 def _address(value: str, field: str) -> str:
     if not isinstance(value, str) or not _ADDRESS.fullmatch(value):
         raise LiveError(f"{field} is not an Ethereum address: {value!r}")
+    return value.lower()
+
+
+def _transaction_hash(value: str) -> str:
+    if not isinstance(value, str) or not _TRANSACTION_HASH.fullmatch(value):
+        raise LiveError(f"transactionHash is malformed: {value!r}")
     return value.lower()
 
 
@@ -48,6 +58,15 @@ def _integer(value: Any, field: str) -> int:
         raise LiveError(f"{field} is not an integer: {value!r}")
     if result < 0:
         raise LiveError(f"{field} is negative: {result}")
+    return result
+
+
+def _timestamp(value: Any, field: str) -> int:
+    result = _integer(value, field)
+    try:
+        datetime.fromtimestamp(result, timezone.utc)
+    except (OverflowError, OSError, ValueError) as error:
+        raise LiveError(f"{field} is outside the supported UTC range") from error
     return result
 
 
@@ -321,6 +340,27 @@ class BorrowerMarketsState:
 
 
 @dataclass(frozen=True)
+class MarketHistoryEvent:
+    kind: str
+    amount: int
+    event_index: int
+    block_number: int
+    block_timestamp: int
+    transaction_hash: str
+    block_log_index: int
+
+
+@dataclass(frozen=True)
+class MarketHistoryState:
+    market_address: str
+    market_name: str
+    asset: TokenState
+    requested_limit: int
+    event_types: tuple[str, ...]
+    events: tuple[MarketHistoryEvent, ...]
+
+
+@dataclass(frozen=True)
 class LiveResult:
     operation: str
     chain_id: int
@@ -386,6 +426,33 @@ _QUERIES = {
       markets(block: $block, where: {{ borrower: $borrower }}, first: $first,
               orderBy: id, orderDirection: asc) {{ {_MARKET_FIELDS} }}
     }}""",
+    "history": """query History(
+        $block: Block_height!, $market: ID!, $first: Int!) {
+      _meta(block: $block) { block { number } }
+      market(block: $block, id: $market) {
+        id name asset { address symbol decimals }
+        borrowRecords(first: $first, orderBy: eventIndex,
+                      orderDirection: desc) {
+          eventIndex assetAmount blockNumber blockTimestamp
+          transactionHash blockLogIndex
+        }
+        repaymentRecords(first: $first, orderBy: eventIndex,
+                         orderDirection: desc) {
+          eventIndex assetAmount blockNumber blockTimestamp
+          transactionHash blockLogIndex
+        }
+        depositRecords(first: $first, orderBy: eventIndex,
+                       orderDirection: desc) {
+          eventIndex assetAmount blockNumber blockTimestamp
+          transactionHash blockLogIndex
+        }
+        withdrawalRequestRecords(first: $first, orderBy: eventIndex,
+                                 orderDirection: desc) {
+          eventIndex normalizedAmount blockNumber blockTimestamp
+          transactionHash blockLogIndex
+        }
+      }
+    }""",
 }
 
 
@@ -623,6 +690,75 @@ class GatewayClient:
                 borrower=borrower,
                 markets=tuple(_market_summary(item) for item in data["markets"])))
 
+    def history(self, market: str, limit: int = DEFAULT_HISTORY_EVENTS,
+                event_types: tuple[str, ...] = ()) -> LiveResult:
+        market = _address(market, "market")
+        if not 1 <= limit <= MAX_HISTORY_EVENTS:
+            raise LiveError(
+                f"history limit must be between 1 and {MAX_HISTORY_EVENTS}")
+        selected = event_types or HISTORY_EVENT_TYPES
+        if (not isinstance(selected, tuple) or not selected
+                or len(set(selected)) != len(selected)
+                or any(kind not in HISTORY_EVENT_TYPES for kind in selected)):
+            raise LiveError("history event types are empty, duplicated, or unsupported")
+        selected_set = set(selected)
+        selected = tuple(kind for kind in HISTORY_EVENT_TYPES
+                         if kind in selected_set)
+
+        def parse(data):
+            item = data.get("market")
+            if item is None:
+                raise LiveError(f"market {market} is absent at the observed block")
+            families = (
+                ("borrow", "borrowRecords", "assetAmount"),
+                ("repayment", "repaymentRecords", "assetAmount"),
+                ("deposit", "depositRecords", "assetAmount"),
+                ("withdrawal", "withdrawalRequestRecords", "normalizedAmount"),
+            )
+            events = []
+            for kind, field, amount_field in families:
+                records = item.get(field)
+                if not isinstance(records, list):
+                    raise LiveError(f"history response omits {field}")
+                if len(records) > limit:
+                    raise LiveError(f"history response exceeds the {field} limit")
+                if kind not in selected_set:
+                    continue
+                for record in records:
+                    events.append(MarketHistoryEvent(
+                        kind=kind,
+                        amount=_integer(record[amount_field], amount_field),
+                        event_index=_integer(record["eventIndex"], "eventIndex"),
+                        block_number=_integer(record["blockNumber"], "blockNumber"),
+                        block_timestamp=_timestamp(
+                            record["blockTimestamp"], "blockTimestamp"),
+                        transaction_hash=_transaction_hash(
+                            record["transactionHash"]),
+                        block_log_index=_integer(
+                            record["blockLogIndex"], "blockLogIndex")))
+            identities = {(event.transaction_hash, event.block_log_index)
+                          for event in events}
+            if len(identities) != len(events):
+                raise LiveError("history response contains duplicate log identities")
+            events.sort(key=lambda event: (
+                event.event_index, event.block_number, event.block_log_index,
+                event.transaction_hash, event.kind), reverse=True)
+            return MarketHistoryState(
+                market_address=market,
+                market_name=_text(item["name"], "market name"),
+                asset=_token(item["asset"]),
+                requested_limit=limit,
+                event_types=selected,
+                events=tuple(events[:limit]))
+
+        result = self._query(
+            "history", {"market": market, "first": limit}, parse)
+        if any(event.block_number > result.block_number
+               for event in result.value.events):
+            raise LiveError(
+                "history event block is later than the pinned response block")
+        return result
+
 
 def _token(item: dict) -> TokenState:
     return TokenState(address=_address(item["address"], "asset"),
@@ -759,6 +895,25 @@ def render_live(result: LiveResult, field: str | None = None) -> RenderedLive:
         lines += [f"- {market.name} ({market.symbol}) — {market.address}; "
                   f"closed: {'yes' if market.is_closed else 'no'}"
                   for market in value.markets]
+    elif isinstance(value, MarketHistoryState):
+        names = {
+            "borrow": "borrow", "repayment": "repayment",
+            "deposit": "deposit", "withdrawal": "withdrawal request",
+        }
+        scope = ", ".join(names[kind] for kind in value.event_types)
+        lines = [
+            f"Latest {len(value.events)} matching event(s) for "
+            f"{value.market_name} (limit {value.requested_limit}; {scope}):"]
+        if not value.events:
+            lines.append("- No matching events found at the observed block.")
+        for event in value.events:
+            timestamp = datetime.fromtimestamp(
+                event.block_timestamp, timezone.utc).isoformat()
+            lines.append(
+                f"- {names[event.kind].capitalize()}: "
+                f"{format_units(event.amount, value.asset.decimals)} "
+                f"{value.asset.symbol}; {timestamp}; block "
+                f"{event.block_number:,}; transaction {event.transaction_hash}")
     else:
         raise LiveError(f"no deterministic renderer for {type(value).__name__}")
     lines += ["", _observed(result)]
