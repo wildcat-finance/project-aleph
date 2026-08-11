@@ -29,6 +29,10 @@ jobs:
           python test_telegram.py
           python test_operations.py
           python test_evaluation.py
+          python test_null_import.py
+          python eval/null_import.py \
+            --export eval/null-exports/e168ea3628343c39c9cf \
+            --dispositions eval/null-dispositions-v1.yaml
           python ingest/test_audit_corpus.py
           python ingest/test_build.py
           python ingest/chunkers/test_markdown.py
