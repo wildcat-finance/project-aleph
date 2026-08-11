@@ -35,6 +35,9 @@ _TRANSACTION_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
 HISTORY_EVENT_TYPES = ("borrow", "repayment", "deposit", "withdrawal")
 DEFAULT_HISTORY_EVENTS = 5
 MAX_HISTORY_EVENTS = 10
+DEFAULT_REGISTRY_LIMIT = 100
+REGISTRY_PAGE_SIZE = 10
+REGISTRY_LABEL_LIMIT = 80
 
 
 def _address(value: str, field: str) -> str:
@@ -278,6 +281,7 @@ class MarketSummary:
 @dataclass(frozen=True)
 class RegistryState:
     markets: tuple[MarketSummary, ...]
+    query_limit: int
 
 
 @dataclass(frozen=True)
@@ -562,12 +566,14 @@ class GatewayClient:
             block_number=block, observed_head=health.observed_head,
             value=value)
 
-    def registry(self, limit: int = 100) -> LiveResult:
+    def registry(self, limit: int = DEFAULT_REGISTRY_LIMIT) -> LiveResult:
         if not 1 <= limit <= 1000:
             raise LiveError("registry limit must be between 1 and 1000")
         return self._query("registry", {"first": limit},
-                           lambda data: RegistryState(tuple(
-                               _market_summary(item) for item in data["markets"])))
+                           lambda data: RegistryState(
+                               tuple(_market_summary(item)
+                                     for item in data["markets"]),
+                               query_limit=limit))
 
     def market(self, market: str) -> LiveResult:
         market = _address(market, "market")
@@ -826,15 +832,39 @@ def _observed(result: LiveResult) -> str:
             f"Data Gateway release {result.gateway_release}.")
 
 
+def _registry_label(value: str) -> str:
+    """Bound untrusted display metadata without changing typed registry facts."""
+    display = " ".join(value.split()) or "unnamed"
+    if len(display) <= REGISTRY_LABEL_LIMIT:
+        return display
+    return display[:REGISTRY_LABEL_LIMIT - 1].rstrip() + "…"
+
+
 def render_live(result: LiveResult, field: str | None = None) -> RenderedLive:
     value = result.value
     if field is not None and not isinstance(value, MarketState):
         raise LiveError(
             f"field-specific rendering is unavailable for {type(value).__name__}")
     if isinstance(value, RegistryState):
-        lines = [f"Registered markets ({len(value.markets)}):"]
-        lines += [f"- {market.name} ({market.symbol}) — {market.address}"
-                  for market in value.markets]
+        ordered = sorted(value.markets, key=lambda market: market.address)
+        shown = ordered[:REGISTRY_PAGE_SIZE]
+        count = len(ordered)
+        count_label = (str(count) if count < value.query_limit
+                       else f"at least {count}")
+        if count > REGISTRY_PAGE_SIZE:
+            range_label = f"; showing 1–{len(shown)} in contract-address order"
+        else:
+            range_label = "; in contract-address order"
+        lines = [f"Registered markets ({count_label}{range_label}):"]
+        lines += [
+            f"- {_registry_label(market.name)} "
+            f"({_registry_label(market.symbol)}) — {market.address}"
+            for market in shown
+        ]
+        if count > REGISTRY_PAGE_SIZE:
+            lines.append(
+                "To narrow the registry, ask about a specific market contract "
+                "address.")
     elif isinstance(value, MarketState):
         market, token = value.market, value.market.asset
         remaining_capacity = max(0, value.max_total_supply - value.total_assets)

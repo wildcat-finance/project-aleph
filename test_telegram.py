@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import agent
+import live
 import telegram
 import test_agent
 
@@ -434,6 +435,19 @@ def run(tmp: pathlib.Path) -> None:
     check("4096-byte chunks reconstruct the exact answer",
           len(chunks) > 2 and max(map(len, chunks)) <= 4096
           and "".join(chunks) == long_text)
+    registry_text = real_engine.engine.answer(
+        "Which Wildcat markets are currently registered?").text
+    registry_api = FakeAPI([update(300, "registry")])
+    registry_service = adapter(
+        tmp / "bounded-registry", StaticEngine(registry_text), registry_api)
+    registry_service.run_once()
+    check("a general registry answer is delivered as exactly one message",
+          len(registry_api.sent) == 1
+          and registry_api.sent[0]["parse_mode"] == "HTML"
+          and "Registered markets (12; showing 1–10"
+              in registry_api.sent[0]["text"]
+          and "reply_parameters" in registry_api.sent[0]
+          and registry_text.count("\n- ") == live.REGISTRY_PAGE_SIZE)
     long_api = FakeAPI([update(30, "question")])
     long_service = adapter(tmp / "long", StaticEngine(long_text), long_api)
     long_service.run_once()

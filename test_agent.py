@@ -230,7 +230,11 @@ def run(tmp: pathlib.Path) -> None:
     check("registry discovery needs no market address",
           registry_answer.status == "answered"
           and registry_answer.live is not None
-          and registry_answer.live.operation == "registry")
+          and registry_answer.live.operation == "registry"
+          and registry_answer.live.text.count("\n- ")
+              == live.REGISTRY_PAGE_SIZE
+          and "Registered markets (12; showing 1–10" in registry_answer.text
+          and len(registry_answer.text) <= 4096)
     bare_market = engine.answer(market)
     url_market = engine.answer(market_url)
     check("bare addresses and market URLs return the same live summary",
