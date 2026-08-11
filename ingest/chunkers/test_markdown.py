@@ -281,17 +281,16 @@ def test_short_parent_headings() -> None:
           kid.detail["heading_path"] == ["Root", "Parent", "Child"],
           str(kid.detail["heading_path"]))
 
-    # a heading-only document still gets represented — by its index, and (since
-    # Round 3) by the document itself, because a page too short to section is
-    # still a page and vanishing was the worse failure
+    # A heading-only document still gets represented by its index. Repeating
+    # the raw heading as a whole-document chunk adds retrieval noise without
+    # adding evidence.
     only = chunk_text("# Nav Page\n\n## A\n\n## B\n")
     check("heading-only document is not dropped", len(only) >= 1, str(len(only)))
     check("its index is present",
           any(c.kind == "index" for c in only), str([c.kind for c in only]))
     whole = [c for c in only if c.detail.get("whole_document")]
-    check("and its text survives as one whole-document chunk",
-          len(whole) == 1 and "Nav Page" in whole[0].display_text,
-          str([c.id for c in only]))
+    check("its heading is not repeated as a whole-document evidence chunk",
+          not whole, str([c.id for c in only]))
 
     # a short heading must not leave the previous section's ancestry behind
     seq = chunk_text(f"# One\n\n{LONG}\n## Short\n\n# Two\n\n{LONG}")

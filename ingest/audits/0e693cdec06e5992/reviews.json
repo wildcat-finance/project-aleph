@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "corpus_sha256": "189d87717047c63187234bc7427698314987b73a1aeaa36d7f8741cd596ff986",
+  "audit_id": "9f17f4fa262050c1",
+  "reviewer": "Codex structural review for project-aleph issue #33",
+  "rules": [
+    {
+      "name": "heading-bounded legal sections",
+      "warning": "legal",
+      "decision": "coherent",
+      "rationale": "Each record is a verbatim, heading-bounded clause, definition group, or legal document index with pinned effective-date metadata. Keeping clause boundaries preserves exact citation context; sections above 2,000 characters are explicit exceptions below the 10,000-character pathological ceiling.",
+      "size_exception": true,
+      "expected_count": 144,
+      "expected_ids_sha256": "976e7cb94b5f3ea3fa6b0845efb4b078ea5d0459574b30fcc6ca62341d699361"
+    },
+    {
+      "name": "deterministic indexes and Solidity surfaces",
+      "warning": "synthesised",
+      "decision": "coherent",
+      "rationale": "Each record is deterministically assembled from one pinned document or one compiled Solidity unit. It provides navigation or ABI surface rather than model-authored prose, is visibly marked synthesised, and retains exact source provenance. Oversized contract surfaces are explicit indivisible-unit exceptions below the hard ceiling.",
+      "size_exception": true,
+      "expected_count": 141,
+      "expected_ids_sha256": "07069f92f946b91006e5adc25d4345fdd76ca3608742a6eebdb3b2cdb6f3d365"
+    },
+    {
+      "name": "provenance-distinct exact duplicates",
+      "warning": "duplicate-content",
+      "decision": "coherent",
+      "rationale": "The exact text is intentionally repeated by distinct pinned source pages or protocol/user-documentation authorities. Corpus provenance remains distinct, while answer assembly deduplicates identical quoted claim text; removing one copy would discard a valid citation lineage.",
+      "expected_count": 18,
+      "expected_ids_sha256": "689b277692e16733d6d91d410ff23efe761b563453932534b07a60b95e46fc43"
+    },
+    {
+      "name": "subordinate strong labels",
+      "warning": "nested-strong-sections",
+      "decision": "coherent",
+      "rationale": "All matched records were inspected as a class. Their strong paragraphs are subordinate labels, function names, changelog fields, examples, or callouts within one real ATX-heading topic; they are not sibling topic boundaries. The two oversized members are explicit coherent-section exceptions below the hard ceiling.",
+      "size_exception": true,
+      "expected_count": 13,
+      "expected_ids_sha256": "ac2cd01faeac52940821327fa0e74b67cea4425da1d8ea73ca206a5b6eee6bd8"
+    },
+    {
+      "name": "heading or symbol bounded oversized units",
+      "warning": "oversized-review",
+      "decision": "coherent",
+      "rationale": "Each remaining record is bounded by one source heading, compiled function, or compiled contract surface and contains one workflow, mechanism, clause, or symbol. Splitting inside the unit would detach prerequisites, ordered steps, examples, or code context. Every match is an explicit size exception below the 10,000-character release blocker.",
+      "size_exception": true,
+      "expected_count": 32,
+      "expected_ids_sha256": "7706d923bafd8392fcefda6fadc7315aa56115e973ee54208db321451d03235a"
+    }
+  ]
+}

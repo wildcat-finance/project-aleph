@@ -850,7 +850,17 @@ def chunk_file(path: pathlib.Path, root: pathlib.Path,
         whole = blob[body_start:].decode("utf-8", "replace")
         whole_model = strip_invisible_spans(blob, body_start, len(blob),
                                              comments)
-        if whole_model.strip():
+        # A heading-only navigation stub has no evidence beyond structure. Its
+        # synthesised document index preserves that structure; emitting the raw
+        # heading again creates a tiny retrieval result such as ``# /market``.
+        # Keep genuinely short prose documents, but do not mistake ATX headings
+        # and thematic separators for prose.
+        substantive = "\n".join(
+            line for line in whole_model.splitlines()
+            if line.strip()
+            and not re.match(r"^ {0,3}#{1,6}(?:[ \t]+|$)", line)
+            and not THEMATIC.match(line.encode("utf-8")))
+        if substantive.strip():
             chunks.append(Chunk(
                 id=f"{rel}#document",
                 kind="section",
