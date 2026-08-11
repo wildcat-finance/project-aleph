@@ -70,7 +70,10 @@ The command re-verifies the manifest, corpus, index, evaluation, required gates,
 release identity, and installed production module inventory under an exclusive
 lock. It publishes an immutable
 activation record before atomically replacing the pointer. A crash before the
-pointer replacement leaves the prior release active.
+pointer replacement leaves the prior release active. Publication explicitly
+sets the pointer and activation record read-only and the activation directory
+traversable, independent of the operator's umask, so the unprivileged query and
+monitor processes can verify the handoff without receiving write access.
 
 Do not overlay query source and restart against an older active evaluation. A
 code deployment must run the evaluation with the final staged source, promote
@@ -151,8 +154,10 @@ records from the pinned Gateway release, merges them by market event order, and
 renders transaction hash plus block provenance. A Gateway error or incoherent
 event fails closed; it never falls back to corpus retrieval.
 
-Archive transfers may preserve restrictive build-host modes. After copying,
-make the immutable tree service-readable without making it writable:
+Archive transfers may preserve restrictive build-host modes. After copying a
+release tree, make those imported artifacts service-readable without making
+them writable. Activation records and the active pointer are published with
+their runtime-readable modes by `activation.py` itself:
 
 ```bash
 chown -R root:root /srv/aleph/artifacts

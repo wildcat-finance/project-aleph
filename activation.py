@@ -224,6 +224,7 @@ class ActivationStore:
     def _publish_activation(self, record: dict) -> pathlib.Path:
         root = self.root / "activations"
         root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o755)
         out_dir = root / record["activation_id"]
         out_path = out_dir / "activation.json"
         if out_dir.exists():
@@ -234,12 +235,16 @@ class ActivationStore:
                 key: item for key, item in value.items() if key != "created"}
             if without_created(existing) != without_created(record):
                 raise ActivationError("immutable activation is incomplete or changed")
+            os.chmod(out_path, 0o444)
+            os.chmod(out_dir, 0o555)
             return out_path
         temporary = pathlib.Path(tempfile.mkdtemp(
             prefix=f".{record['activation_id']}.", dir=root))
         try:
-            (temporary / "activation.json").write_text(
-                json.dumps(record, indent=2) + "\n")
+            temporary_record = temporary / "activation.json"
+            temporary_record.write_text(json.dumps(record, indent=2) + "\n")
+            os.chmod(temporary_record, 0o444)
+            os.chmod(temporary, 0o555)
             os.replace(temporary, out_dir)
         finally:
             if temporary.exists():
@@ -248,6 +253,7 @@ class ActivationStore:
 
     def _write_pointer(self, pointer: dict) -> None:
         self.pointer.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.pointer.parent, 0o755)
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{self.pointer.name}.", dir=self.pointer.parent)
         try:
@@ -256,6 +262,7 @@ class ActivationStore:
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+            os.chmod(temporary, 0o444)
             os.replace(temporary, self.pointer)
         finally:
             if os.path.exists(temporary):
