@@ -243,4 +243,8 @@ using a result as evidence.
 builder has no answer engine. Run `eval/product_eval.py` against completed main
 and prerelease artifacts, then bind its passing immutable record with
 `promotion.py`. The product evaluator is the promotion gate; this comparison
-harness remains a diagnostic model-selection tool.
+harness remains a diagnostic model-selection tool. The product gate includes
+the reviewed governance-vote/APR false premise verbatim and requires an
+evidence-backed borrower-control correction. Run it with the candidate
+release's pinned embedding runtime: a stub-index pass is useful for unit tests
+but is not release evidence.

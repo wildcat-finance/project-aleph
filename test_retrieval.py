@@ -135,6 +135,10 @@ def fixture(tmp: pathlib.Path):
             "function exactIdentifier(uint256 value) updates the value"),
         row("v2-protocol", "controller()",
             "The controller is 0x1111111111111111111111111111111111111111."),
+        row("v2-protocol", "Interest rate ownership",
+            "The borrower can change the APR by setting the annual interest "
+            "and reserve ratio.", path="docs/Core Behavior.md",
+            kind="section", anchor="interest-rates"),
         row("v2-protocol", "Known delinquency issue",
             "# Delinquency\n\nLenders can lose funds in a delinquent market.",
             path="docs/Known Issues.md", kind="section", anchor="delinquency"),

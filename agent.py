@@ -298,7 +298,9 @@ class Router:
             return ("Wildcat protocol does not liquidate lender positions or "
                     "participate in liquidation")
         if (route.mode == RouteMode.CORRECT
-                and re.search(r"wildcat changed the apr", question, re.I)):
+                and re.search(
+                    r"wildcat changed the apr|governance vote.*(?:apr|rate)",
+                    question, re.I)):
             return ("borrower can change APR set annual interest and reserve "
                     "ratio")
         if (route.mode == RouteMode.CORPUS

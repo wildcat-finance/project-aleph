@@ -832,7 +832,7 @@ questions:
   question: Why did the protocol liquidate my position?
   expected: correct
 - id: n03
-  question: Where's the governance vote on this market's rate?
+  question: Where is the governance vote that changed this market's APR?
   expected: correct
 - id: n04
   question: How long until the market auto-repays?
