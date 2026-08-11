@@ -32,8 +32,8 @@ jobs:
           python test_coverage.py
           python test_null_import.py
           python eval/null_import.py \
-            --export eval/null-exports/e168ea3628343c39c9cf \
-            --dispositions eval/null-dispositions-v1.yaml
+            --export eval/null-exports/af0555894ec430dcae70 \
+            --dispositions eval/null-dispositions-v2.yaml
           python ingest/test_audit_corpus.py
           python ingest/test_build.py
           python ingest/chunkers/test_markdown.py
