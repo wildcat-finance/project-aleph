@@ -56,6 +56,7 @@ def run(tmp: pathlib.Path) -> None:
         "Where is the governance vote on this market's rate?": agent.RouteMode.CORRECT,
         "Should I lend to this market?": agent.RouteMode.REFUSE,
         "Can you generate a CSV for the year?": agent.RouteMode.REFUSE_POINT,
+        "What does the Wildcat Market CSV Exporter verify?": agent.RouteMode.CORPUS,
         "Deposit fails with an error — screenshot attached.": agent.RouteMode.TRIAGE,
         "Why is it doing that again?": agent.RouteMode.CLARIFY,
         "Is it vegan?": agent.RouteMode.EASTER_EGG,
@@ -164,13 +165,18 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 142 golden questions enter their reviewed handling mode",
-          len(routed) == 142 and not wrong, str(wrong[:5]))
+    check("all 143 golden questions enter their reviewed handling mode",
+          len(routed) == 143 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     check("APR ownership corrections retrieve borrower-controlled rate evidence",
           apr_correction.mode == agent.RouteMode.CORRECT
           and "borrower can change APR" in router.evidence_query(
               "Has Wildcat changed the APR on my market?", apr_correction))
+    exporter_question = (
+        "What does the Wildcat Market CSV Exporter verify before delivery?")
+    check("exporter verification questions retrieve the reviewed invariant",
+          "What the Verification Proves" in router.evidence_query(
+              exporter_question, router.route(exporter_question)))
     batch_loss = (
         "I queued 1,000 market tokens and got less back. Is the invariant broken?")
     check("withdrawal-loss evidence and claim selection share one expansion",

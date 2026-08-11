@@ -37,11 +37,75 @@ def _sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _tool_hashes() -> dict[str, str]:
-    paths = (ROOT / "agent.py", ROOT / "retrieval.py", ROOT / "live.py",
-             ROOT / "embed" / "embedder.py", ROOT / "embed" / "index.py",
-             HERE / "retrieval_eval.py", HERE / "product_eval.py")
-    return {str(path.relative_to(ROOT)): _sha256(path) for path in paths}
+RUNTIME_TOOL_PATHS = (
+    "activation.py",
+    "agent.py",
+    "audit.py",
+    "live.py",
+    "monitor.py",
+    "release.py",
+    "retrieval.py",
+    "serve.py",
+    "telegram.py",
+    "embed/embedder.py",
+    "embed/index.py",
+    "eval/product_eval.py",
+    "eval/retrieval_eval.py",
+)
+
+
+def _tool_hashes(source_root: pathlib.Path | None = None) -> dict[str, str]:
+    """Hash the fixed production tool inventory independent of install path."""
+    root = (source_root or ROOT).resolve()
+    if not root.is_dir():
+        raise ProductEvaluationError(f"runtime tool root is not a directory: {root}")
+    hashes = {}
+    for relative in RUNTIME_TOOL_PATHS:
+        requested = root / pathlib.PurePosixPath(relative)
+        try:
+            path = requested.resolve(strict=True)
+            path.relative_to(root)
+        except (OSError, ValueError):
+            raise ProductEvaluationError(
+                f"runtime tool is absent or escapes its source root: {relative}")
+        if not path.is_file():
+            raise ProductEvaluationError(f"runtime tool is not a file: {relative}")
+        try:
+            hashes[relative] = _sha256(path)
+        except OSError as error:
+            raise ProductEvaluationError(
+                f"runtime tool cannot be read: {relative}: {error}")
+    return hashes
+
+
+def verify_tool_hashes(expected: object,
+                       source_root: pathlib.Path | None = None) -> dict:
+    """Verify evaluated production bytes and return a non-sensitive identity."""
+    if not isinstance(expected, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in expected.items()):
+        raise ProductEvaluationError("evaluation runtime tool inventory is invalid")
+    required = set(RUNTIME_TOOL_PATHS)
+    supplied = set(expected)
+    if supplied != required:
+        missing = sorted(required - supplied)
+        unexpected = sorted(supplied - required)
+        detail = []
+        if missing:
+            detail.append("missing=" + ",".join(missing))
+        if unexpected:
+            detail.append("unexpected=" + ",".join(unexpected))
+        raise ProductEvaluationError(
+            "evaluation runtime tool inventory differs (" + "; ".join(detail) + ")")
+    current = _tool_hashes(source_root)
+    changed = sorted(name for name in required if expected[name] != current[name])
+    if changed:
+        raise ProductEvaluationError(
+            "evaluated runtime tool bytes differ: " + ", ".join(changed))
+    return {
+        "sha256": hashlib.sha256(_canonical(current)).hexdigest(),
+        "file_count": len(current),
+    }
 
 
 class FixtureTransport:

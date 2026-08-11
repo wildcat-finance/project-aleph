@@ -60,8 +60,8 @@ The source fixture used for a full corpus reproduction is the signed
 `v2-protocol@aleph-v2.1.0` tag. Its commit is
 `c7be4039f8f383a9dda4e45f63331c17d63f9ed9`; the manifest also pins the annotated
 tag object and signer fingerprint. The docs fixture is
-`wildcat-docs@aleph-v0.3`, commit
-`fe0e50c079b227cdd3ac14f8a1657a7c072b6446`.
+`wildcat-docs@aleph-v0.4`, commit
+`dced3f3843258aa063fb6d6369cf434d5dfa4957`.
 
 Build the canonical corpus/index candidate through the release driver rather
 than retyping component options:
@@ -91,11 +91,11 @@ Solidity
   p99 2,340 characters; maximum 5,062
 
 Markdown
-  545 chunks from 64 documents
+  548 chunks from 64 documents
   64/64 emitted documents placed in the SUMMARY hierarchy
   64 synthesized document indexes
   0 schema problems
-  p99 3,793 characters; maximum 9,524
+  median 518 characters; p99 3,793; maximum 9,524
 ```
 
 These counts are regression clues, not a substitute for reading the diff. A

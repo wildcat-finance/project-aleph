@@ -301,6 +301,13 @@ class Router:
                 and re.search(r"wildcat changed the apr", question, re.I)):
             return ("borrower can change APR set annual interest and reserve "
                     "ratio")
+        if (route.mode == RouteMode.CORPUS
+                and re.search(
+                    r"(?:csv|market csv).*\bverif|\bverif.*(?:csv|exporter)",
+                    question, re.I)):
+            return ("Wildcat Market CSV Exporter What the Verification Proves "
+                    "exact invariant event history transaction receipts contract "
+                    "state snapshot block")
         # Presentation requests are not evidence topics. Sending them to the
         # embedder can make an otherwise exact protocol question retrieve
         # semantically adjacent legal, medical, or stylistic prose.

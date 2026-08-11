@@ -111,9 +111,10 @@ gateway release, units, basis-point formatting, and state labels.
 
 Aleph does not recommend markets, assess borrowers, infer intentions, disclose
 bulk lender addresses, expose system/private context, or answer for unsupported
-chains. It also refuses hateful/self-harm coercion before retrieval. Historical
-borrow, repayment, deposit, and withdrawal questions are routed to the market
-CSV exporter because this runtime reads current state, not transaction history.
+chains. It also refuses hateful/self-harm coercion before retrieval. An
+explicitly addressed market can return the latest one to ten borrow, repayment,
+deposit, or withdrawal-request events. Complete histories, CSV generation, and
+accounting reports remain the separate Wildcat Market CSV Exporter boundary.
 
 A bare mainnet market address or canonical Wildcat lender-market URL is a live
 object. Address-bound APR, reserve-ratio, capacity, delinquency, and grace-period

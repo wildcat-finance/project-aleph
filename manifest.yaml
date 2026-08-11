@@ -49,8 +49,8 @@ embedding:
     still rejects oversize embedding text so future source growth cannot be
     truncated silently.
   markdown_headroom: >
-    Measured at wildcat-docs@fe0e50c, not assumed: 545 chunks across 64
-    documents, median 510 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
+    Measured at wildcat-docs@dced3f3, not assumed: 548 chunks across 64
+    documents, median 518 chars, p99 3,793, max 9,524 — roughly 3,200 tokens
     against a limit of 8,192. Prose sections are longer than Solidity chunks,
     as expected, and still less than half the budget.
   revisit_when: >
@@ -186,11 +186,11 @@ sources:
     repo: wildcat-finance/wildcat-docs
     ref:
       kind: tag
-      tag: aleph-v0.3
-      commit: fe0e50c079b227cdd3ac14f8a1657a7c072b6446
+      tag: aleph-v0.4
+      commit: dced3f3843258aa063fb6d6369cf434d5dfa4957
       lightweight: true            # no tag object, so nothing to sign — see notes
       require_signature: false
-      supersedes: aleph-v0.2 / 21e7db223e55ffc2c125186280368f8d3856d46f
+      supersedes: aleph-v0.3 / fe0e50c079b227cdd3ac14f8a1657a7c072b6446
     notes: >
       Content is human-written, so a Tier B citation means reviewed published
       documentation. Agent navigation files are excluded. Documentation for
@@ -201,10 +201,12 @@ sources:
       does. Ref immutability is by convention here — never move a tag, cut the
       next one.
 
-      At aleph-v0.3, the deprecated V1 tree is unpublished at source as well as
+      At aleph-v0.4, the deprecated V1 tree is unpublished at source as well as
       excluded here, recovered GitBook-only pages are present, the ?ask
       documentation is corrected, the FAQ contains 31 headings, and the
-      downloadable market CSV exporter has a documentation page. FAQ anchor
+      downloadable market CSV exporter has a complete documentation page,
+      including its snapshot, verification, quarantine, and optional
+      FIFO/LIFO/pro-rata position-analysis boundaries. FAQ anchor
       changes demonstrate why citations carry the corpus build that produced
       them rather than assuming fragments remain stable across promotions.
       All legal pages carry effective_date and doc_version frontmatter, and the

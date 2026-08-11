@@ -2,8 +2,8 @@
 # actually costs something. A question passes if ANY substring below appears in
 # any of the top-k retrieved chunks.
 #
-# Deliberately small. Thirty labelled questions catches regressions; a hundred
-# is a project. Add to it when a bad answer surprises you.
+# Deliberately small. This reviewed labelled set catches regressions; a hundred
+# questions would be a different project. Add to it when a bad answer surprises you.
 
 a01: ["withdrawal batch", "claimable", "unclaimed withdrawals"]
 a05: ["withdrawal cycle", "batch duration", "expiry"]
@@ -19,6 +19,7 @@ b03: ["capacity", "maximum", "deposit"]
 b04: ["interest", "supply"]
 b06: ["interest rate", "annual interest", "APR"]
 b13: ["interest rate", "scale factor", "compound"]
+b16: ["central invariant is exact", "event history", "snapshot block"]
 
 c01: ["delinquent", "collateral obligation", "liquidityRequired"]
 c03: ["grace period", "timeDelinquent", "grace tracker"]
