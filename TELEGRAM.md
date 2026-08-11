@@ -134,8 +134,12 @@ double-width counting of astral characters.
 checkpoint is atomically replaced after an ignored update or after every reply
 has succeeded. A failed send leaves the update unconfirmed for retry.
 
-Admission is limited per chat and user before the answer engine runs. The worker
-pool has a configured upper bound; sends and checkpoints remain ordered. An
+Admission is limited per chat and user before the answer engine runs. Human
+askers receive the default five-question budget per 60 seconds. An allowlisted
+peer bot has a separate ten-question budget over the same window, matching one
+complete bounded Project Null burst without increasing the human allowance.
+The eleventh peer question is rejected before the answer engine. The worker pool
+has a configured upper bound; sends and checkpoints remain ordered. An
 unexpected engine exception produces a fixed user-facing failure and exposes no
 exception text.
 

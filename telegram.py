@@ -482,6 +482,8 @@ class TelegramAdapter:
                  handoff_sink: HandoffSink | None = None,
                  max_workers: int = 4, user_limit: int = 5,
                  user_window_seconds: int = 60,
+                 peer_bot_limit: int = 10,
+                 peer_bot_window_seconds: int = 60,
                  peer_bot_ids: tuple[int, ...] = (),
                  rich_messages: bool = False):
         if not 1 <= max_workers <= 32:
@@ -495,6 +497,8 @@ class TelegramAdapter:
         self.handoff_sink = handoff_sink or DisabledHandoffSink()
         self.max_workers = max_workers
         self.limiter = RateLimiter(user_limit, user_window_seconds)
+        self.peer_limiter = RateLimiter(
+            peer_bot_limit, peer_bot_window_seconds)
         self.peer_bot_ids = frozenset(peer_bot_ids)
         self.rich_messages = bool(rich_messages)
         self.identity: BotIdentity | None = None
@@ -607,7 +611,8 @@ class TelegramAdapter:
                     continue
                 if question.startswith("\0"):
                     response = Outgoing(self._command(incoming, question[1:]))
-                elif not self.limiter.allow((incoming.chat_id, incoming.user_id)):
+                elif not (self.peer_limiter if incoming.peer_bot else self.limiter).allow(
+                        (incoming.chat_id, incoming.user_id)):
                     response = Outgoing(
                         "Aleph is rate-limited for this chat and user. "
                         "Please wait before asking again.")
