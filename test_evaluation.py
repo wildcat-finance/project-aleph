@@ -39,7 +39,13 @@ def run(tmp: pathlib.Path) -> None:
     client = live.GatewayClient(
         str(retriever.main.manifest_path),
         product_eval.FixtureTransport(fixture), token="fixture")
-    engine = agent.AnswerEngine(retriever, client)
+    # Stub vectors deliberately carry no relevance signal. Product evaluation
+    # still exercises routing, support, citations, and live determinism; strict
+    # topic isolation is covered with controlled adversarial evidence in
+    # test_agent.py and runs by default with the production embedder.
+    engine = agent.AnswerEngine(
+        retriever, client,
+        writer=agent.ExtractiveWriter(require_topic_match=False))
     labels = pathlib.Path("eval/labels.yaml").resolve()
     policy = {
         "route_accuracy": 1.0, "outcome_accuracy": 1.0,

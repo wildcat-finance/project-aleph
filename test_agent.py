@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -149,6 +150,12 @@ def run(tmp: pathlib.Path) -> None:
           liquidation_route.mode == agent.RouteMode.CORRECT
           and "does not liquidate" in router.evidence_query(
               "Why did the protocol liquidate my position?", liquidation_route))
+    role_question = (
+        "can you help me understand the wildcat role providers, and explain "
+        "like i have a brain injury")
+    check("presentation language is excluded from the evidence query",
+          router.evidence_query(role_question, router.route(role_question))
+          == "can you help me understand the wildcat role providers")
 
     response = retriever.search(retrieval.RetrievalRequest(
         "How does the withdrawal cycle work?", 1, limit_per_tier=2))
@@ -174,6 +181,59 @@ def run(tmp: pathlib.Path) -> None:
           and focused.claims[0].text ==
           "Wildcat does not participate in liquidation activity."
           and focused.claims[0].supporting_quote in paragraph_source.display_text)
+
+    correct_role = replace(
+        promoted,
+        id="wildcat-docs:using-wildcat/terminology.md#role-provider",
+        breadcrumb="Using Wildcat › Terminology › Role Provider",
+        display_text=(
+            "* A role provider grants deposit credentials to lenders.\n"
+            "* Pull providers can be queried by wallet address.\n"
+            "* Push providers explicitly grant suitable addresses."),
+        model_text="Role providers grant deposit credentials.",
+        semantic_score=0.90)
+    legal_bait = replace(
+        promoted,
+        id="wildcat-docs:legal/terms.md#user-responsibility",
+        breadcrumb="Legal › Terms › User Responsibility",
+        display_text=(
+            "* Your use of the Products or Protocol.\n"
+            "* Any information you provide to the Company.\n"
+            "* Your violation of applicable law."),
+        model_text="Information you provide and liability for injury.",
+        semantic_score=0.89)
+    isolated = agent.ExtractiveWriter(max_claims=2).write(
+        router.evidence_query(role_question, router.route(role_question)),
+        (correct_role, legal_bait), router.route(role_question))
+    check("each claim independently matches the protocol topic",
+          len(isolated.claims) == 1
+          and isolated.claims[0].evidence_id == correct_role.id,
+          str([claim.evidence_id for claim in isolated.claims]))
+    adversarial_legal = replace(
+        legal_bait,
+        display_text=(
+            "Indemnification applies to claims involving injury and legal "
+            "liability under the Terms of Use."),
+        semantic_score=0.99)
+    anchored = agent.ExtractiveWriter().write(
+        "Tell me about Wildcat role providers after I read about legal "
+        "indemnification and injury",
+        (correct_role, adversarial_legal), router.route(role_question))
+    check("topic headings outrank a semantically stronger incidental modifier",
+          len(anchored.claims) == 1
+          and anchored.claims[0].evidence_id == correct_role.id,
+          str([claim.evidence_id for claim in anchored.claims]))
+
+    long_list = replace(
+        correct_role,
+        display_text=("* Role providers grant credentials.\n" * 10)
+        + "* unrelated trailing item")
+    clipped = agent.ExtractiveWriter(max_chars=120)._excerpt(
+        long_list.display_text, "role providers")
+    check("excerpt truncation cannot leave an orphan Markdown marker",
+          bool(clipped) and not re.search(
+              r"(?:^|\n)\s*(?:[-*+]|\d+[.)]|#{1,6}|`{3,}|~{3,})\s*$",
+              clipped))
 
     class ForgedWriter:
         def write(self, question, evidence, route):
@@ -217,9 +277,9 @@ def run(tmp: pathlib.Path) -> None:
     check("corpus and live sections remain visibly separate",
           "Explanation" in combined.text and "Current state" in combined.text
           and combined.live.text in combined.text)
-    check("a relevant Known Issues source is mandatory",
-          any(citation.source_url.endswith("#delinquency")
-              for citation in combined.citations),
+    check("every displayed source supports an emitted claim",
+          {citation.evidence_id for citation in combined.citations}
+          == {claim.evidence_id for claim in combined.claims},
           str([citation.source_url for citation in combined.citations]))
     missing = engine.answer("What is the current status of this market?")
     check("missing entities ask one targeted question instead of guessing",

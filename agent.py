@@ -267,7 +267,14 @@ class Router:
                 and re.search(r"liquidat(?:e|ed|ion)", question, re.I)):
             return ("Wildcat protocol does not liquidate lender positions or "
                     "participate in liquidation")
-        return question
+        # Presentation requests are not evidence topics. Sending them to the
+        # embedder can make an otherwise exact protocol question retrieve
+        # semantically adjacent legal, medical, or stylistic prose.
+        focused = re.sub(
+            r"(?:[,;]\s*|\band\s+)explain(?:\s+(?:it|this|that))?"
+            r"(?:\s+to me)?\s+(?:like|as if)\b.*$", "", question,
+            flags=re.I).strip(" \t,;:.-")
+        return focused or question
 
     def route(self, question: str) -> Route:
         if not question.strip():
@@ -371,9 +378,53 @@ class Router:
 class ExtractiveWriter:
     """Dependency-free safe writer: only emits corpus substrings."""
 
-    def __init__(self, max_claims: int = 2, max_chars: int = 800):
+    _TOPIC_STOP = frozenset({
+        "about", "actually", "also", "could", "does", "explain", "have",
+        "help", "like", "please", "should", "tell", "that", "their",
+        "there", "these", "this", "understand", "what", "when", "where",
+        "which", "with", "would", "your",
+    })
+    _GENERIC_TOPICS = frozenset({
+        "answer", "contract", "function", "market", "protocol", "question",
+        "wildcat",
+    })
+    _ORPHAN_MARKUP = re.compile(
+        r"^\s*(?:[-*+]|\d+[.)]|#{1,6}|`{3,}|~{3,})\s*$")
+
+    def __init__(self, max_claims: int = 1, max_chars: int = 800,
+                 require_topic_match: bool = True):
         self.max_claims = max_claims
         self.max_chars = max_chars
+        self.require_topic_match = require_topic_match
+
+    @classmethod
+    def _topic_terms(cls, text: str) -> set[str]:
+        terms = set()
+        for raw in re.findall(r"[a-z0-9_]+", text.casefold()):
+            if len(raw) < 4 or raw in cls._TOPIC_STOP:
+                continue
+            if raw.endswith("ies") and len(raw) > 4:
+                raw = raw[:-3] + "y"
+            elif raw.endswith("s") and not raw.endswith("ss") and len(raw) > 4:
+                raw = raw[:-1]
+            terms.add(raw)
+        return terms
+
+    @classmethod
+    def _topic_relevance(cls, question: str, item: Evidence,
+                         quote: str) -> int:
+        topics = cls._topic_terms(question)
+        specific = topics - cls._GENERIC_TOPICS
+        if not specific:
+            # Generic requests such as "What is Wildcat?" still need a safe
+            # semantic path. Specific requests must match their own subject.
+            return 1
+        anchor = cls._topic_terms(f"{item.id} {item.breadcrumb}")
+        excerpt = cls._topic_terms(quote)
+        # A heading/path match is much harder for incidental phrasing to fake
+        # than a body-text match. This also makes a focused glossary section
+        # beat a semantically nearby legal paragraph.
+        return 4 * len(specific & anchor) + min(1, len(specific & excerpt))
 
     def _excerpt(self, text: str, question: str) -> str:
         """Select one relevant, exact paragraph from a corpus chunk."""
@@ -407,6 +458,10 @@ class ExtractiveWriter:
                 boundary = self.max_chars
             quote = quote[:boundary + (1 if quote[boundary:boundary + 2]
                                        == ". " else 0)].rstrip()
+        lines = quote.splitlines()
+        while lines and self._ORPHAN_MARKUP.fullmatch(lines[-1]):
+            lines.pop()
+        quote = "\n".join(lines).rstrip()
         return quote
 
     def write(self, question: str, evidence: tuple[Evidence, ...],
@@ -414,17 +469,27 @@ class ExtractiveWriter:
         code_query = bool(re.search(
             r"\b(?:contract|function|event|error|solidity|selector|abi|interface)\b|"
             r"0x[0-9a-fA-F]{8}\b|[A-Za-z_]\w*\([^)]*\)", question))
-        ranked = sorted(
+        semantically_ranked = sorted(
             (item for item in evidence
              if code_query or item.source_type != "solidity"),
             key=lambda item: (-item.semantic_score, -item.score,
                               item.tier, item.id))
-        claims = []
-        seen = set()
-        for item in ranked:
+        prepared = []
+        for item in semantically_ranked:
             if item.synthesised or not item.display_text.strip():
                 continue
             quote = self._excerpt(item.display_text.strip(), question)
+            relevance = self._topic_relevance(question, item, quote)
+            if not quote or (self.require_topic_match and relevance <= 0):
+                continue
+            prepared.append((relevance, item, quote))
+        prepared.sort(key=lambda candidate: (
+            -candidate[0], -candidate[1].semantic_score,
+            -candidate[1].score, candidate[1].tier, candidate[1].id))
+
+        claims = []
+        seen = set()
+        for _, item, quote in prepared:
             fingerprint = re.sub(r"\s+", " ", quote).casefold()
             if fingerprint in seen:
                 continue
@@ -547,17 +612,6 @@ class AnswerEngine:
                     citation_numbers[item.id] = len(citations)
                 claim_lines.append(
                     f"{claim.text} [{citation_numbers[item.id]}]")
-
-            for mandatory in retrieval_response.always_cite_candidates:
-                if mandatory.lexical_score <= 0 or mandatory.synthesised:
-                    continue
-                if mandatory.id in citation_numbers:
-                    continue
-                try:
-                    citations.append(resolver.resolve(mandatory, include_quote=False))
-                except CitationError as error:
-                    raise AnswerError(str(error))
-                citation_numbers[mandatory.id] = len(citations)
 
         sections = []
         if retrieval_response and retrieval_response.preamble:
