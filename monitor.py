@@ -31,6 +31,7 @@ def check(manifest: str, artifacts: str, pointer: str, prerelease: str,
         "ok": True, "release_id": active["release_id"],
         "generation": active_pointer["generation"],
         "evaluation_id": active["evaluation"]["evaluation_id"],
+        "runtime_tools": active["_verified_runtime_tools"],
     }
     retriever = Retriever(manifest, str(release_path), embedder, prerelease)
     runtime_identity = retriever.embedders["v2.0"].identity()

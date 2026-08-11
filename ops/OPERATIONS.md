@@ -48,7 +48,9 @@ python3 promotion.py \
 ```
 
 `promotion.py` emits a new release ID. That evaluated child—not the raw
-candidate—is eligible for activation.
+candidate—is eligible for activation. The evaluation binds a fixed inventory of
+production query modules by repository-relative path and SHA-256, so it remains
+valid when identical source is installed at a different absolute path.
 
 ## Activate
 
@@ -65,9 +67,16 @@ python3 activation.py --manifest /opt/aleph/manifest.yaml \
 ```
 
 The command re-verifies the manifest, corpus, index, evaluation, required gates,
-and release identity under an exclusive lock. It publishes an immutable
+release identity, and installed production module inventory under an exclusive
+lock. It publishes an immutable
 activation record before atomically replacing the pointer. A crash before the
 pointer replacement leaves the prior release active.
+
+Do not overlay query source and restart against an older active evaluation. A
+code deployment must run the evaluation with the final staged source, promote
+that exact result, copy the matching source and immutable artifacts, then
+activate before restarting. Missing, changed, unexpected, or path-escaped
+runtime modules fail closed before network clients or Telegram polling begin.
 
 Restart the query unit after the pointer changes, then run `monitor.py`. The
 service loads and verifies the pointer before it creates network clients.
@@ -99,7 +108,9 @@ systemctl restart aleph.service
 By default the target is the active activation record's predecessor. Use
 `--to-release <approved-release-id>` only for an intentionally selected older
 artifact. Rollback creates another immutable activation generation, preserving
-the complete sequence.
+the complete sequence. It also rechecks that the installed query source matches
+the target release's evaluation. Restore that release's evaluated source before
+moving the pointer when the two code identities differ.
 
 ## Query service
 
@@ -161,6 +172,7 @@ idempotent destination are explicitly configured.
 `monitor.py` exits nonzero unless all of the following agree:
 
 - active pointer, immutable activation, promotable release, and evaluation;
+- installed query-module identity matching the active evaluation;
 - active index identity and the running embedding model artifact;
 - pinned gateway release health, integrity, circuit state, and zero lag; and
 - one authenticated, one-event history canary against the first registered

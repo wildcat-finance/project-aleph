@@ -17,7 +17,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import release
-from eval.product_eval import compute_evaluation_id
+from eval.product_eval import (ProductEvaluationError, compute_evaluation_id,
+                               verify_tool_hashes)
 from retrieval import ReleaseArtifact, RetrievalError
 
 
@@ -99,6 +100,11 @@ def verify_promotable(path: pathlib.Path, root: pathlib.Path,
             or not evaluation_gates
             or not all(value is True for value in evaluation_gates.values())):
         raise ActivationError("release evaluation identity or gates do not verify")
+    try:
+        record["_verified_runtime_tools"] = verify_tool_hashes(
+            evaluation.get("tools"))
+    except ProductEvaluationError as error:
+        raise ActivationError(f"active evaluation cannot authorize runtime: {error}")
     return record
 
 
