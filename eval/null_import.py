@@ -168,9 +168,34 @@ def disposition_report(export_dir: str, dispositions_path: str,
     if not isinstance(document, dict) or set(document) != {"meta", "dispositions"}:
         raise NullImportError("disposition file must contain meta and dispositions")
     meta = document["meta"]
-    _expect_keys(meta, {"source_export_id", "version"}, "disposition meta")
-    if meta["version"] != 1 or meta["source_export_id"] != manifest["export_id"]:
+    if not isinstance(meta, dict):
+        raise NullImportError("disposition meta must be a mapping")
+    version = meta.get("version")
+    if version == 1:
+        _expect_keys(meta, {"source_export_id", "version"},
+                     "disposition meta")
+        predecessor_export_ids = []
+    elif version == 2:
+        _expect_keys(
+            meta,
+            {"predecessor_export_ids", "source_export_id", "version"},
+            "disposition meta")
+        predecessor_export_ids = meta["predecessor_export_ids"]
+        if (not isinstance(predecessor_export_ids, list)
+                or any(not isinstance(value, str)
+                       or not _EXPORT_ID.fullmatch(value)
+                       for value in predecessor_export_ids)
+                or len(set(predecessor_export_ids))
+                != len(predecessor_export_ids)
+                or meta["source_export_id"] in predecessor_export_ids):
+            raise NullImportError(
+                "predecessor export IDs must be unique prior export IDs")
+    else:
+        raise NullImportError("disposition meta version is unsupported")
+    if meta["source_export_id"] != manifest["export_id"]:
         raise NullImportError("disposition file targets a different export")
+    accepted_provenance = {
+        manifest["export_id"], *predecessor_export_ids}
     dispositions = document["dispositions"]
     if not isinstance(dispositions, list):
         raise NullImportError("dispositions must be a list")
@@ -215,7 +240,7 @@ def disposition_report(export_dir: str, dispositions_path: str,
                 if golden.get("question") != candidate["question"]:
                     raise NullImportError(
                         f"accepted candidate {candidate_id} changed question text")
-                if (golden.get("null_export_id") != manifest["export_id"]
+                if (golden.get("null_export_id") not in accepted_provenance
                         or golden.get("null_candidate_id") != candidate_id):
                     raise NullImportError(
                         f"accepted candidate {candidate_id} lacks Null provenance")

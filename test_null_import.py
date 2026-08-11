@@ -190,14 +190,41 @@ def run(root: pathlib.Path) -> None:
         str(project / "eval/null-exports/af0555894ec430dcae70"),
         str(project / "eval/null-dispositions-v2.yaml"),
         str(project / "eval/golden-v1.yaml"))
+    previous = null_import.disposition_report(
+        str(project / "eval/null-exports/e168ea3628343c39c9cf"),
+        str(project / "eval/null-dispositions-v1.yaml"),
+        str(project / "eval/golden-v1.yaml"))
     published = json.loads((
         project / "eval/null-reports/af0555894ec430dcae70/report.json"
     ).read_bytes())
+    previous_cases = {item["candidate_id"]: item
+                      for item in previous["cases"]}
+    production_cases = {item["candidate_id"]: item
+                        for item in production["cases"]}
+    shared = set(previous_cases) & set(production_cases)
+    continuity_fields = ("status", "expected", "golden_id", "issue")
+    continuity = all(
+        all(previous_cases[candidate].get(field)
+            == production_cases[candidate].get(field)
+            for field in continuity_fields)
+        for candidate in shared)
+    check("cumulative exports preserve prior terminal dispositions",
+          len(shared) == 14 and continuity)
+    undeclared = yaml.safe_load((
+        project / "eval/null-dispositions-v2.yaml").read_bytes())
+    undeclared["meta"]["predecessor_export_ids"] = []
+    undeclared_path = root / "undeclared-predecessor.yaml"
+    undeclared_path.write_text(yaml.safe_dump(undeclared, sort_keys=False))
+    message = refusal(lambda: null_import.disposition_report(
+        str(project / "eval/null-exports/af0555894ec430dcae70"),
+        str(undeclared_path), str(project / "eval/golden-v1.yaml")))
+    check("accepted predecessor provenance must be declared",
+          "lacks Null provenance" in message, message)
     check("the checked-in report equals the complete deterministic import",
           published == production
           and published["candidate_count"] == 24
-          and published["counts"]["accepted"] == 3
-          and published["counts"]["duplicate"] == 21
+          and published["counts"]["accepted"] == 10
+          and published["counts"]["duplicate"] == 14
           and published["ready"] is True)
 
 

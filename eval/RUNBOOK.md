@@ -163,6 +163,14 @@ evidence, or mark anything resolved in Null. Run `python3 test_evaluation.py`
 after admitting accepted cases so every new question traverses the real product
 path.
 
+Exports are cumulative. A candidate already acknowledged by Null must retain
+the same terminal status, expected route, golden reference, and issue reference
+in every later report. Entering an accepted candidate into the golden suite
+does not turn that earlier `accepted` acknowledgement into `duplicate`. A
+cumulative disposition ledger uses schema version 2 and declares every prior
+export whose accepted golden provenance it retains in
+`meta.predecessor_export_ids`; undeclared predecessor provenance fails closed.
+
 ## Publish the answer-free coverage silhouette
 
 After a release is promoted and its bound evaluation passes, publish the
