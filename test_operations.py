@@ -45,7 +45,12 @@ class MonitorAPI:
 
 def approved_fixture(tmp: pathlib.Path):
     retriever, live_client, _ = test_agent.components(tmp)
-    engine = agent.AnswerEngine(retriever, live_client)
+    # The fixture index intentionally uses meaningless stub vectors. Strict
+    # topic isolation is exercised against controlled adversarial evidence in
+    # test_agent.py and defaults on for the production embedder.
+    engine = agent.AnswerEngine(
+        retriever, live_client,
+        writer=agent.ExtractiveWriter(require_topic_match=False))
     fixture_path = pathlib.Path("eval/live-fixture-v1.json").resolve()
     fixture = json.loads(fixture_path.read_text())
     policy = {
