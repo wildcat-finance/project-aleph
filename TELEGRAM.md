@@ -22,6 +22,12 @@ The adapter never deletes a webhook automatically. Telegram does not allow
 delivery mode would discard an operator decision. Remove the webhook explicitly
 before starting this service.
 
+After the checks pass, startup registers the `/ask`, `/help`, and `/privacy`
+command menu via `setMyCommands` so commands are discoverable from Telegram's
+command button. Registration is best-effort and never blocks startup; the
+contextual handoff commands stay out of the menu and are introduced by the
+triage answer that needs them.
+
 Keep the bot's Group Privacy setting enabled in BotFather and do not make Aleph a
 group administrator. Telegram administrators receive the whole group stream
 regardless of the ordinary privacy-mode setting.
@@ -65,21 +71,31 @@ ambiguous transport failure never sends a second representation and instead
 leaves the update uncheckpointed for retry. This distinction prevents an answer
 accepted by Telegram from being duplicated by a speculative resend.
 
-Answers of at most 32,768 characters first use `sendRichMessage`. The adapter
-maps only Aleph's reviewed `Explanation`, `Premise correction`,
-`Current state`, and `Sources` labels to native headings; the answer remains
-held separately as the unchanged fallback payload and source URLs are copied
-byte-for-byte. Set `ALEPH_TELEGRAM_RICH_MESSAGES=false` to disable rich
-delivery immediately on the next service restart; the default is `true`.
-Answers above the rich limit skip this rung, so a partially sent rich answer
-can never be duplicated by a later fallback.
+Answers of at most 32,768 characters first use `sendRichMessage`. Only
+adapter-generated constructs carry markup: Aleph's reviewed `Explanation`,
+`Premise correction`, `Current state`, and `Sources` labels map to native
+headings, the source list becomes numbered links with compact labels, and
+inline `[n]` citation markers link to their sources. Every other byte is
+backslash-escaped, so corpus text containing markdown or template syntax
+renders as literal text and can never be reinterpreted as markup. The answer
+remains held separately as the unchanged fallback payload. Set
+`ALEPH_TELEGRAM_RICH_MESSAGES=false` to disable rich delivery immediately on
+the next service restart; the default is `true`. Answers above the rich limit
+skip this rung, so a partially sent rich answer can never be duplicated by a
+later fallback.
+
+On both rendered rungs a lone `Explanation` heading is dropped from the
+displayed message — the body speaks for itself and `Sources` still anchors the
+layout — while answers with several sections keep every heading. The plain
+fallback always keeps the heading's bytes.
 
 When rich delivery is refused, unsupported, disabled, or oversized, answers
 with the engine's section structure are rendered with classic Telegram HTML
-entities, which every client can display: section headings are bold, inline
-`[n]` citation markers link to their sources, full-length hex values become
-tap-to-copy `code` spans, and the trailing Sources section collapses into an
-expandable quotation. Inside it each URL is tucked behind a shortened label —
+entities, which every client can display — including clients too old to render
+rich messages at all: section headings are bold, inline `[n]` citation markers
+link to their sources, full-length hex values become tap-to-copy `code` spans,
+and the trailing Sources section collapses into an expandable quotation.
+Inside it each URL is tucked behind the same compact label the rich rung uses —
 the file name and the breadcrumb's most specific segment — while the plain
 fallback keeps the full citation line. The first two sources also repeat as
 URL buttons under the final message, so the primary evidence is one tap away
