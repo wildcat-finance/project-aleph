@@ -99,47 +99,43 @@ because it produced an interesting question. Conversely, Aleph does not train
 itself on Telegram traffic. The cycle strengthens the reviewed corpus and eval
 set, not the bot's beliefs in place.
 
-## What must be built next
+## What remains to be built
 
-Work proceeds in this order because later improvements depend on the earlier
-evidence boundary being trustworthy.
-
-### 1. Audit and rechunk the active corpus
-
-Review all 1,616 active chunks for cross-topic joins, oversized document-level
-chunks, weak headings, and misleading retrieval text. The first inventory found
-58 chunks over 2,000 characters, six over 4,000, and one over 8,000. The Known
-Issues introduction is itself a multi-topic chunk. Rechunking must preserve
-byte-exact citation text, stable source locations, corpus provenance, and
-reproducibility.
-
-This is tracked in
-[issue #33](https://github.com/wildcat-finance/project-aleph/issues/33). It is
-the corpus-level follow-up to the answer-integrity guardrails in
+The evidence foundation is in place. The first full corpus audit, targeted
+rechunk, human review, rebuild, evaluation, promotion, activation, and
+production smoke are complete. The active corpus passes the structural gates
+added by [issue #33](https://github.com/wildcat-finance/project-aleph/issues/33)
+and the answer-integrity guardrails from
 [PR #34](https://github.com/wildcat-finance/project-aleph/pull/34).
 
-### 2. Add constrained live discovery
+Remaining engineering work proceeds in this order.
+
+### 1. Add constrained live discovery
 
 Support market and borrower lookup by stable public identifiers, then consider
 bounded screening such as “markets around 8%.” Discovery must return candidates
 from indexed live facts; it must not guess an address from corpus similarity or
 allow the language writer to rank borrower quality.
 
-### 3. Exercise the Null review loop
+### Separate operating lane: exercise the Null review loop
 
 Run bounded mixed probe waves in the developer room as a separate operational
 process. Review and finalise useful cases, keep regression and factual queues
 separate, and open the first corpus-release review at ten approved factual
 proposals. Probe volume alone is not progress; reviewed, reproducible cases are.
+This lane supplies evidence about what to build, but it is not an autonomous
+build or release process.
 
-### 4. Cut and activate the next evidence release
+### 2. Cut the next evidence release when reviewed inputs exist
 
-Apply reviewed chunk and factual changes to a new immutable corpus, rebuild the
-locked embedding index, run retrieval and product evaluation, inspect the corpus
-diff, promote only if every gate is true, and activate with compare-and-swap.
-Keep the previous release available for pointer-only rollback.
+When human review approves new chunk or factual changes, apply them to a new
+immutable corpus, rebuild the locked embedding index, run retrieval and product
+evaluation, inspect the corpus diff, promote only if every gate is true, and
+activate with compare-and-swap. Keep the previous release available for
+pointer-only rollback. A proposal count starts review; it never bypasses these
+release invariants.
 
-### 5. Widen the interface only after the evidence path is stable
+### 3. Widen the interface only after the evidence path is stable
 
 Broaden the Telegram trial after citation relevance, live routing, privacy,
 restart safety, and the Null review workflow hold under developer use. Enable a
