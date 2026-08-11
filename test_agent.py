@@ -168,10 +168,16 @@ def run(tmp: pathlib.Path) -> None:
     check("all 143 golden questions enter their reviewed handling mode",
           len(routed) == 143 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
+    governance_correction = router.route(
+        "Where is the governance vote that changed this market's APR?")
     check("APR ownership corrections retrieve borrower-controlled rate evidence",
           apr_correction.mode == agent.RouteMode.CORRECT
           and "borrower can change APR" in router.evidence_query(
-              "Has Wildcat changed the APR on my market?", apr_correction))
+              "Has Wildcat changed the APR on my market?", apr_correction)
+          and governance_correction.mode == agent.RouteMode.CORRECT
+          and "borrower can change APR" in router.evidence_query(
+              "Where is the governance vote that changed this market's APR?",
+              governance_correction))
     exporter_question = (
         "What does the Wildcat Market CSV Exporter verify before delivery?")
     check("exporter verification questions retrieve the reviewed invariant",
