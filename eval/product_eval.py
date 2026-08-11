@@ -139,12 +139,18 @@ def _risk(item: dict, mode: RouteMode) -> str:
 def _question_with_fixture_entities(question: str, route, entities: dict) -> str:
     operation = route.live_operation
     if operation == "borrower_markets":
-        return f"{question}\nBorrower address: {entities['borrower']}"
+        return (question if route.entities.borrower_address else
+                f"{question}\nBorrower address: {entities['borrower']}")
     if operation == "account":
-        return (f"{question}\nMarket address: {entities['market']}\n"
-                f"Wallet address: {entities['lender']}")
+        additions = []
+        if not route.entities.market_address:
+            additions.append(f"Market address: {entities['market']}")
+        if not route.entities.account_address:
+            additions.append(f"Wallet address: {entities['lender']}")
+        return question + (("\n" + "\n".join(additions)) if additions else "")
     if operation in ("market", "withdrawals"):
-        return f"{question}\nMarket address: {entities['market']}"
+        return (question if route.entities.market_address else
+                f"{question}\nMarket address: {entities['market']}")
     return question
 
 
