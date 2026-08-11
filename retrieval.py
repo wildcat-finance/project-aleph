@@ -196,6 +196,26 @@ def _terms(text: str) -> list[str]:
     return [_normalise_term(term) for term in _TOKEN.findall(text)]
 
 
+def _expand_query(query: str) -> str:
+    """Map one reviewed user idiom to the protocol vocabulary it omits.
+
+    Users describe the withdrawal-batch interest-sharing rule as queueing a
+    nominal amount and receiving less back. The source describes scaled tokens
+    being distributed evenly inside a batch. Keeping this deterministic and
+    narrow makes that documented rule retrievable without changing labels,
+    thresholds, or answer prose.
+    """
+    lower = query.casefold()
+    nominal_loss = (
+        re.search(r"\bqueu(?:e|ed|ing)\b", lower)
+        and re.search(r"\b(?:got|received?|getting)\b.*\b(?:less|fewer)\b", lower)
+    )
+    if nominal_loss or re.search(r"\binvariant\b.*\bbroken\b", lower):
+        return (query + " withdrawal batch scaled tokens distributed evenly "
+                "desired behavior")
+    return query
+
+
 def _lexical_scores(rows: list[dict], query: str) -> dict[str, float]:
     query_terms = _terms(query)
     if not query_terms:
@@ -331,7 +351,8 @@ class Retriever:
         request.validate()
         artifact, version = self._select(request)
         embedder = self.embedders[version]
-        vector = embedder.embed([request.query], kind="query")[0]
+        query = _expand_query(request.query)
+        vector = embedder.embed([query], kind="query")[0]
         identity = embedder.identity()
         results: dict[str, tuple[Evidence, ...]] = {}
 
@@ -354,7 +375,7 @@ class Retriever:
                              enumerate(semantic_hits, 1)}
             semantic_scores = {hit["id"]: float(hit["score"])
                                for hit in semantic_hits}
-            lexical_scores = _lexical_scores(rows, request.query)
+            lexical_scores = _lexical_scores(rows, query)
             lexical_order = sorted(lexical_scores,
                                    key=lambda key: (-lexical_scores[key], key))
             lexical_rank = {key: rank for rank, key in enumerate(lexical_order, 1)}
@@ -390,7 +411,7 @@ class Retriever:
                 continue
             rows = [row for rows in artifact.index.meta.values() for row in rows
                     if row.get("path") == path and self._eligible(row, version)]
-            scores = _lexical_scores(rows, request.query)
+            scores = _lexical_scores(rows, query)
             if rows:
                 best = max(rows, key=lambda row: (scores.get(row["id"], 0.0),
                                                   row["id"]))
