@@ -362,8 +362,11 @@ class Router:
             or (entities.market_address is not None and live_field is not None)
         )
         field_request = self._market_field_request(question, live_field)
+        field_mechanism = self._market_field_mechanism(question, live_field)
+        if field_request and not addressed and field_mechanism:
+            return Route(RouteMode.CORPUS, "unaddressed market mechanism", entities)
         if addressed or field_request:
-            if addressed and self._market_field_mechanism(question, live_field):
+            if addressed and field_mechanism:
                 return Route(
                     RouteMode.CORPUS_LIVE,
                     "market mechanism plus addressed live field", entities,
@@ -386,8 +389,7 @@ class Router:
             return Route(RouteMode.CLARIFY, "underspecified follow-up", entities,
                          refusal_reason="missing_context")
         if not self._domain.search(question):
-            return Route(RouteMode.REFUSE_POINT, "outside Wildcat scope", entities,
-                         destination="Wildcat support",
+            return Route(RouteMode.REFUSE, "outside Wildcat scope", entities,
                          refusal_reason="outside_answer_boundary")
         return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
 
@@ -455,7 +457,7 @@ class Router:
         if field is None or re.search(r"\bhow\s+(?:long|much)\b", question, re.I):
             return False
         return bool(re.search(
-            r"\b(?:how does|why|what does|when does|explain)\b", question,
+            r"\b(?:how does|why|what does|when does|explain|difference between)\b", question,
             re.I))
 
     @staticmethod
@@ -798,7 +800,9 @@ class AnswerEngine:
             text = "I can only answer questions within Aleph's Wildcat Protocol scope."
         if destination:
             text += f" The appropriate destination is {destination}."
-        if route.refusal_reason != "unsafe_or_abusive":
+        if (route.refusal_reason != "unsafe_or_abusive"
+                and not (route.refusal_reason == "outside_answer_boundary"
+                         and destination is None)):
             text += (" I can prepare a handoff if you choose; I will not contact "
                      "anyone automatically.")
         return Answer(status="refused", mode=route.mode, text=text, route=route,

@@ -133,6 +133,33 @@ format or packaging issue is understood.
 retrieved chunk. The labels are intentionally small and high-value. Changes to
 them should reflect evidence review, not tuning to make a model score higher.
 
+## Admit a Project Null regression export
+
+Null exports regression candidates and factual proposals in separate files.
+Aleph's regression importer validates the complete immutable export before it
+reads reviewer dispositions: directory identity, canonical JSON, file hashes,
+manifest counts, candidate ordering, schemas, and the content-derived export
+ID must all agree. A non-empty factual-proposal file is a hard failure on this
+path.
+
+Each candidate then needs one checked-in disposition: `accepted`, `duplicate`,
+`deferred`, `rejected`, or `needs_review`. Accepted cases must preserve the Null
+question byte-for-byte in the golden set and carry both the export and candidate
+IDs. Duplicate cases bind to an existing golden route. Deferred cases require a
+tracking issue. Any undispositioned or silently reworded candidate fails closed.
+
+```bash
+python3 eval/null_import.py \
+  --export eval/null-exports/e168ea3628343c39c9cf \
+  --dispositions eval/null-dispositions-v1.yaml \
+  --golden eval/golden-v1.yaml
+```
+
+The command exits `0` only when every candidate is dispositioned and none still
+has `needs_review`. It does not edit the golden file, write corpus evidence, or
+mark anything resolved in Null. Run `python3 test_evaluation.py` after admitting
+accepted cases so every new question traverses the real product path.
+
 ## Build and evaluate the selected release
 
 The manifest records:

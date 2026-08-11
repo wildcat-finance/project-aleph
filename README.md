@@ -7,7 +7,7 @@ mainnet state through narrow, typed Data Gateway operations.
 Aleph is running in the reference production deployment. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.3`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 135-case product
+`bge-m3` embedding identity. Every release must pass the 141-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,
@@ -48,9 +48,10 @@ Gateway provenance.
 
 Aleph does not yet discover a market reliably from an approximate rate, a
 borrower name, or other fuzzy description. That requires indexed live discovery,
-not a larger language-model prompt. Historical transaction exports and position
-accounting belong to the separate Wildcat market CSV workflow rather than this
-answer path.
+not a larger language-model prompt. Historical transaction questions are not yet
+available in this answer path; the current release points to the Wildcat market
+CSV workflow. The bounded, address-required history capability is tracked in
+[issue #60](https://github.com/wildcat-finance/project-aleph/issues/60).
 
 Corpus answers currently use a strict extractive writer. It selects one coherent,
 topic-relevant source by default and refuses unsupported synthesis. Fluent
@@ -88,11 +89,21 @@ The human boundary is the point of the loop:
    linkage. Raw identifiers are retained for no more than 30 days.
 5. Regression candidates and factual corpus proposals remain separate. A
    reviewer must attach approved evidence to any factual proposal.
-6. Ten human-approved factual proposals trigger an Aleph corpus-release review.
+6. Aleph validates each immutable Null regression export and records an explicit
+   disposition for every candidate. Accepted cases enter the golden product
+   evaluation, duplicates bind to existing cases, and capability gaps retain a
+   linked issue. The importer rejects factual proposals.
+7. Ten human-approved factual proposals trigger an Aleph corpus-release review.
    Ten is a batching line, not an automatic promotion threshold; consequential
    corrections can be reviewed sooner.
-7. A candidate still has to build, embed, pass evaluation, receive attributable
+8. A candidate still has to build, embed, pass evaluation, receive attributable
    approval, and be activated by an operator.
+
+The first production Null export, `e168ea3628343c39c9cf`, contains fourteen
+regression candidates and no factual proposals. Six add golden cases, seven map
+to existing coverage, and one is deferred to the bounded transaction-history
+capability. `eval/null_import.py` reproduces that disposition from the immutable
+export bytes.
 
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train

@@ -81,8 +81,9 @@ def run(tmp: pathlib.Path) -> None:
           and history.destination == "Wildcat market CSV exporter")
     off_topic = router.route("Do you enjoy knowing your server may burn tonight?")
     check("off-topic conversation cannot fall through to corpus retrieval",
-          off_topic.mode == agent.RouteMode.REFUSE_POINT
-          and off_topic.refusal_reason == "outside_answer_boundary")
+          off_topic.mode == agent.RouteMode.REFUSE
+          and off_topic.refusal_reason == "outside_answer_boundary"
+          and off_topic.destination is None)
     ambiguous = router.route("Why is it doing that again?")
     check("underspecified follow-ups request context before outside-scope routing",
           ambiguous.mode == agent.RouteMode.CLARIFY
@@ -121,6 +122,10 @@ def run(tmp: pathlib.Path) -> None:
     check("market-field mechanism questions remain corpus-backed",
           router.route("How does the reserve ratio work?").mode
           == agent.RouteMode.CORPUS)
+    check("capacity-versus-supply wording remains corpus-backed",
+          router.route(
+              "What is the difference between capacity and supply?").mode
+          == agent.RouteMode.CORPUS)
     unsupported_url = router.route(market_url.replace("chainId=1", "chainId=8453"))
     check("a market URL cannot bypass the chain boundary",
           unsupported_url.mode == agent.RouteMode.REFUSE_POINT
@@ -148,8 +153,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 135 golden questions enter their reviewed handling mode",
-          len(routed) == 135 and not wrong, str(wrong[:5]))
+    check("all 141 golden questions enter their reviewed handling mode",
+          len(routed) == 141 and not wrong, str(wrong[:5]))
     apr_correction = router.route("Has Wildcat changed the APR on my market?")
     check("APR ownership corrections retrieve borrower-controlled rate evidence",
           apr_correction.mode == agent.RouteMode.CORRECT
@@ -257,6 +262,12 @@ def run(tmp: pathlib.Path) -> None:
           missing_symbol.status == "unavailable"
           and not missing_symbol.citations
           and "named code symbol" in missing_symbol.text)
+    unrelated = engine.answer("Which laptop should I buy this week?")
+    check("unrelated consumer questions do not invent a Wildcat handoff",
+          unrelated.status == "refused"
+          and unrelated.mode == agent.RouteMode.REFUSE
+          and "Wildcat support" not in unrelated.text
+          and "handoff" not in unrelated.text)
     liquidation_route = router.route(
         "Why did the protocol liquidate my position?")
     check("liquidation correction searches for the absent mechanism's boundary",
