@@ -175,7 +175,7 @@ corpus is not a warning condition.
 ## Recorded pinned-corpus baseline
 
 The last recorded direct runs over all five v2.0 mainnet deployment inputs and
-`wildcat-docs@aleph-v0.3` produced:
+`wildcat-docs@aleph-v0.4` produced:
 
 ```text
 Solidity
@@ -187,11 +187,11 @@ Solidity
   p99 2,340 characters; maximum 5,062; limit 24,000
 
 Markdown
-  545 chunks from 64 documents
+  548 chunks from 64 documents
   64/64 emitted documents placed
   64 synthesized document indexes
-  539 chunks placed in the SUMMARY hierarchy
-  median 510 characters; p99 3,793; maximum 9,524
+  542 chunks placed in the SUMMARY hierarchy
+  median 518 characters; p99 3,793; maximum 9,524
 ```
 
 The Solidity suite contains 142 assertions through S1–S7 and their boundary

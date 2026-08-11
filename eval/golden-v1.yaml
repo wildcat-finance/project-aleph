@@ -31,12 +31,13 @@ meta:
   version: 1
   sources: 5 anonymised channels, 2,940 messages, 500 questions extracted; reviewed Project Null and production Telegram regressions
   period: 2025-02-13 – 2026-08-05
-  count: 142
-  corpus_gaps: '9 questions marked corpus_gap: real, recurring, and unanswerable
-    from the pinned corpus — a10, b15, d08, e08, f04, f06, f09, h07, l04. Documentation
+  count: 143
+  corpus_gaps: '8 questions marked corpus_gap: real, recurring, and unanswerable
+    from the pinned corpus — a10, d08, e08, f04, f06, f09, h07, l04. Documentation
     work, not retrieval work; no embedding model can fix them. Excluded from retrieval
     scoring. e06 cleared at aleph-v0.1, which also gave e02, e09 and g01 real sources —
-    drop the marker whenever a docs release answers one and the scored set grows for free.'
+    drop the marker whenever a docs release answers one and the scored set grows for free.
+    b15 cleared at aleph-v0.4.'
 questions:
 
   # ====================================================================
@@ -288,7 +289,11 @@ questions:
     not assemble financial statements. Point at the export path.
 
     '
-  corpus_gap: accounting export, not documented
+- id: b16
+  question: What does the Wildcat Market CSV Exporter verify before it delivers an export?
+  expected: corpus
+  frequency: medium
+  note: The aleph-v0.4 documentation makes the verification boundary explicit.
 
   # ====================================================================
   # C. Market status — delinquent, penalty, pending

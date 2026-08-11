@@ -66,7 +66,7 @@ An absent signature or unavailable public key can be carried only with
 `--allow-unverified-signature`; the waiver is recorded in `build.json`. A
 present but invalid signature is always fatal.
 
-The published docs source uses the lightweight tag `aleph-v0.3`. Its tag and
+The published docs source uses the lightweight tag `aleph-v0.4`. Its tag and
 commit are pinned, but it is unsigned by design.
 
 Submodules are not initialized. The manifest selects the one external Solidity
@@ -187,7 +187,7 @@ chunk:
 source requires version and effective-date metadata on `legal/**`, not on every
 documentation page. Missing required metadata is fatal unless
 `--allow-missing-metadata` is supplied, in which case the waiver is recorded.
-The pinned `aleph-v0.3` docs satisfy both required fields on every legal page.
+The pinned `aleph-v0.4` docs satisfy both required fields on every legal page.
 
 `ingest/schema.py` then rejects duplicate IDs, duplicate normalized content
 inside one source file, empty required fields, invalid tiers or source types,

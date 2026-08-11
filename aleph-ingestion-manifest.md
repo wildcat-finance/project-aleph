@@ -85,7 +85,7 @@ state its deployment and audit status. It cannot satisfy a general v2.0 query.
 
 ## 4. Published documentation
 
-The docs source is pinned at `wildcat-docs@aleph-v0.3`. `SUMMARY.md` supplies the
+The docs source is pinned at `wildcat-docs@aleph-v0.4`. `SUMMARY.md` supplies the
 GitBook navigation hierarchy and is excluded as content.
 
 The corpus excludes:
@@ -111,7 +111,7 @@ policy.
 Applying those fields to every page would create meaningless versions for
 ordinary explainers and falsely imply substantive changes on typo fixes.
 
-The pinned `aleph-v0.3` legal pages contain both fields. The Terms of Use uses
+The pinned `aleph-v0.4` legal pages contain both fields. The Terms of Use uses
 its agreement hash as `doc_version`; the other pages use their effective date.
 
 Four legal documents are also watched by content digest. The source ref already
