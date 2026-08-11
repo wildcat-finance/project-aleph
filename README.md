@@ -257,6 +257,11 @@ manifest.yaml
 If this README disagrees with `manifest.yaml`, the manifest wins and this file
 needs correction.
 
+## License
+
+Project Aleph is licensed under the [Apache License 2.0](LICENSE).
+Copyright 2026 Wildcat Labs.
+
 ---
 
 **A note on the name.** Borges' Aleph is the point in space that contains every
