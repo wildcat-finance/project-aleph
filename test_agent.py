@@ -107,6 +107,7 @@ def run(tmp: pathlib.Path) -> None:
         market_url: None,
         f"What can you tell me about this market {market_url}": None,
         f"What's the APR for market {market}?": "apr",
+        f"APR for {market}": "apr",
         f"How long is the grace period for market {market}?": "grace_period",
         "What is the remaining capacity?": "capacity",
     }
@@ -135,8 +136,8 @@ def run(tmp: pathlib.Path) -> None:
                router.route(item["question"]).mode.value)
               for item in golden["questions"]]
     wrong = [item for item in routed if item[1] != item[2]]
-    check("all 133 golden questions enter their reviewed handling mode",
-          len(routed) == 133 and not wrong, str(wrong[:5]))
+    check("all 134 golden questions enter their reviewed handling mode",
+          len(routed) == 134 and not wrong, str(wrong[:5]))
 
     lender = test_live.LENDER
     borrower = test_live.BORROWER
@@ -167,9 +168,11 @@ def run(tmp: pathlib.Path) -> None:
           and bare_market.live.text == url_market.live.text
           and "Example Market" in bare_market.text)
     apr = engine.answer(f"What's the APR for market {market}?")
+    compact_apr = engine.answer(f"APR for {market}")
     grace = engine.answer(f"How long is the grace period for market {market}?")
     check("addressed field questions return compact deterministic values",
           "APR: 11.25%" in apr.text and "Reserve ratio" not in apr.text
+          and compact_apr.text == apr.text
           and "Delinquency grace period: 1d" in grace.text
           and "APR:" not in grace.text)
     missing_field = engine.answer("What is the reserve ratio?")

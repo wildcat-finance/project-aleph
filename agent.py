@@ -343,7 +343,10 @@ class Router:
         if self._corpus_only.search(question):
             return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
         live_field = self._market_field(question)
-        addressed = self._addressed_market(question, entities)
+        addressed = (
+            self._addressed_market(question, entities)
+            or (entities.market_address is not None and live_field is not None)
+        )
         field_request = self._market_field_request(question, live_field)
         if addressed or field_request:
             if addressed and self._market_field_mechanism(question, live_field):
