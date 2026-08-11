@@ -174,6 +174,9 @@ class Router:
         r"system prompt|ignore (?:your|all|previous) instructions|what files|"
         r"last person|previous user|repeat exactly|as a wildcat employee|"
         r"guarantees? all deposits", re.I)
+    _abusive_targeting = re.compile(
+        r"\b(?:humiliat\w*|demean\w*|insult\w*|mock\w*|sham\w*|harass\w*)\b",
+        re.I)
     _historical_activity = re.compile(
         r"\b(?:last|latest|most recent)\b.{0,100}"
         r"\b(?:transactions?|events?|borrow(?:ed|ing)?|"
@@ -190,7 +193,10 @@ class Router:
     _advice = re.compile(
         r"should i (?:lend|invest)|trustworth|best repayment|best borrower|"
         r"repayment record|pattern of late|short an asset|guarantee.*apr|"
-        r"risk score|recommend|penalty rate (?:are|do) other", re.I)
+        r"risk score|recommend|penalty rate (?:are|do) other|"
+        r"\brank\b.{0,80}\bborrowers?\b|\bsafest\s+borrower\b|"
+        r"\bpersonally\s+trust\b", re.I)
+    _address_like = re.compile(r"\b0x[0-9a-z]+\b", re.I)
     _private = re.compile(r"give me (?:the )?lender addresses|list.*lenders", re.I)
     _intent = re.compile(
         r"any plans|plan(?:s|ning)? to|does .* plan|plans? (?:another|a|any)|"
@@ -331,12 +337,19 @@ class Router:
         if self._unsafe.search(question):
             return Route(RouteMode.REFUSE, "prompt/privacy boundary", entities,
                          refusal_reason="system_or_private_context")
+        if self._abusive_targeting.search(question):
+            return Route(RouteMode.REFUSE, "abusive personal targeting", entities,
+                         refusal_reason="unsafe_or_abusive")
         if self._private.search(question):
             return Route(RouteMode.REFUSE, "lender privacy boundary", entities,
                          refusal_reason="bulk_lender_disclosure")
         if self._advice.search(question):
             return Route(RouteMode.REFUSE, "advice or borrower assessment", entities,
                          refusal_reason="advice_or_assessment")
+        if any(not _ETH_ADDRESS.fullmatch(token)
+               for token in self._address_like.findall(question)):
+            return Route(RouteMode.REFUSE, "malformed address-like input", entities,
+                         refusal_reason="malformed_address")
         if entities.chain_id != 1:
             return Route(RouteMode.REFUSE_POINT, "unsupported chain", entities,
                          destination="Wildcat support",
@@ -848,6 +861,8 @@ class AnswerEngine:
         elif route.refusal_reason == "unsafe_or_abusive":
             text = ("I can't comply with hateful or self-harm coercion. If someone "
                     "may be in immediate danger, contact local emergency services.")
+        elif route.refusal_reason == "malformed_address":
+            text = "I can't use malformed address-like text as a market or account."
         elif route.refusal_reason == "outside_answer_boundary":
             text = "I can only answer questions within Aleph's Wildcat Protocol scope."
         if destination:
