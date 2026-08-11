@@ -14,9 +14,10 @@ acquire -> filter/watch -> parse -> enrich/validate -> write corpus
 ```
 
 `ingest/build.py` stops after writing a validated corpus. `embed/index.py`
-consumes that corpus and writes a tiered vector index. Answer generation,
-live-state queries, deployment promotion, and atomic pointer swaps are outside
-this repository.
+consumes that corpus and writes a tiered vector index. `release.py` is the
+canonical wrapper that enforces the manifest embedding identity and records one
+coherent corpus/index candidate. Answer generation, live-state queries, and
+deployment pointer swaps remain downstream.
 
 ## Prerequisites
 
@@ -195,14 +196,16 @@ corpus/<build_id>/
   build.json     refs, tools, counts, gates, watches, waivers, optional diff
 ```
 
-`build.json` includes a creation timestamp, so the directory is not byte-for-byte
-identical across reruns even though its identity and chunks are deterministic.
-The command also reuses an existing build directory and rewrites its two files.
-Deployment tooling must therefore treat published build directories as immutable;
-immutability is not enforced by this CLI.
+Publication is atomic and immutable. If the build directory already exists, the
+driver replays the build and verifies `chunks.jsonl` and every stable field in
+`build.json`, then returns the original record without rewriting its creation
+timestamp. An incomplete, modified, or incoherent directory is fatal and is
+never repaired in place.
 
 `--against path/to/chunks.jsonl` records added, removed, and changed chunk IDs.
-The driver produces the diff but does not record human approval of it.
+The driver produces the diff. `release.py` records whether the diff is pending,
+unchanged, or approved by a named reviewer; review state creates a distinct
+immutable release record without rebuilding the shared corpus or index.
 
 ## 6. Build record and gates
 
@@ -215,7 +218,7 @@ ones:
 | Required document metadata | enforced; explicit waiver available |
 | Schema validity | enforced |
 | Watched legal digests | measured and recorded; mismatch is not fatal |
-| Corpus diff review | diff can be generated; approval is not implemented |
+| Corpus diff review | release record is pending until a changed diff names its reviewer |
 | SDK address assertions | recorded as `null`; not implemented in the build |
 | Retrieval/answer evaluation | recorded as `null`; not implemented in the build |
 | Atomic deployment swap | not implemented in this repository |
@@ -225,7 +228,14 @@ on disk does not by itself mean that every promotion gate passed.
 
 ## 7. Embed and search
 
-Build a separate vector index from a corpus directory:
+The canonical path builds the corpus and index together:
+
+```bash
+python3 release.py --manifest manifest.yaml \
+  --solc ingest/solc-container --artifacts artifacts
+```
+
+For component development, build a separate vector index from a corpus:
 
 ```bash
 python3 embed/index.py build \
@@ -234,8 +244,10 @@ python3 embed/index.py build \
   --out index
 ```
 
-The implementation writes one normalized NumPy matrix and one aligned metadata
-file per tier, plus `index.json`. It uses exact cosine search. At roughly 1,600
+The implementation atomically writes one normalized NumPy matrix and one
+aligned metadata file per tier, plus `index.json`. Every payload file has a
+recorded SHA-256 hash; an existing index is fully verified and reused, never
+rewritten. It uses exact cosine search. At roughly 1,600
 chunks and 1,024 dimensions, approximate nearest-neighbor infrastructure adds
 complexity without useful latency savings.
 
@@ -248,9 +260,10 @@ index/<build_id>/
   index.json
 ```
 
-Search checks the query embedder's complete identity against the index identity
-before comparing vectors. Results remain grouped and ranked per tier; `k` applies
-to each tier independently.
+`release.py` checks the runtime's complete identity against the manifest before
+the first vector is published. Search checks the query embedder's complete
+identity against the index identity before comparing vectors. Results remain
+grouped and ranked per tier; `k` applies to each tier independently.
 
 The repository does not implement BM25, reciprocal-rank fusion, Postgres,
 pgvector, answer synthesis, citation rendering, or live-state joins.

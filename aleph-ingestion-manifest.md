@@ -201,9 +201,9 @@ more resident memory without improving retrieval.
 
 The model digest, dimensions, normalization behavior, and query prefix are part
 of index identity. `embed/index.py` refuses a query produced by a different
-identity. The CLI records the runtime digest but does not read the manifest pin
-automatically, so release index construction must verify the local Ollama digest
-against `manifest.yaml` before building.
+identity. `release.py` derives the required identity from `manifest.yaml` and
+refuses to publish an index when the runtime backend, model, digest, dimensions,
+normalization, or query prefix differs.
 
 Exact cosine search is intentional at the current corpus size. Tier matrices are
 only a few megabytes; an approximate index would introduce a new recall boundary
@@ -231,8 +231,9 @@ evaluation before deployment.
   Telegram layers are not present in this repository.
 - SDK address assertions exist in the manifest but are not evaluated by the
   corpus builder; `address_assertions_hold` is recorded as `null`.
-- Corpus diffs can be generated, but human approval and atomic promotion are not
-  implemented here.
+- Corpus diffs carry pending, unchanged, or named-reviewer approval state in an
+  immutable release record. Activation of an approved release is not yet
+  implemented.
 - Lens addresses are pinned through the SDK artifact, while the deployed
   `MarketLens`, `MarketLensV2`, and `CollateralLens` source is not bound here to
   reviewed commits. A disputed numeric answer must be resolved against on-chain
@@ -242,9 +243,9 @@ evaluation before deployment.
 - GitBook anchor behavior has no public specification. The chunker is fitted to
   the rendered site and must be rechecked with
   `ingest/chunkers/verify_anchors.py` after renderer or docs changes.
-- Corpus output directories are immutable by deployment convention, not by the
-  current CLI; rerunning the same build ID rewrites `build.json` with a new
-  timestamp.
+- Corpus, index, and release directories are atomically published and immutable.
+  A rerun verifies and reuses the existing bytes; corruption or identity drift
+  is fatal rather than repaired in place.
 
 These are current boundaries, not prompts for the build to guess. A downstream
 component either supplies the missing control explicitly or fails closed.

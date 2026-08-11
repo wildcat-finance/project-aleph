@@ -66,9 +66,12 @@ class Identity:
     query_prefix: str = ""    # empty when the model wants none, as bge-m3 does
 
     def key(self) -> str:
-        """A short stable string for comparing two identities."""
+        """A short stable string for logs and directory names."""
+        prefix = (hashlib.sha256(self.query_prefix.encode()).hexdigest()[:8]
+                  if self.query_prefix else "none")
         return f"{self.backend}:{self.model}@{self.digest or 'unpinned'}" \
-               f"/{self.dimensions}{'n' if self.normalised else ''}"
+               f"/{self.dimensions}{'n' if self.normalised else ''}" \
+               f"/q:{prefix}"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -88,11 +91,11 @@ def require_match(index_identity: Identity, query_identity: Identity) -> None:
     retrieval, it silently randomises it: the vectors occupy the same space
     arithmetically and none of them mean the same thing.
     """
-    if index_identity.key() != query_identity.key():
+    if index_identity != query_identity:
         raise EmbeddingError(
             "the query was embedded by a different model than the index\n"
-            f"  index : {index_identity.key()}\n"
-            f"  query : {query_identity.key()}\n"
+            f"  index : {index_identity.key()} {index_identity.to_dict()}\n"
+            f"  query : {query_identity.key()} {query_identity.to_dict()}\n"
             "  Cosine similarity between these is arithmetic, not meaning. "
             "Re-embed the corpus or point the query at the matching runtime.")
 
