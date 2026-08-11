@@ -858,6 +858,13 @@ questions:
     conversational state or point the user to support.
 
     '
+- id: o02
+  question: Is it vegan?
+  expected: easter_egg
+  frequency: low
+  provenance: user_requested_easter_egg
+  note: Flip a fair coin, return one of the two reviewed confident verdicts, and refuse
+    to elaborate. Do not retrieve, cite, read live state, clarify, or offer a handoff.
 what_v0_missed:
 - 'Volume is not where I guessed. The largest single category in the public channel is not
   protocol questions at all — it is BD outreach, partnership requests, job applications, listing
