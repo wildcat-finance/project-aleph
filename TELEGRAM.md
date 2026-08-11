@@ -3,7 +3,8 @@
 `telegram.py` is a transport over `AnswerEngine`. It does not route questions,
 retrieve evidence, query live state, rewrite answers, or decide refusals. The
 adapter selects relevant Telegram messages, passes their text to the engine, and
-delivers the returned text as plain messages.
+delivers the returned text — rendered with cosmetic Telegram markup for humans,
+byte-exact plain text for peer bots.
 
 ## Startup boundary
 
@@ -52,11 +53,34 @@ operator has identified a specific peer and enabled Telegram's
 [Bot-to-Bot Communication Mode](https://core.telegram.org/api/bots%2Fbot-to-bot)
 for one of the participating bots.
 
-Replies preserve the originating forum topic and use `reply_parameters`. Answer
-text is sent without a Telegram parse mode, so citations and punctuation cannot
-be reinterpreted as markup. Link previews are disabled. Responses longer than
-Telegram's 4,096-character limit are split at stable text boundaries; joining
-the chunks recreates the exact engine output.
+Replies preserve the originating forum topic and use `reply_parameters`.
+
+## Rendering
+
+Answers with the engine's section structure are rendered for human askers with
+Telegram HTML: section headings are bold, inline `[n]` citation markers link to
+their sources, full-length hex values become tap-to-copy `code` spans, and the
+trailing Sources section collapses into an expandable quotation. Inside it each
+URL is tucked behind a shortened label — the file name and the breadcrumb's
+most specific segment — while the plain fallback keeps the full citation line.
+The first two sources also repeat as URL buttons under the final message, so
+the primary evidence is one tap away without expanding the quotation. The
+visible text is otherwise the answer's own bytes — markup is added only after
+every byte is HTML-escaped, so answer text can never be reinterpreted. The
+renderer verifies that the plain fallback of its chunks reconstructs the exact
+engine output and refuses to send otherwise.
+
+Rendering is cosmetic and never load-bearing: if Telegram refuses a rendered
+chunk, the adapter resends that chunk's exact plain bytes without buttons.
+Unstructured replies (commands, refusals, rate-limit notices) are sent without
+a parse mode, as are all replies to peer bots, which consume answer bytes
+rather than markup. A best-effort `typing` chat action precedes engine answers
+for human askers and is renewed about every five seconds until the answer is
+ready; its failure never blocks an answer. Link previews are disabled. Responses longer
+than Telegram's 4,096-character limit are split at stable text boundaries —
+plain chunks join to recreate the exact engine output, and rendered chunks are
+bounded by visible length with headroom for Telegram's double-width counting of
+astral characters.
 
 ## Delivery and load boundaries
 
@@ -90,8 +114,14 @@ that no destination is configured and sends nothing.
 
 The implementation follows the current Telegram Bot API contracts for
 [`getUpdates`](https://core.telegram.org/bots/api#getupdates),
-[`sendMessage`](https://core.telegram.org/bots/api#sendmessage), and
-[`ReplyParameters`](https://core.telegram.org/bots/api#replyparameters). Group
+[`sendMessage`](https://core.telegram.org/bots/api#sendmessage),
+[`ReplyParameters`](https://core.telegram.org/bots/api#replyparameters),
+[`sendChatAction`](https://core.telegram.org/bots/api#sendchataction),
+[`InlineKeyboardMarkup`](https://core.telegram.org/bots/api#inlinekeyboardmarkup)
+restricted to stateless `url` buttons, and the
+[HTML formatting style](https://core.telegram.org/bots/api#html-style),
+restricted to `b`, `a`, `code`, and `blockquote expandable` — entity types
+stable since Bot API 7.3 (May 2024). Group
 delivery assumptions follow Telegram's
 [`Privacy Mode`](https://core.telegram.org/bots/features#privacy-mode) rules.
 The narrow peer-bot path follows Telegram's
