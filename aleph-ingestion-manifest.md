@@ -227,7 +227,7 @@ with the named corpus bytes and refuses synthesized retrieval aids as quotes.
 
 ## 9. Evaluation
 
-`eval/golden-v1.yaml` contains 125 questions clustered from support traffic plus
+`eval/golden-v1.yaml` contains 134 questions clustered from support traffic plus
 one human-reviewed synthetic Project Null routing regression.
 `eval/labels.yaml` supplies retrieval labels for 25 consequential corpus
 questions. Nine entries identify genuine corpus gaps rather than pretending a
@@ -239,7 +239,7 @@ corpus, tier policy, answer generation, citation rendering, abstention,
 live-state joins, or Telegram behavior.
 
 `ingest/build.py` records `eval_not_regressed: null` because no corpus-only step
-can evaluate the answer path. `eval/product_eval.py` runs the complete 125-case
+can evaluate the answer path. `eval/product_eval.py` runs the complete 134-case
 path, retrieval labels, fixture-backed typed live reads, claim and citation
 checks, version isolation, and abstention boundaries. Its immutable report is
 bound by `promotion.py`; the evaluated release exists only when every manifest
