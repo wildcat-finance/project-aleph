@@ -25,6 +25,19 @@ class TelegramError(Exception):
     """Telegram transport or adapter policy cannot be satisfied."""
 
 
+class TelegramRefused(TelegramError):
+    """Telegram definitively refused a request before accepting delivery."""
+
+
+RICH_MESSAGE_LIMIT = 32768
+_RICH_HEADINGS = frozenset({
+    "Explanation", "Current state", "Premise correction", "Sources",
+})
+_SOURCE_CITATION = re.compile(
+    r"^\[(?P<number>[1-9][0-9]*)\]\s+"
+    r"(?P<label>.+?):\s+(?P<url>https://\S+)$")
+
+
 def peer_bot_ids(value: str | None = None) -> tuple[int, ...]:
     """Parse the default-closed peer-bot allowlist without exposing IDs."""
     raw = os.environ.get("ALEPH_PEER_BOT_IDS", "") if value is None else value
@@ -38,6 +51,41 @@ def peer_bot_ids(value: str | None = None) -> tuple[int, ...]:
                 "ALEPH_PEER_BOT_IDS must be comma-separated positive integers")
         values.append(int(item))
     return tuple(dict.fromkeys(values))
+
+
+def rich_messages_enabled(value: str | None = None) -> bool:
+    """Parse the operator kill switch; production prefers rich delivery."""
+    raw = (os.environ.get("ALEPH_TELEGRAM_RICH_MESSAGES", "true")
+           if value is None else value).strip().casefold()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise TelegramError(
+        "ALEPH_TELEGRAM_RICH_MESSAGES must be true or false")
+
+
+def rich_markdown(text: str) -> str:
+    """Map reviewed sections and citations to native rich Markdown."""
+    if not text:
+        raise TelegramError("cannot format an empty rich message")
+    rendered = []
+    in_sources = False
+    for line in text.split("\n"):
+        if line in _RICH_HEADINGS:
+            rendered.append(f"## {line}")
+            in_sources = line == "Sources"
+            continue
+        citation = _SOURCE_CITATION.fullmatch(line) if in_sources else None
+        if citation:
+            label = (citation.group("label").replace("\\", "\\\\")
+                     .replace("[", "\\[").replace("]", "\\]"))
+            rendered.append(
+                f'{citation.group("number")}. [{label}]'
+                f'({citation.group("url")})')
+        else:
+            rendered.append(line)
+    return "\n".join(rendered)
 
 
 class BotAPI(Protocol):
@@ -66,12 +114,15 @@ class TelegramHTTP:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 result = json.load(response)
         except urllib.error.HTTPError as error:
-            raise TelegramError(f"Telegram {method} returned HTTP {error.code}")
+            error_type = (TelegramRefused if 400 <= error.code < 500
+                          else TelegramError)
+            raise error_type(f"Telegram {method} returned HTTP {error.code}")
         except (urllib.error.URLError, json.JSONDecodeError) as error:
             raise TelegramError(f"Telegram {method} failed: {error}")
         if result.get("ok") is not True:
             description = str(result.get("description") or "unknown API error")
-            raise TelegramError(f"Telegram {method} refused the request: {description}")
+            raise TelegramRefused(
+                f"Telegram {method} refused the request: {description}")
         return result.get("result")
 
 
@@ -98,6 +149,7 @@ class Incoming:
 class Outgoing:
     text: str
     pending_handoff: tuple[str, tuple[str, ...], tuple[str, ...]] | None = None
+    rich: bool = False
 
 
 @dataclass(frozen=True)
@@ -186,8 +238,6 @@ class RateLimiter:
             return True
 
 
-_HEADINGS = ("Explanation", "Premise correction", "Current state", "Sources")
-_SOURCE_LINE = re.compile(r"^\[(\d+)\] (.+?): (https://\S+)$")
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 _HEX_VALUE = re.compile(r"\b0x(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{40})\b")
 
@@ -226,10 +276,11 @@ def _trailing_sources(paragraphs: list[str]) -> dict[int, tuple[str, str]] | Non
         return None
     links: dict[int, tuple[str, str]] = {}
     for line in paragraphs[-1].split("\n"):
-        matched = _SOURCE_LINE.match(line)
-        if matched is None or int(matched.group(1)) in links:
+        matched = _SOURCE_CITATION.fullmatch(line)
+        if matched is None or int(matched.group("number")) in links:
             return None
-        links[int(matched.group(1))] = (matched.group(2), matched.group(3))
+        links[int(matched.group("number"))] = (
+            matched.group("label"), matched.group("url"))
     return links or None
 
 
@@ -247,13 +298,13 @@ def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | 
         raise TelegramError("Telegram message limit must be between 1 and 4096")
     paragraphs = text.split("\n\n")
     links = _trailing_sources(paragraphs)
-    if links is None and not any(item in _HEADINGS for item in paragraphs):
+    if links is None and not any(item in _RICH_HEADINGS for item in paragraphs):
         return None
     body = paragraphs[:-2] if links else paragraphs
 
     fragments: list[tuple[str, str, int]] = []
     for paragraph in body:
-        if paragraph in _HEADINGS:
+        if paragraph in _RICH_HEADINGS:
             fragments.append(
                 (paragraph, f"<b>{_escape_html(paragraph)}</b>", len(paragraph)))
             continue
@@ -345,7 +396,8 @@ class TelegramAdapter:
                  handoff_sink: HandoffSink | None = None,
                  max_workers: int = 4, user_limit: int = 5,
                  user_window_seconds: int = 60,
-                 peer_bot_ids: tuple[int, ...] = ()):
+                 peer_bot_ids: tuple[int, ...] = (),
+                 rich_messages: bool = False):
         if not 1 <= max_workers <= 32:
             raise TelegramError("max_workers must be between 1 and 32")
         if any(isinstance(peer_id, bool) or not isinstance(peer_id, int)
@@ -358,6 +410,7 @@ class TelegramAdapter:
         self.max_workers = max_workers
         self.limiter = RateLimiter(user_limit, user_window_seconds)
         self.peer_bot_ids = frozenset(peer_bot_ids)
+        self.rich_messages = bool(rich_messages)
         self.identity: BotIdentity | None = None
         self.pending: dict[tuple[int, int], PendingHandoff] = {}
 
@@ -533,8 +586,9 @@ class TelegramAdapter:
                 answer.text + "\n\nTo prepare it here, reply with /handoff "
                 "field=value; field=value. Review the preview, then use "
                 "/confirm_handoff. Use /cancel_handoff to discard it.",
-                (answer.triage.kind, answer.triage.requested_fields, required))
-        return Outgoing(answer.text)
+                (answer.triage.kind, answer.triage.requested_fields, required),
+                rich=True)
+        return Outgoing(answer.text, rich=True)
 
     def _command(self, incoming: Incoming, command: str) -> str:
         name, _, body = command.partition(" ")
@@ -616,17 +670,41 @@ class TelegramAdapter:
         return fields
 
     def _send(self, incoming: Incoming, outgoing: Outgoing) -> None:
+        if self._send_rich(incoming, outgoing):
+            self._install_handoff(incoming, outgoing)
+            return
         reply_to = incoming.message_id
-        # Peer bots read answer bytes, not markup, so they keep plain text.
-        rendered = None if incoming.peer_bot else format_message(outgoing.text)
+        # Engine answers for humans carry cosmetic entity rendering; peer
+        # bots and command replies keep exact plain bytes.
+        rendered = (format_message(outgoing.text)
+                    if outgoing.rich and not incoming.peer_bot else None)
         if rendered is None:
             for chunk in split_message(outgoing.text):
                 reply_to = self._send_chunk(incoming, chunk, reply_to)
         else:
             for chunk in rendered:
                 reply_to = self._send_rendered(incoming, chunk, reply_to)
-        if outgoing.pending_handoff is not None:
-            self._install_pending(incoming, outgoing)
+        self._install_handoff(incoming, outgoing)
+
+    def _send_rich(self, incoming: Incoming, outgoing: Outgoing) -> bool:
+        if (not self.rich_messages or not outgoing.rich or incoming.peer_bot
+                or len(outgoing.text) > RICH_MESSAGE_LIMIT):
+            return False
+        payload = {
+            "chat_id": incoming.chat_id,
+            "rich_message": {"markdown": rich_markdown(outgoing.text)},
+            "reply_parameters": {
+                "message_id": incoming.message_id,
+                "allow_sending_without_reply": False,
+            },
+        }
+        if incoming.thread_id is not None:
+            payload["message_thread_id"] = incoming.thread_id
+        try:
+            self.api.call("sendRichMessage", payload)
+        except TelegramRefused:
+            return False
+        return True
 
     def _send_chunk(self, incoming: Incoming, text: str, reply_to: int,
                     parse_mode: str | None = None,
@@ -653,12 +731,14 @@ class TelegramAdapter:
 
     def _send_rendered(self, incoming: Incoming, chunk: RenderedChunk,
                        reply_to: int) -> int:
-        # Markup is cosmetic: if Telegram refuses the HTML rendering, the
-        # exact plain bytes still ship, split as any oversized answer is.
+        # Markup is cosmetic: if Telegram definitively refuses the HTML
+        # rendering, the exact plain bytes still ship, split as any oversized
+        # answer is. Ambiguous transport failures propagate instead, leaving
+        # the update unconfirmed rather than risking a duplicate delivery.
         try:
             return self._send_chunk(incoming, chunk.html, reply_to, "HTML",
                                     chunk.buttons)
-        except TelegramError:
+        except TelegramRefused:
             for piece in split_message(chunk.plain):
                 reply_to = self._send_chunk(incoming, piece, reply_to)
             return reply_to
@@ -691,7 +771,9 @@ class TelegramAdapter:
         except TelegramError:
             pass
 
-    def _install_pending(self, incoming: Incoming, outgoing: Outgoing) -> None:
+    def _install_handoff(self, incoming: Incoming, outgoing: Outgoing) -> None:
+        if outgoing.pending_handoff is None:
+            return
         kind, allowed, required = outgoing.pending_handoff
         handoff_id = hashlib.sha256(
             f"{incoming.chat_id}:{incoming.user_id}:{incoming.update_id}".encode()

@@ -257,8 +257,10 @@ The implementation provides:
   room text is ignored and plain mentions remain subject to Telegram delivery;
 - a default-closed peer-bot allowlist whose only capability is an explicitly
   targeted `/ask@AlephBot` command;
-- message parsing, reply threading, length-aware formatting, and stable citation
-  links;
+- message parsing, reply threading, native Telegram Rich Messages for eligible
+  human-facing answers, and stable citation links;
+- automatic fallback to the byte-exact 4,096-character plain-message chain for
+  disabled, unsupported, refused, oversized, command, or peer-bot delivery;
 - an allowlisted handoff draft and preview followed by a separate explicit
   `/confirm_handoff`, with the default destination disabled;
 - rate limits and bounded concurrency; and
@@ -266,9 +268,10 @@ The implementation provides:
   and internal errors.
 
 `test_telegram.py` passes real fixture-backed answer-engine output through the
-adapter. It checks unchanged citation text, topic/reply identity, exact
-reconstruction of split answers, send-failure checkpoint behavior, bounded
-admission, fixed internal-error text, and the no-confirmation/no-handoff rule.
+adapter. It checks rich section rendering, unchanged citation URLs, rich-to-plain
+fallback, peer-bot compatibility, topic/reply identity, exact reconstruction of
+split answers, send-failure checkpoint behavior, bounded admission, fixed
+internal-error text, and the no-confirmation/no-handoff rule.
 
 ### 7. Production deployment and operations — implemented
 

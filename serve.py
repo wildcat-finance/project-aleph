@@ -15,7 +15,7 @@ from audit import AuditError, AuditLogger, AuditedEngine
 from live import GatewayClient, LiveError
 from retrieval import Retriever, RetrievalError
 from telegram import (OffsetStore, TelegramAdapter, TelegramError, TelegramHTTP,
-                      peer_bot_ids)
+                      peer_bot_ids, rich_messages_enabled)
 
 
 def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
@@ -38,7 +38,8 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
     api = TelegramHTTP()
     adapter = TelegramAdapter(
         audited, api, OffsetStore(offset_file), max_workers=max_workers,
-        peer_bot_ids=peer_bot_ids())
+        peer_bot_ids=peer_bot_ids(),
+        rich_messages=rich_messages_enabled())
     return adapter, logger
 
 

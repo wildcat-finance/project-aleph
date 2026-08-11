@@ -14,7 +14,7 @@ from embed.embedder import Identity, require_match, EmbeddingError
 from live import GatewayClient, LiveError
 from retrieval import Retriever, RetrievalError
 from telegram import (OffsetStore, TelegramAdapter, TelegramError, TelegramHTTP,
-                      peer_bot_ids)
+                      peer_bot_ids, rich_messages_enabled)
 
 
 class NullEngine:
@@ -46,14 +46,16 @@ def check(manifest: str, artifacts: str, pointer: str, prerelease: str,
     }
     telegram_api = api or TelegramHTTP()
     peers = peer_bot_ids()
+    rich_messages = rich_messages_enabled()
     adapter = TelegramAdapter(
         NullEngine(), telegram_api, OffsetStore("state/monitor-unused.json"),
-        peer_bot_ids=peers)
+        peer_bot_ids=peers, rich_messages=rich_messages)
     identity = adapter.startup()
     checks["telegram"] = {"ok": True, "bot_id": identity.id,
                            "username": identity.username,
                            "privacy_mode": "enabled", "webhook": "absent",
-                           "peer_bot_count": len(peers)}
+                           "peer_bot_count": len(peers),
+                           "rich_messages": rich_messages}
     return {"ok": True,
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "checks": checks}

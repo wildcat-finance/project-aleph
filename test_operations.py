@@ -214,10 +214,12 @@ def run(tmp: pathlib.Path) -> None:
     check("malformed peer bot configuration fails closed",
           "positive integers" in refused, refused)
     previous = {name: os.environ.get(name) for name in (
-        "ALEPH_GATEWAY_TOKEN", "ALEPH_TELEGRAM_TOKEN", "ALEPH_AUDIT_HMAC_KEY")}
+        "ALEPH_GATEWAY_TOKEN", "ALEPH_TELEGRAM_TOKEN", "ALEPH_AUDIT_HMAC_KEY",
+        "ALEPH_TELEGRAM_RICH_MESSAGES")}
     os.environ.update({"ALEPH_GATEWAY_TOKEN": "gateway-fixture",
                        "ALEPH_TELEGRAM_TOKEN": "telegram-fixture",
-                       "ALEPH_AUDIT_HMAC_KEY": "a" * 32})
+                       "ALEPH_AUDIT_HMAC_KEY": "a" * 32,
+                       "ALEPH_TELEGRAM_RICH_MESSAGES": "false"})
     try:
         composed, _ = serve.compose(
             str(retriever.main.manifest_path), str(root), str(pointer_path),
@@ -231,14 +233,16 @@ def run(tmp: pathlib.Path) -> None:
             else:
                 os.environ[name] = value
     check("production composition loads only the verified active release",
-          isinstance(composed, telegram.TelegramAdapter))
+          isinstance(composed, telegram.TelegramAdapter)
+          and composed.rich_messages is False)
     report = monitor.check(
         str(retriever.main.manifest_path), str(root), str(pointer_path),
         str(retriever.prerelease.release_path), "stub:test",
         api=MonitorAPI(), gateway_client=live_client)
     check("one-shot monitoring covers activation, model, gateway and Telegram",
           report["ok"] and set(report["checks"]) == {
-              "active_release", "model_runtime", "gateway", "telegram"})
+              "active_release", "model_runtime", "gateway", "telegram"}
+          and report["checks"]["telegram"]["rich_messages"] is True)
 
     print("\nO5 — production units keep the query identity unprivileged")
     required_hardening = {
