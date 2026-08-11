@@ -66,10 +66,16 @@ quote absent from the corpus, a synthesized retrieval aid, or a citation that
 does not resolve against the loaded release. `ExtractiveWriter` is the safe
 dependency-free implementation and emits corpus substrings directly. A language
 writer cannot weaken the validation contract. The extractive writer ranks
-evidence globally across both tiers, prefers prose for ordinary-language
-questions, and selects the matching exact paragraph without emitting markup-only
-blocks. It does not emit the first three Tier A chunks merely because every
-ranking necessarily has winners.
+evidence globally across both tiers, requires an independent topic match, and
+gives source headings and paths more weight than incidental body-text overlap.
+It emits one coherent source by default, selects the matching exact paragraph,
+and cannot leave markup-only fragments when clipping a long extract. Presentation
+requests such as “explain like…” are excluded from the evidence query. The source
+list contains only evidence attached to displayed claims; `always_cite` candidates
+remain retrievable policy inputs but are not shown as unsupported reading. The
+writer does not emit the first Tier A chunks merely because every ranking has
+winners, and it does not append a second semantic neighbour merely because one
+exists.
 
 `eval/product_eval.py` makes claim support blocking. The current evaluator is
 conservative: it accepts exact extractive claims and fails paraphrases. A future
