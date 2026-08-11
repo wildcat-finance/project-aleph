@@ -33,6 +33,9 @@ RICH_MESSAGE_LIMIT = 32768
 _RICH_HEADINGS = frozenset({
     "Explanation", "Current state", "Premise correction", "Sources",
 })
+_SOURCE_CITATION = re.compile(
+    r"^\[(?P<number>[1-9][0-9]*)\]\s+"
+    r"(?P<label>.+?):\s+(?P<url>https://\S+)$")
 
 
 def peer_bot_ids(value: str | None = None) -> tuple[int, ...]:
@@ -63,13 +66,26 @@ def rich_messages_enabled(value: str | None = None) -> bool:
 
 
 def rich_markdown(text: str) -> str:
-    """Map only Aleph's reviewed section labels to native rich headings."""
+    """Map reviewed sections and citations to native rich Markdown."""
     if not text:
         raise TelegramError("cannot format an empty rich message")
-    return "\n".join(
-        f"## {line}" if line in _RICH_HEADINGS else line
-        for line in text.split("\n")
-    )
+    rendered = []
+    in_sources = False
+    for line in text.split("\n"):
+        if line in _RICH_HEADINGS:
+            rendered.append(f"## {line}")
+            in_sources = line == "Sources"
+            continue
+        citation = _SOURCE_CITATION.fullmatch(line) if in_sources else None
+        if citation:
+            label = (citation.group("label").replace("\\", "\\\\")
+                     .replace("[", "\\[").replace("]", "\\]"))
+            rendered.append(
+                f'{citation.group("number")}. [{label}]'
+                f'({citation.group("url")})')
+        else:
+            rendered.append(line)
+    return "\n".join(rendered)
 
 
 class BotAPI(Protocol):

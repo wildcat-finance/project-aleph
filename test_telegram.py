@@ -163,6 +163,7 @@ def run(tmp: pathlib.Path) -> None:
 
     rich_text = (
         "Explanation\n\nEvidence-backed answer.\n\nSources\n\n"
+        "[1] docs/file.md › Stable section: "
         "https://github.com/wildcat-finance/project-aleph/blob/abc/file.md#L1")
     rich_api = FakeAPI([update(11, "question", thread_id=88)])
     rich = adapter(
@@ -174,8 +175,12 @@ def run(tmp: pathlib.Path) -> None:
           len(rich_api.rich_sent) == 1 and not rich_api.sent
           and markdown.startswith("## Explanation")
           and "## Sources" in markdown
-          and "https://github.com/wildcat-finance/project-aleph/blob/abc/"
-              "file.md#L1" in markdown)
+          and "1. [docs/file.md › Stable section](https://github.com/"
+              "wildcat-finance/project-aleph/blob/abc/file.md#L1)" in markdown)
+    check("rich citations hide long URLs behind readable numbered labels",
+          "[1] docs/file.md" not in markdown
+          and markdown.count("https://github.com/wildcat-finance/"
+                             "project-aleph/blob/abc/file.md#L1") == 1)
     check("rich delivery preserves reply and forum-topic identity",
           rich_payload["reply_parameters"]["message_id"] == 111
           and rich_payload["message_thread_id"] == 88
@@ -191,6 +196,11 @@ def run(tmp: pathlib.Path) -> None:
           not fallback_api.rich_sent and len(fallback_api.sent) == 1
           and fallback_api.sent[0]["text"] == rich_text
           and fallback.offset_store.load() == 13)
+
+    irregular = "Sources\n\nAn operator-authored source note"
+    check("unrecognized source records remain byte-for-byte intact",
+          telegram.rich_markdown(irregular)
+          == "## Sources\n\nAn operator-authored source note")
 
     ambiguous_api = FakeAPI([update(14, "question")])
     ambiguous_api.lose_rich_response = True
