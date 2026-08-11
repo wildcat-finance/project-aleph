@@ -218,6 +218,15 @@ def run(tmp: pathlib.Path) -> None:
     check("a lexical pile-up cannot discard the semantic winner",
           {item[1] for item in selected} == {"lexical-1", "semantic-winner"},
           str(selected))
+    expanded = retrieval.expand_query(
+        "I queued 1,000 market tokens and got less back. Is the invariant broken?")
+    check("reviewed withdrawal-loss idiom expands to source vocabulary",
+          "scaled tokens distributed evenly" in expanded)
+    check("unrelated retrieval questions are byte-identical",
+          retrieval.expand_query("How does reserve ratio work?")
+          == "How does reserve ratio work?")
+    check("reviewed expansion is idempotent",
+          retrieval.expand_query(expanded) == expanded)
     check("always_cite policy cannot disappear from a response",
           exact.mandatory_source_paths == ("docs/Known Issues.md",)
           and exact.always_cite_candidates[0].path == "docs/Known Issues.md")

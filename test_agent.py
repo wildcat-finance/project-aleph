@@ -138,6 +138,16 @@ def run(tmp: pathlib.Path) -> None:
     wrong = [item for item in routed if item[1] != item[2]]
     check("all 134 golden questions enter their reviewed handling mode",
           len(routed) == 134 and not wrong, str(wrong[:5]))
+    apr_correction = router.route("Has Wildcat changed the APR on my market?")
+    check("APR ownership corrections retrieve borrower-controlled rate evidence",
+          apr_correction.mode == agent.RouteMode.CORRECT
+          and "borrower can change APR" in router.evidence_query(
+              "Has Wildcat changed the APR on my market?", apr_correction))
+    batch_loss = (
+        "I queued 1,000 market tokens and got less back. Is the invariant broken?")
+    check("withdrawal-loss evidence and claim selection share one expansion",
+          "scaled tokens distributed evenly" in router.evidence_query(
+              batch_loss, router.route(batch_loss)))
 
     lender = test_live.LENDER
     borrower = test_live.BORROWER

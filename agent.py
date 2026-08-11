@@ -11,7 +11,7 @@ from typing import Callable, Protocol
 
 from live import GatewayUnavailable, LiveError, RenderedLive, render_live
 from retrieval import (Citation, CitationError, Evidence, RetrievalError,
-                       RetrievalRequest, ScopeError)
+                       RetrievalRequest, ScopeError, expand_query)
 
 
 class AnswerError(Exception):
@@ -280,6 +280,10 @@ class Router:
                 and re.search(r"liquidat(?:e|ed|ion)", question, re.I)):
             return ("Wildcat protocol does not liquidate lender positions or "
                     "participate in liquidation")
+        if (route.mode == RouteMode.CORRECT
+                and re.search(r"wildcat changed the apr", question, re.I)):
+            return ("borrower can change APR set annual interest and reserve "
+                    "ratio")
         # Presentation requests are not evidence topics. Sending them to the
         # embedder can make an otherwise exact protocol question retrieve
         # semantically adjacent legal, medical, or stylistic prose.
@@ -287,7 +291,7 @@ class Router:
             r"(?:[,;]\s*|\band\s+)explain(?:\s+(?:it|this|that))?"
             r"(?:\s+to me)?\s+(?:like|as if)\b.*$", "", question,
             flags=re.I).strip(" \t,;:.-")
-        return focused or question
+        return expand_query(focused or question)
 
     def route(self, question: str) -> Route:
         if not question.strip():
