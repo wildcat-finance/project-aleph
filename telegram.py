@@ -67,6 +67,11 @@ def rich_messages_enabled(value: str | None = None) -> bool:
 
 _MARKDOWN_SPECIAL = re.compile(r"[_*\[\]()~`>#+\-=|{}.!\\]")
 _ESCAPED_MARKER = re.compile(r"\\\[(\d+)\\\]")
+# A `Label: value` line inside a Current state section. Anchored to the line
+# start and requiring content after the colon, so a sentence ending in a
+# colon, a bullet, or prose with mid-sentence colons never grows a label.
+_STATE_LABEL = re.compile(r"^([A-Za-z][^:<\n]{0,60}?): (?=\S)")
+_STATE_LABEL_HTML = re.compile(r"^([A-Za-z][^:<\n]{0,60}?): (?=\S)", re.M)
 
 
 def _escape_rich(text: str) -> str:
@@ -98,14 +103,16 @@ def rich_markdown(text: str) -> str:
     omit_explanation = body_headings == ["Explanation"]
     rendered = []
     in_sources = False
+    in_state = False
     skip_blank = False
-    for line in lines:
+    for index, line in enumerate(lines):
         if skip_blank and not line:
             skip_blank = False
             continue
         skip_blank = False
         if line in _RICH_HEADINGS:
             in_sources = line == "Sources"
+            in_state = line == "Current state"
             if omit_explanation and line == "Explanation":
                 skip_blank = True
                 continue
@@ -118,6 +125,10 @@ def rich_markdown(text: str) -> str:
                             f'({_rich_url(citation.group("url"))})')
             continue
         escaped = _escape_rich(line)
+        escaped = _HEX_VALUE.sub(
+            lambda matched: f"`{matched.group(0)}`", escaped)
+        if in_state:
+            escaped = _STATE_LABEL.sub(r"**\1:** ", escaped, count=1)
         if links and not in_sources:
             escaped = _ESCAPED_MARKER.sub(
                 lambda matched: (
@@ -125,6 +136,15 @@ def rich_markdown(text: str) -> str:
                     f"({_rich_url(links[int(matched.group(1))][1])})"
                     if int(matched.group(1)) in links else matched.group(0)),
                 escaped)
+        # The rich dialect soft-wraps a single newline into a space, which
+        # collapsed live state into one run-on paragraph. A trailing
+        # backslash is a hard break, keeping one field per line whenever the
+        # next line is more escaped content.
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        if (escaped.strip() and following.strip()
+                and following not in _RICH_HEADINGS
+                and not (in_sources and _SOURCE_CITATION.fullmatch(following))):
+            escaped += "\\"
         rendered.append(escaped)
     return "\n".join(rendered)
 
@@ -350,6 +370,7 @@ def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | 
 
     fragments: list[tuple[str, str, int]] = []
     carried = ""
+    in_state = False
     for paragraph in body:
         if omit_explanation and paragraph == "Explanation" and not carried:
             carried = "Explanation\n\n"
@@ -357,12 +378,15 @@ def format_message(text: str, limit: int = 3900) -> tuple[RenderedChunk, ...] | 
         plain = carried + paragraph
         carried = ""
         if paragraph in _RICH_HEADINGS:
+            in_state = paragraph == "Current state"
             fragments.append(
                 (plain, f"<b>{_escape_html(paragraph)}</b>", len(paragraph)))
             continue
         html = _HEX_VALUE.sub(
             lambda matched: f"<code>{matched.group(0)}</code>",
             _escape_html(paragraph))
+        if in_state:
+            html = _STATE_LABEL_HTML.sub(r"<b>\1:</b> ", html)
         if links:
             html = _CITATION_MARKER.sub(
                 lambda matched: (

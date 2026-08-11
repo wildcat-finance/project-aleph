@@ -212,6 +212,39 @@ def run(tmp: pathlib.Path) -> None:
     check("corpus markdown renders as literal text, never as markup",
           "\\# Day\\-To\\-Day \\{% hint %\\} \\*\\*bold\\*\\* \\[x\\]\\(y\\)"
           in injected and "# Day-To-Day" not in injected)
+    hexaddr = "0x" + "c9" * 20
+    live_answer = (
+        "Current state\n\n"
+        "Wintermute Trading USD Coin (wmtUSDC)\n"
+        f"Market: {hexaddr}\n"
+        "APR: 8.50%\n"
+        "Time delinquent: 0s\n\n"
+        "Observed at Ethereum block 25,728,947 via Wildcat Data Gateway "
+        "release v2.0.30.")
+    live_md = telegram.rich_markdown(live_answer)
+    check("live state renders as a stat card, one field per line",
+          live_md == (
+              "## Current state\n"
+              "\n"
+              "Wintermute Trading USD Coin \\(wmtUSDC\\)\\\n"
+              f"**Market:** `{hexaddr}`\\\n"
+              "**APR:** 8\\.50%\\\n"
+              "**Time delinquent:** 0s\n"
+              "\n"
+              "Observed at Ethereum block 25,728,947 via Wildcat Data "
+              "Gateway release v2\\.0\\.30\\."), repr(live_md))
+    live_entity = telegram.format_message(live_answer)
+    check("the entity rung renders the same stat card with copyable values",
+          live_entity is not None and len(live_entity) == 1
+          and "<b>Current state</b>" in live_entity[0].html
+          and f"<b>Market:</b> <code>{hexaddr}</code>" in live_entity[0].html
+          and "<b>APR:</b> 8.50%" in live_entity[0].html
+          and live_entity[0].plain == live_answer)
+    prose_md = telegram.rich_markdown(
+        "Explanation\n\nNote: colons in prose stay unstyled. [1]\n\n"
+        "Sources\n\n[1] docs/a.md › A: https://example.invalid/a")
+    check("claim prose never grows bold state labels",
+          "**Note:**" not in prose_md and "Note: colons" in prose_md)
     check("rich delivery preserves reply and forum-topic identity",
           rich_payload["reply_parameters"]["message_id"] == 111
           and rich_payload["message_thread_id"] == 88

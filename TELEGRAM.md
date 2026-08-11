@@ -89,6 +89,13 @@ displayed message — the body speaks for itself and `Sources` still anchors the
 layout — while answers with several sections keep every heading. The plain
 fallback always keeps the heading's bytes.
 
+`Current state` sections render as a stat card on both rungs: one field per
+line, bold `Label:` prefixes, and hex values in tap-to-copy code spans. The
+rich dialect soft-wraps single newlines into spaces — production collapsed a
+live market reading into one run-on paragraph — so the rich renderer ends
+consecutive content lines with an explicit hard break. Labels are bolded only
+under a `Current state` heading; claim prose with a colon never changes.
+
 When rich delivery is refused, unsupported, disabled, or oversized, answers
 with the engine's section structure are rendered with classic Telegram HTML
 entities, which every client can display — including clients too old to render
