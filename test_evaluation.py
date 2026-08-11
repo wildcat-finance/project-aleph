@@ -74,6 +74,7 @@ def run(tmp: pathlib.Path) -> None:
           all(report["version_isolation"].values())
           and report["unsupported_chain_refused"]
           and report["registry_discovery"]
+          and report["borrower_discovery"]
           and report["unsafe_content_refused"]
           and report["history_capability"]
           and report["missing_symbol_abstains"]

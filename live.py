@@ -37,6 +37,7 @@ DEFAULT_HISTORY_EVENTS = 5
 MAX_HISTORY_EVENTS = 10
 DEFAULT_REGISTRY_LIMIT = 100
 REGISTRY_PAGE_SIZE = 10
+BORROWER_MARKETS_PAGE_SIZE = 10
 REGISTRY_LABEL_LIMIT = 80
 
 
@@ -341,6 +342,7 @@ class WithdrawalQueueState:
 class BorrowerMarketsState:
     borrower: str
     markets: tuple[MarketSummary, ...]
+    query_limit: int
 
 
 @dataclass(frozen=True)
@@ -694,7 +696,8 @@ class GatewayClient:
             "borrower_markets", {"borrower": borrower, "first": limit},
             lambda data: BorrowerMarketsState(
                 borrower=borrower,
-                markets=tuple(_market_summary(item) for item in data["markets"])))
+                markets=tuple(_market_summary(item) for item in data["markets"]),
+                query_limit=limit))
 
     def history(self, market: str, limit: int = DEFAULT_HISTORY_EVENTS,
                 event_types: tuple[str, ...] = ()) -> LiveResult:
@@ -921,10 +924,26 @@ def render_live(result: LiveResult, field: str | None = None) -> RenderedLive:
                 f"{format_units(batch.normalized_total_amount, value.asset.decimals)} "
                 f"{value.asset.symbol}; completed: {'yes' if batch.is_completed else 'no'}")
     elif isinstance(value, BorrowerMarketsState):
-        lines = [f"Markets for borrower {value.borrower} ({len(value.markets)}):"]
-        lines += [f"- {market.name} ({market.symbol}) — {market.address}; "
+        ordered = sorted(value.markets, key=lambda market: market.address)
+        shown = ordered[:BORROWER_MARKETS_PAGE_SIZE]
+        count = len(ordered)
+        count_label = (str(count) if count < value.query_limit
+                       else f"at least {count}")
+        if count > BORROWER_MARKETS_PAGE_SIZE:
+            range_label = (
+                f"; showing 1–{len(shown)} in contract-address order")
+        else:
+            range_label = "; in contract-address order"
+        lines = [f"Markets for borrower {value.borrower} "
+                 f"({count_label}{range_label}):"]
+        lines += [f"- {_registry_label(market.name)} "
+                  f"({_registry_label(market.symbol)}) — {market.address}; "
                   f"closed: {'yes' if market.is_closed else 'no'}"
-                  for market in value.markets]
+                  for market in shown]
+        if count > BORROWER_MARKETS_PAGE_SIZE:
+            lines.append(
+                "To inspect one market, ask about its specific market contract "
+                "address.")
     elif isinstance(value, MarketHistoryState):
         names = {
             "borrow": "borrow", "repayment": "repayment",

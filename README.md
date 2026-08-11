@@ -56,7 +56,9 @@ ordered events and does not replace the complete Wildcat market CSV export.
 General registry discovery is similarly bounded: Aleph reports the observed
 count and the first ten markets in contract-address order, then asks for a
 specific market address. It never pours the complete unfiltered registry into a
-Telegram chat.
+Telegram chat. Borrower-address discovery applies the same boundary: it reports
+the total or observed lower bound and at most ten address-sorted markets, without
+ranking or assessing the borrower.
 
 Corpus answers currently use a strict extractive writer. It selects one coherent,
 topic-relevant source by default and refuses unsupported synthesis. Fluent
@@ -131,12 +133,14 @@ and the answer-integrity guardrails from
 
 Remaining engineering work proceeds in this order.
 
-### 1. Add constrained live discovery
+### 1. Extend constrained live discovery
 
-Support market and borrower lookup by stable public identifiers, then consider
-bounded screening such as “markets around 8%.” Discovery must return candidates
-from indexed live facts; it must not guess an address from corpus similarity or
-allow the language writer to rank borrower quality.
+Stable market-contract and borrower-address lookup is implemented and bounded.
+The next discovery layer requires indexed live identifiers beyond addresses;
+only after that data contract exists should Aleph consider bounded screening
+such as “markets around 8%.” Discovery must return candidates from indexed live
+facts; it must not guess an address from corpus similarity or allow the language
+writer to rank borrower quality.
 
 ### Separate operating lane: exercise the Null review loop
 

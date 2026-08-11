@@ -15,6 +15,7 @@ import agent
 import live
 import telegram
 import test_agent
+import test_live
 
 
 FAILURES: list[str] = []
@@ -448,6 +449,20 @@ def run(tmp: pathlib.Path) -> None:
               in registry_api.sent[0]["text"]
           and "reply_parameters" in registry_api.sent[0]
           and registry_text.count("\n- ") == live.REGISTRY_PAGE_SIZE)
+    borrower_text = real_engine.engine.answer(
+        f"What markets has borrower {test_live.BORROWER} run?").text
+    borrower_api = FakeAPI([update(301, "borrower markets")])
+    borrower_service = adapter(
+        tmp / "bounded-borrower", StaticEngine(borrower_text), borrower_api)
+    borrower_service.run_once()
+    check("borrower discovery is delivered as exactly one message",
+          len(borrower_api.sent) == 1
+          and borrower_api.sent[0]["parse_mode"] == "HTML"
+          and "Markets for borrower" in borrower_api.sent[0]["text"]
+          and "showing 1–10" in borrower_api.sent[0]["text"]
+          and "reply_parameters" in borrower_api.sent[0]
+          and borrower_text.count("\n- ")
+              == live.BORROWER_MARKETS_PAGE_SIZE)
     long_api = FakeAPI([update(30, "question")])
     long_service = adapter(tmp / "long", StaticEngine(long_text), long_api)
     long_service.run_once()

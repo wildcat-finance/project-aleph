@@ -235,6 +235,18 @@ def run(tmp: pathlib.Path) -> None:
               == live.REGISTRY_PAGE_SIZE
           and "Registered markets (12; showing 1–10" in registry_answer.text
           and len(registry_answer.text) <= 4096)
+    borrower_answer = engine.answer(
+        f"What markets has borrower {borrower} run?")
+    check("borrower discovery is a bounded address-based live query",
+          borrower_answer.status == "answered"
+          and borrower_answer.live is not None
+          and borrower_answer.live.operation == "borrower_markets"
+          and borrower_answer.live.text.count("\n- ")
+              == live.BORROWER_MARKETS_PAGE_SIZE
+          and "Markets for borrower" in borrower_answer.text
+          and "showing 1–10" in borrower_answer.text
+          and len(borrower_answer.text) <= 4096
+          and not borrower_answer.citations)
     bare_market = engine.answer(market)
     url_market = engine.answer(market_url)
     check("bare addresses and market URLs return the same live summary",
