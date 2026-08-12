@@ -151,11 +151,45 @@ def run(root: pathlib.Path) -> None:
     check("a modified immutable candidate file is rejected",
           "hash does not match" in message, message)
 
-    print("\nN2 — reviewed mappings are exact and corpus proposals stay separate")
-    corpus_directory, _ = export_fixture(root / "corpus", with_corpus=True)
-    message = refusal(lambda: null_import.load_export(str(corpus_directory)))
-    check("the regression importer cannot admit factual proposals",
-          "corpus proposals cannot enter" in message, message)
+    print("\nN2 — reviewed mappings are exact and corpus proposals require evidence")
+    corpus_directory, corpus_export_id = export_fixture(
+        root / "corpus", with_corpus=True)
+    corpus_golden, corpus_dispositions = review_fixture(
+        root / "corpus-review", corpus_export_id)
+    reviewed = yaml.safe_load(corpus_dispositions.read_bytes())
+    reviewed["meta"] = {
+        "version": 3,
+        "source_export_id": corpus_export_id,
+        "predecessor_export_ids": [],
+        "evolution": "mixed-candidate-dispositions-v2",
+    }
+    reviewed["dispositions"].append({
+        "candidate_id": "candidate_" + "4" * 20,
+        "status": "accepted", "expected": "corpus",
+        "evidence_reference": "wildcat-docs@aleph-v0.5",
+        "rationale": "Reviewed source evidence closes the proposal.",
+    })
+    corpus_dispositions.write_text(yaml.safe_dump(reviewed, sort_keys=False))
+    corpus_report = null_import.disposition_report(
+        str(corpus_directory), str(corpus_dispositions), str(corpus_golden))
+    corpus_case = next(case for case in corpus_report["cases"]
+                       if case["kind"] == "corpus_proposal")
+    check("version 3 emits a complete mixed-candidate report",
+          corpus_report["schema_version"] == 2
+          and corpus_report["evolution"]
+          == "mixed-candidate-dispositions-v2"
+          and corpus_report["candidate_count"] == 4
+          and corpus_case["reference"] == "wildcat-docs@aleph-v0.5")
+
+    missing_evidence = yaml.safe_load(corpus_dispositions.read_bytes())
+    missing_evidence["dispositions"][-1].pop("evidence_reference")
+    missing_evidence_path = root / "missing-evidence.yaml"
+    missing_evidence_path.write_text(
+        yaml.safe_dump(missing_evidence, sort_keys=False))
+    message = refusal(lambda: null_import.disposition_report(
+        str(corpus_directory), str(missing_evidence_path), str(corpus_golden)))
+    check("a corpus acceptance without reviewed evidence fails closed",
+          "require only reviewed evidence" in message, message)
 
     missing = yaml.safe_load(dispositions.read_bytes())
     missing["dispositions"].pop()
@@ -234,6 +268,7 @@ def main() -> int:
         (root / "valid").mkdir()
         (root / "review").mkdir()
         (root / "corpus").mkdir()
+        (root / "corpus-review").mkdir()
         run(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)

@@ -7,7 +7,7 @@ mainnet state through narrow, typed Data Gateway operations.
 Aleph is running in the reference production deployment. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.5`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
-`bge-m3` embedding identity. Every release must pass the 153-case product
+`bge-m3` embedding identity. Every release must pass the 165-case product
 evaluation before an operator can activate it.
 
 The system is deliberately conservative. Aleph would rather ask for context,
@@ -106,22 +106,32 @@ The human boundary is the point of the loop:
    linkage. Raw identifiers are retained for no more than 30 days.
 6. Regression candidates and factual corpus proposals remain separate. A
    reviewer must attach approved evidence to any factual proposal.
-7. Aleph validates each immutable Null regression export and records an explicit
-   disposition for every candidate. Accepted cases enter the golden product
-   evaluation, duplicates bind to existing cases, and capability gaps retain a
-   linked issue. The importer rejects factual proposals.
+7. Aleph validates each complete immutable Null export and records an explicit
+   disposition for every candidate. Accepted regressions enter the golden
+   product evaluation, duplicates bind to existing cases, and accepted factual
+   proposals bind to reviewed source/release evidence rather than becoming truth
+   by assertion. Capability gaps retain a linked issue.
 8. Ten human-approved factual proposals trigger an Aleph corpus-release review.
    Ten is a batching line, not an automatic promotion threshold; consequential
    corrections can be reviewed sooner.
 9. A candidate still has to build, embed, pass evaluation, receive attributable
    approval, and be activated by an operator.
 
-The current checked-in Null export, `af0555894ec430dcae70`, contains 24
-regression candidates and no factual proposals. Three of its newest cases add
-reviewed register or routing coverage; the remaining 21 bind to existing golden
-cases. `eval/null_import.py` reproduces the complete disposition from the
-immutable export bytes, and the resulting checked-in acknowledgement is ready
-for Null to ingest only after this Aleph state is merged.
+The current checked-in Null export, `3314da0cd0941b2f8fd2`, contains 45
+regression candidates and three factual proposals. Its complete version 2
+acknowledgement preserves all 24 prior terminal outcomes, adds reviewed golden
+coverage where the latest wave exposed a distinct boundary, and binds all three
+proposals to the current reviewed source pins. `eval/null_import.py` reproduces
+that acknowledgement from immutable export bytes.
+
+A **review wave** is one bounded probe/review/finalise batch. An **Ouroboros
+cycle** is the full path from an active Aleph release through one or more waves,
+candidate disposition, implementation, evaluation, activation and a zeroed Null
+candidate pile. A **generation** is a globally monotonic activation event. An
+**evolution** is an explicit versioned change to the loop's interpretation
+contract—feedback tags, candidate kinds, routes, outcome taxonomy, evaluation
+semantics, chunking or embedding identity. Evolution never resets the global
+generation counter; `mixed-candidate-dispositions-v2` is the first named one.
 
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train
