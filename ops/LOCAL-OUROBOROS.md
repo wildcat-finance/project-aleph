@@ -6,10 +6,11 @@ cycle position, emits one bounded action, and accepts one attributable receipt.
 It does not hold Telegram, GitHub, Gateway, corpus, signing, deployment, or
 production credentials and never executes those mutations itself.
 
-The local system has three named parts:
+The local system has four named parts:
 
 - **Ouroboros** is the complete improvement cycle;
-- **Mephistopheles** is Aleph's optional local inference daemon; and
+- **Mephistopheles** is Aleph's optional local inference daemon;
+- **Proteus** is Null's optional local inference paraphraser; and
 - `ouroboros.py` is the deterministic controller shared by interactive and
   unattended executors.
 
@@ -149,9 +150,9 @@ this CLI:
 
 The session must not summarize away codes, counts, IDs, approval names, or stop
 conditions. A later session resumes from state instead of relying on chat
-history. The plugin may choose local Mephistopheles once per operator preference
-or use hosted inference, but both produce the same advisory schema and neither
-changes execution authority.
+history. The plugin may choose local Mephistopheles for Aleph work or Proteus
+for Null work once per operator preference, or use hosted inference. All paths
+produce the same advisory schema and none changes execution authority.
 
 ## Unattended daemon operation
 
@@ -176,7 +177,7 @@ unless a separate policy explicitly grants that exact action. Never implement
 
 ## Advisory local-model proposals
 
-Mephistopheles or another local model can propose three bounded objects:
+Mephistopheles, Proteus, or another local model can propose three bounded objects:
 
 ```bash
 python3 ouroboros.py --state-dir /secure/ouroboros propose \
