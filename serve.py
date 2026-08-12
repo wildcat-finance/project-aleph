@@ -22,7 +22,7 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
             embedder: str, audit_dir: str, retention_days: int,
             offset_file: str, max_workers: int):
     store = ActivationStore(artifacts, pointer, manifest)
-    release_path, active, _ = store.load_active()
+    release_path, active, active_pointer = store.load_active()
     prerelease_path = pathlib.Path(prerelease).resolve()
     try:
         prerelease_path.relative_to(pathlib.Path(artifacts).resolve() / "releases")
@@ -39,7 +39,26 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
     adapter = TelegramAdapter(
         audited, api, OffsetStore(offset_file), max_workers=max_workers,
         peer_bot_ids=peer_bot_ids(),
-        rich_messages=rich_messages_enabled())
+        rich_messages=rich_messages_enabled(),
+        ping_status={
+            "generation": active_pointer.get("generation"),
+            "activation_id": active_pointer.get("activation_id"),
+            "release_id": active.get("release_id"),
+            "corpus_build_id": (active.get("corpus") or {}).get("build_id"),
+            "index_namespace": (active.get("index") or {}).get("namespace"),
+            "evaluation_id": (active.get("evaluation") or {}).get("evaluation_id"),
+            "prerelease_release_id": (
+                retriever.prerelease.record.get("release_id")
+                if retriever.prerelease is not None else None),
+            "gateway_release": live_client.release,
+            "embedding": "/".join(str(value) for value in (
+                (active.get("embedding") or {}).get("model"),
+                (active.get("embedding") or {}).get("digest")) if value),
+            "manifest_sha256": (active.get("manifest") or {}).get("sha256"),
+            "source_pins": ", ".join(
+                f"{name}@{str(source.get('commit', 'unknown'))[:12]}"
+                for name, source in sorted((active.get("sources") or {}).items())),
+        })
     return adapter, logger
 
 

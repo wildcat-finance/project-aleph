@@ -7,6 +7,14 @@ delivers the returned text: native Rich Messages where eligible, cosmetic
 entity rendering as the universal fallback, and byte-exact plain text for peer
 bots, commands, and the final fallback rung.
 
+`/ping` (or `/ping@<AlephBot>` in a group) is a read-only polling command. A
+live process replies with `Pong!`, monotonic process uptime, activation
+generation, release/corpus/index/evaluation identities, prerelease and Gateway
+pins, embedding identity, manifest hash, and abbreviated pinned source commits.
+It does not run retrieval or generation, consume the question rate limit, read
+live user state, or expose credentials. Missing optional metadata is omitted;
+if no runtime identity was supplied at composition, the reply says so.
+
 ## Startup boundary
 
 The adapter uses the HTTPS Bot API directly and reads its credential only from
@@ -22,7 +30,7 @@ The adapter never deletes a webhook automatically. Telegram does not allow
 delivery mode would discard an operator decision. Remove the webhook explicitly
 before starting this service.
 
-After the checks pass, startup registers the `/ask`, `/help`, and `/privacy`
+After the checks pass, startup registers the `/ask`, `/ping`, `/help`, and `/privacy`
 command menu via `setMyCommands` so commands are discoverable from Telegram's
 command button. Registration is best-effort and never blocks startup; the
 contextual handoff commands stay out of the menu and are introduced by the
