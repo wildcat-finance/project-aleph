@@ -54,6 +54,11 @@ valid when identical source is installed at a different absolute path.
 
 ## Activate
 
+The human-facing runtime identity is `evolution N/generation M`. The release's
+hashed `evolution.yaml` fixes N; activation assigns the next M within that
+evolution. `activation_sequence` remains globally monotonic and is used only
+for ordering and forensics.
+
 Copy the immutable artifact tree to the query host without changing paths inside
 the tree. As `aleph-operator`, use compare-and-swap when replacing an existing
 release:
@@ -110,8 +115,9 @@ systemctl restart aleph.service
 
 By default the target is the active activation record's predecessor. Use
 `--to-release <approved-release-id>` only for an intentionally selected older
-artifact. Rollback creates another immutable activation generation, preserving
-the complete sequence. It also rechecks that the installed query source matches
+artifact. Rollback creates the next generation in the target release's
+evolution and a new global activation sequence, preserving the complete history.
+It also rechecks that the installed query source matches
 the target release's evaluation. Restore that release's evaluated source before
 moving the pointer when the two code identities differ.
 

@@ -194,7 +194,10 @@ def run(tmp: pathlib.Path) -> None:
     ping_service = adapter(
         tmp / "ping", StaticEngine(), ping_api,
         ping_status={
+            "identity": "evolution 2/generation 7",
+            "evolution": 2,
             "generation": 7,
+            "activation_sequence": 12,
             "release_id": "a" * 20,
             "corpus_build_id": "corpus-7",
             "index_namespace": "main",
@@ -208,7 +211,7 @@ def run(tmp: pathlib.Path) -> None:
     check("ping replies Pong with uptime, generation and current pins",
           ping_service.run_once() == 1
           and ping_api.sent[-1]["text"].startswith("Pong!\nAlive: 00h 00m 03s")
-          and "Generation: 7" in ping_api.sent[-1]["text"]
+          and "Identity: evolution 2/generation 7" in ping_api.sent[-1]["text"]
           and f"Release: {'a' * 20}" in ping_api.sent[-1]["text"]
           and "Gateway: aleph-v0.4" in ping_api.sent[-1]["text"])
 

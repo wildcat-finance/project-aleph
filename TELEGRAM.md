@@ -8,8 +8,9 @@ entity rendering as the universal fallback, and byte-exact plain text for peer
 bots, commands, and the final fallback rung.
 
 `/ping` (or `/ping@<AlephBot>` in a group) is a read-only polling command. A
-live process replies with `Pong!`, monotonic process uptime, activation
-generation, release/corpus/index/evaluation identities, prerelease and Gateway
+live process replies with `Pong!`, monotonic process uptime, the canonical
+`evolution N/generation M` identity, internal activation sequence,
+release/corpus/index/evaluation identities, prerelease and Gateway
 pins, embedding identity, manifest hash, and abbreviated pinned source commits.
 It does not run retrieval or generation, consume the question rate limit, read
 live user state, or expose credentials. Missing optional metadata is omitted;

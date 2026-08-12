@@ -19,7 +19,10 @@ question
 
 No component silently falls back. Missing entities produce one targeted request;
 missing evidence, an unhealthy gateway, a changed block, a citation mismatch, or
-an unsupported scope produces no factual answer.
+an unsupported scope produces no factual answer. Every production answer audit
+binds the outcome to the active `evolution N/generation M`, activation sequence,
+release, corpus, and embedding identity. The answer does not expose that internal
+provenance unless the user asks `/ping`.
 
 The pinned `bge-m3` runtime also carries an evaluation-calibrated raw cosine
 floor of `0.48`. A ranking always has a first result, even for nonsense; below

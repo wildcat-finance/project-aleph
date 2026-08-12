@@ -1,0 +1,7 @@
+schema_version: 1
+evolution: 2
+contract: mixed-candidate-dispositions-v2
+reason: >-
+  The Ouroboros loop now dispositions regression and corpus-proposal candidates
+  through one versioned acknowledgement contract and treats feedback vocabulary
+  changes as explicit semantic evolutions.

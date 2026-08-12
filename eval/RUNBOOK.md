@@ -154,6 +154,8 @@ python3 eval/null_import.py \
   --export eval/null-exports/3314da0cd0941b2f8fd2 \
   --dispositions eval/null-dispositions-v3.yaml \
   --golden eval/golden-v1.yaml \
+  --aleph-evolution <active-evolution> \
+  --aleph-generation <active-generation> \
   --json eval/null-reports/3314da0cd0941b2f8fd2/report.json
 ```
 
@@ -182,10 +184,12 @@ question-generation view that Null may consume:
 
 ```bash
 python3 -m eval.coverage \
-  --release artifacts/releases/<release-id>/release.json
+  --release artifacts/releases/<release-id>/release.json \
+  --pointer state/active-release.json
 ```
 
-The command verifies the supplied release against its manifest, corpus bytes,
+The command verifies that the supplied release is the active
+`evolution N/generation M`, then verifies it against its manifest, corpus bytes,
 evaluation bytes, golden set, and reviewed topic map, then writes
 `artifacts/coverage/<silhouette-id>/silhouette.json`. Give Null only that file.
 Do not hand over chunks, golden questions, evaluation cases, or retrieval

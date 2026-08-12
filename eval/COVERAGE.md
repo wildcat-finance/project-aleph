@@ -12,7 +12,8 @@ except its creation time.
 
 ## What it contains
 
-- release, corpus, evaluation, golden-set, and topic-map identities;
+- active evolution/generation, evolution contract, release, corpus, evaluation,
+  golden-set, and topic-map identities;
 - per-source and per-topic document/chunk counts;
 - public protocol version, deployment class, source type, and authority tier;
 - answer-case counts aggregated by topic;
@@ -37,7 +38,8 @@ From the repository root:
 
 ```bash
 python3 -m eval.coverage \
-  --release artifacts/releases/<release-id>/release.json
+  --release artifacts/releases/<release-id>/release.json \
+  --pointer state/active-release.json
 ```
 
 The result is written to:
@@ -53,7 +55,8 @@ determinism, reconciliation, immutability, tamper, and leakage gates.
 ## Handoff to Null
 
 Transfer the single `silhouette.json` file through a read-only release channel.
-Record its `silhouette_id` and bound Aleph `release_id` in Null's run manifest.
+Record its `silhouette_id`, bound Aleph `release_id`, and exact
+`evolution N/generation M` in Null's run manifest.
 Null must validate the schema, content hash, and release compatibility before
 using it. Missing coverage falls back to Null's checked-in challenge catalogue;
 malformed or tampered configured coverage fails closed.

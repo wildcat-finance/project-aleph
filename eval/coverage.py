@@ -15,7 +15,7 @@ import tempfile
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _FORBIDDEN_KEYS = {
     "answer", "answer_shape", "breadcrumb", "citation_ids", "display_text",
     "embed_text", "line", "model_text", "note", "path", "question",
@@ -151,7 +151,8 @@ def _load_chunks(path: pathlib.Path, build_id: str) -> list[dict]:
 
 
 def build(release_path: pathlib.Path, manifest_path: pathlib.Path,
-          questions_path: pathlib.Path, topics_path: pathlib.Path) -> dict:
+          questions_path: pathlib.Path, topics_path: pathlib.Path,
+          pointer_path: pathlib.Path) -> dict:
     release_path = release_path.resolve()
     artifact_root = release_path.parents[2]
     release = _load_json(release_path)
@@ -161,6 +162,13 @@ def build(release_path: pathlib.Path, manifest_path: pathlib.Path,
         raise CoverageError("release path and release identity differ")
     if release.get("promotable") is not True:
         raise CoverageError("coverage requires a promotable release")
+    pointer = _load_json(pointer_path.resolve())
+    if (pointer.get("schema_version") != 2
+            or pointer.get("release_id") != release_id
+            or not isinstance(pointer.get("evolution"), int)
+            or not isinstance(pointer.get("generation"), int)
+            or pointer["evolution"] != release.get("evolution", {}).get("number")):
+        raise CoverageError("coverage requires the matching active evolution/generation")
 
     manifest_sha = _sha256(manifest_path)
     if release.get("manifest", {}).get("sha256") != manifest_sha:
@@ -272,6 +280,9 @@ def build(release_path: pathlib.Path, manifest_path: pathlib.Path,
         "silhouette_id": "",
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "binding": {
+            "evolution": release["evolution"]["number"],
+            "generation": pointer["generation"],
+            "evolution_contract": release["evolution"]["contract"],
             "release_id": release_id,
             "release_sha256": _sha256(release_path),
             "manifest_sha256": manifest_sha,
@@ -370,12 +381,14 @@ def main() -> int:
     parser.add_argument("--questions", default="eval/golden-v1.yaml")
     parser.add_argument("--topics", default="eval/coverage-topics-v1.yaml")
     parser.add_argument("--artifacts", default="artifacts")
+    parser.add_argument("--pointer", required=True)
     args = parser.parse_args()
     try:
         record = build(
             pathlib.Path(args.release), pathlib.Path(args.manifest).resolve(),
             pathlib.Path(args.questions).resolve(),
-            pathlib.Path(args.topics).resolve())
+            pathlib.Path(args.topics).resolve(),
+            pathlib.Path(args.pointer).resolve())
         out = publish(pathlib.Path(args.artifacts), record)
     except (CoverageError, OSError, KeyError, TypeError, ValueError) as error:
         print(f"FATAL: {error}")

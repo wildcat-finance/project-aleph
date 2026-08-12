@@ -29,7 +29,12 @@ def check(manifest: str, artifacts: str, pointer: str, prerelease: str,
     release_path, active, active_pointer = store.load_active()
     checks["active_release"] = {
         "ok": True, "release_id": active["release_id"],
+        "identity": (f"evolution {active_pointer.get('evolution', 1)}/"
+                     f"generation {active_pointer['generation']}"),
+        "evolution": active_pointer.get("evolution", 1),
         "generation": active_pointer["generation"],
+        "activation_sequence": active_pointer.get(
+            "activation_sequence", active_pointer["generation"]),
         "evaluation_id": active["evaluation"]["evaluation_id"],
         "runtime_tools": active["_verified_runtime_tools"],
     }
