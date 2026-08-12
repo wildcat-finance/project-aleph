@@ -136,24 +136,25 @@ them should reflect evidence review, not tuning to make a model score higher.
 ## Admit a Project Null regression export
 
 Null exports regression candidates and factual proposals in separate files.
-Aleph's regression importer validates the complete immutable export before it
+Aleph's candidate importer validates the complete immutable export before it
 reads reviewer dispositions: directory identity, canonical JSON, file hashes,
 manifest counts, candidate ordering, schemas, and the content-derived export
-ID must all agree. A non-empty factual-proposal file is a hard failure on this
-path.
+ID must all agree.
 
 Each candidate then needs one checked-in disposition: `accepted`, `duplicate`,
 `deferred`, `rejected`, or `needs_review`. Accepted cases must preserve the Null
 question byte-for-byte in the golden set and carry both the export and candidate
-IDs. Duplicate cases bind to an existing golden route. Deferred cases require a
-tracking issue. Any undispositioned or silently reworded candidate fails closed.
+IDs. Duplicate cases bind to an existing golden route. Accepted or duplicate
+corpus proposals cannot name a golden ID; they must name reviewed source/release
+evidence. Deferred cases require a tracking reference. Any undispositioned,
+silently reworded, retyped, or unevidenced candidate fails closed.
 
 ```bash
 python3 eval/null_import.py \
-  --export eval/null-exports/af0555894ec430dcae70 \
-  --dispositions eval/null-dispositions-v2.yaml \
+  --export eval/null-exports/3314da0cd0941b2f8fd2 \
+  --dispositions eval/null-dispositions-v3.yaml \
   --golden eval/golden-v1.yaml \
-  --json eval/null-reports/af0555894ec430dcae70/report.json
+  --json eval/null-reports/3314da0cd0941b2f8fd2/report.json
 ```
 
 The command exits `0` only when every candidate is dispositioned and none still
@@ -167,9 +168,12 @@ Exports are cumulative. A candidate already acknowledged by Null must retain
 the same terminal status, expected route, golden reference, and issue reference
 in every later report. Entering an accepted candidate into the golden suite
 does not turn that earlier `accepted` acknowledgement into `duplicate`. A
-cumulative disposition ledger uses schema version 2 and declares every prior
+cumulative disposition ledger uses schema version 3 and declares every prior
 export whose accepted golden provenance it retains in
 `meta.predecessor_export_ids`; undeclared predecessor provenance fails closed.
+It emits the version 2 mixed-candidate acknowledgement contract identified as
+the `mixed-candidate-dispositions-v2` Ouroboros evolution. Version 1 reports
+remain reproducible for historical replay.
 
 ## Publish the answer-free coverage silhouette
 

@@ -173,9 +173,11 @@ class Router:
     _unsafe = re.compile(
         r"system prompt|ignore (?:your|all|previous) instructions|what files|"
         r"last person|previous user|repeat exactly|as a wildcat employee|"
-        r"guarantees? all deposits", re.I)
+        r"guarantees? all deposits|unpinned document .*overrides|"
+        r"treat the corpus as optional|answer without sources", re.I)
     _abusive_targeting = re.compile(
-        r"\b(?:humiliat\w*|demean\w*|insult\w*|mock\w*|sham\w*|harass\w*)\b",
+        r"\b(?:humiliat\w*|demean\w*|insult\w*|mock\w*|sham\w*|harass\w*|"
+        r"threaten\w*)\b",
         re.I)
     _historical_activity = re.compile(
         r"\b(?:last|latest|most recent)\b.{0,100}"
@@ -224,6 +226,7 @@ class Router:
         r"collateral back|liquidat(?:e|ed|ion)|governance vote|auto-?repay|"
         r"wildcat changed the apr|rates? (?:are|is) immutable|locked.*debt|"
         r"reserve ratio .* zero.*confirm|you're wrong.*reserve|"
+        r"reserve ratio guarantee.*withdraw immediately|"
         r"debt (?:is )?['\"]?locked|rates? were immutable", re.I)
     _corpus_live = re.compile(
         r"why is not all .*balance claimable|when will i be able to claim|"
@@ -235,7 +238,19 @@ class Router:
         r"track loan history.*original deposit.*current balance", re.I)
     _corpus_only = re.compile(
         r"programmatically|from an api|calling balanceof|downside to claiming now|"
-        r"does penalty status affect", re.I)
+        r"does penalty status affect|"
+        r"which wildcat facts can be read as current state|"
+        r"withdrawal batch is partly paid|"
+        r"withdrawal batch can be partly paid", re.I)
+    _keyword_soup = re.compile(
+        r"^\s*(?:withdrawal|capacity|apr|reserve|claim|block|market|deposit|"
+        r"borrow|repay|banana|purple|maybe)[?\s]+(?:"
+        r"withdrawal|capacity|apr|reserve|claim|block|market|deposit|borrow|"
+        r"repay|banana|purple|maybe)(?:[?\s]+(?:withdrawal|capacity|apr|"
+        r"reserve|claim|block|market|deposit|borrow|repay|banana|purple|"
+        r"maybe))*[?.!\s]*$", re.I)
+    _ambiguous_market_reference = re.compile(
+        r"\b(?:the|this) market i mean\b", re.I)
     _live = re.compile(
         r"\b(current|currently|now|today|repaid yet|what markets has|"
         r"market status|penalty status|remaining capacity)\b|"
@@ -340,6 +355,9 @@ class Router:
         if self._abusive_targeting.search(question):
             return Route(RouteMode.REFUSE, "abusive personal targeting", entities,
                          refusal_reason="unsafe_or_abusive")
+        if self._keyword_soup.fullmatch(question):
+            return Route(RouteMode.REFUSE, "meaningless keyword sequence", entities,
+                         refusal_reason="outside_answer_boundary")
         if self._private.search(question):
             return Route(RouteMode.REFUSE, "lender privacy boundary", entities,
                          refusal_reason="bulk_lender_disclosure")
@@ -385,6 +403,9 @@ class Router:
                          refusal_reason="inferred_intent")
         if self._corpus_only.search(question):
             return Route(RouteMode.CORPUS, "pinned protocol knowledge", entities)
+        if self._ambiguous_market_reference.search(question):
+            return Route(RouteMode.CLARIFY, "ambiguous market reference", entities,
+                         refusal_reason="missing_context")
         if self._addressed_account(question, entities):
             return Route(
                 RouteMode.LIVE, "addressed account state", entities,

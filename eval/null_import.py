@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and disposition a Project Null regression export."""
+"""Validate and disposition a complete Project Null candidate export."""
 
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ _ALEPH_ROUTES = {
     "partial", "refuse", "refuse+point", "triage",
 }
 _STATUSES = {"accepted", "deferred", "duplicate", "needs_review", "rejected"}
+_REPORT_EVOLUTION = "mixed-candidate-dispositions-v2"
 _IDENTIFIER = re.compile(r"[a-z]+_[0-9a-f]{20}")
 _EXPORT_ID = re.compile(r"[0-9a-f]{20}")
 
@@ -121,20 +122,24 @@ def load_export(export_dir: str) -> tuple[dict, list[dict]]:
         raise NullImportError("corpus-proposals.json is not canonical Null JSON")
     if not isinstance(regression, list) or not isinstance(corpus, list):
         raise NullImportError("Null candidate files must contain lists")
-    if corpus:
-        raise NullImportError(
-            "corpus proposals cannot enter through the regression importer")
     if manifest["counts"] != {
             "regression": len(regression), "corpus_proposals": len(corpus)}:
         raise NullImportError("manifest candidate counts do not match files")
 
     for item in regression:
         _validate_candidate(item, "regression")
-    candidate_ids = [item["candidate_id"] for item in regression]
-    if candidate_ids != sorted(candidate_ids) or len(set(candidate_ids)) != len(candidate_ids):
-        raise NullImportError("regression candidates are not uniquely sorted")
+    for item in corpus:
+        _validate_candidate(item, "corpus_proposal")
+    regression_ids = [item["candidate_id"] for item in regression]
+    corpus_ids = [item["candidate_id"] for item in corpus]
+    if (regression_ids != sorted(regression_ids)
+            or corpus_ids != sorted(corpus_ids)):
+        raise NullImportError("candidate queues are not sorted")
+    candidate_ids = sorted([*regression_ids, *corpus_ids])
+    if len(set(candidate_ids)) != len(candidate_ids):
+        raise NullImportError("candidate IDs are not unique across queues")
     if manifest["candidate_ids"] != candidate_ids:
-        raise NullImportError("manifest candidate_ids do not match regression file")
+        raise NullImportError("manifest candidate_ids do not match candidate files")
     basis = {
         "schema_version": 1,
         "regression_sha256": manifest["regression_sha256"],
@@ -144,7 +149,8 @@ def load_export(export_dir: str) -> tuple[dict, list[dict]]:
     computed_export_id = _sha256(_canonical(basis))[:20]
     if computed_export_id != manifest["export_id"]:
         raise NullImportError("export_id is not derived from the manifest inputs")
-    return manifest, regression
+    return manifest, sorted(
+        [*regression, *corpus], key=lambda item: item["candidate_id"])
 
 
 def _golden_questions(path: str) -> dict[str, dict]:
@@ -190,6 +196,23 @@ def disposition_report(export_dir: str, dispositions_path: str,
                 or meta["source_export_id"] in predecessor_export_ids):
             raise NullImportError(
                 "predecessor export IDs must be unique prior export IDs")
+    elif version == 3:
+        _expect_keys(
+            meta,
+            {"evolution", "predecessor_export_ids", "source_export_id",
+             "version"},
+            "disposition meta")
+        predecessor_export_ids = meta["predecessor_export_ids"]
+        if (meta["evolution"] != _REPORT_EVOLUTION
+                or not isinstance(predecessor_export_ids, list)
+                or any(not isinstance(value, str)
+                       or not _EXPORT_ID.fullmatch(value)
+                       for value in predecessor_export_ids)
+                or len(set(predecessor_export_ids))
+                != len(predecessor_export_ids)
+                or meta["source_export_id"] in predecessor_export_ids):
+            raise NullImportError(
+                "version 3 disposition evolution or predecessor IDs are invalid")
     else:
         raise NullImportError("disposition meta version is unsupported")
     if meta["source_export_id"] != manifest["export_id"]:
@@ -207,7 +230,7 @@ def disposition_report(export_dir: str, dispositions_path: str,
         if not isinstance(item, dict):
             raise NullImportError("each disposition must be a mapping")
         required = {"candidate_id", "expected", "rationale", "status"}
-        optional = {"golden_id", "issue"}
+        optional = {"evidence_reference", "golden_id", "issue"}
         if not required <= set(item) or set(item) - required - optional:
             raise NullImportError("disposition fields are incomplete or unknown")
         candidate_id = item["candidate_id"]
@@ -228,7 +251,9 @@ def disposition_report(export_dir: str, dispositions_path: str,
             raise NullImportError("every disposition needs a rationale")
 
         golden_id = item.get("golden_id")
-        if item["status"] in {"accepted", "duplicate"}:
+        evidence_reference = item.get("evidence_reference")
+        if (candidate["kind"] == "regression"
+                and item["status"] in {"accepted", "duplicate"}):
             golden = indexed_golden.get(golden_id)
             if golden is None:
                 raise NullImportError(
@@ -244,6 +269,16 @@ def disposition_report(export_dir: str, dispositions_path: str,
                         or golden.get("null_candidate_id") != candidate_id):
                     raise NullImportError(
                         f"accepted candidate {candidate_id} lacks Null provenance")
+            if evidence_reference is not None:
+                raise NullImportError(
+                    "regression dispositions cannot name corpus evidence")
+        elif (candidate["kind"] == "corpus_proposal"
+              and item["status"] in {"accepted", "duplicate"}):
+            if (golden_id is not None
+                    or not isinstance(evidence_reference, str)
+                    or not evidence_reference.strip()):
+                raise NullImportError(
+                    "terminal corpus dispositions require only reviewed evidence")
         elif golden_id is not None:
             raise NullImportError(
                 f"{item['status']} disposition cannot name a golden case")
@@ -251,22 +286,33 @@ def disposition_report(export_dir: str, dispositions_path: str,
             raise NullImportError("deferred dispositions require a tracking issue")
         cases.append({
             "candidate_id": candidate_id,
+            "kind": candidate["kind"],
             "status": item["status"],
             "expected": item["expected"],
             "golden_id": golden_id,
             "question": candidate["question"],
-            "issue": item.get("issue"),
+            "reference": evidence_reference or item.get("issue"),
         })
     missing = sorted(set(indexed_candidates) - seen)
     if missing:
         raise NullImportError(f"candidates lack dispositions: {missing}")
     counts = Counter(item["status"] for item in cases)
-    return {
+    report = {
         "export_id": manifest["export_id"],
         "candidate_count": len(candidates),
         "counts": {status: counts.get(status, 0) for status in sorted(_STATUSES)},
         "ready": counts.get("needs_review", 0) == 0,
         "cases": cases,
+    }
+    if version < 3:
+        for case in report["cases"]:
+            case["issue"] = case.pop("reference")
+            case.pop("kind")
+        return report
+    return {
+        **report,
+        "evolution": _REPORT_EVOLUTION,
+        "schema_version": 2,
     }
 
 
