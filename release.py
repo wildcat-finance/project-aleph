@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -55,6 +56,27 @@ def _identity_from_manifest(manifest: dict) -> Identity:
         digest=str(config.get("digest") or ""), query_prefix=str(prefix))
 
 
+def evolution_identity(path: str | pathlib.Path = "evolution.yaml") -> dict:
+    try:
+        import yaml
+        value = yaml.safe_load(pathlib.Path(path).read_bytes())
+    except (ImportError, OSError, ValueError) as error:
+        raise ReleaseError(f"cannot load Ouroboros evolution identity: {error}")
+    expected = {"schema_version", "evolution", "contract", "reason"}
+    if not isinstance(value, dict) or set(value) != expected:
+        raise ReleaseError("Ouroboros evolution identity fields are invalid")
+    if (value["schema_version"] != 1
+            or isinstance(value["evolution"], bool)
+            or not isinstance(value["evolution"], int)
+            or value["evolution"] < 1
+            or not isinstance(value["contract"], str)
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value["contract"])
+            or not isinstance(value["reason"], str) or not value["reason"].strip()):
+        raise ReleaseError("Ouroboros evolution identity is invalid")
+    return {"number": value["evolution"], "contract": value["contract"],
+            "sha256": _sha256(pathlib.Path(path).resolve())}
+
+
 def _embedder_spec(identity: Identity) -> str:
     backend = "st" if identity.backend == "sentence-transformers" \
         else identity.backend
@@ -82,6 +104,8 @@ def compute_release_id(record: dict) -> str:
         "address_book": record.get("address_book"),
         "tools": record["tools"],
     }
+    if record.get("evolution") is not None:
+        basis["evolution"] = record["evolution"]
     # Evaluations are bound after the candidate exists, so evaluated releases
     # form a new immutable identity over the same corpus/index payloads. Keep
     # the field absent for compatibility with pre-evaluation release records.
@@ -147,6 +171,9 @@ def build_release(manifest_path: str = "manifest.yaml",
     manifest_path_obj = pathlib.Path(manifest_path).resolve()
     manifest = yaml.safe_load(manifest_path_obj.read_bytes())
     expected_identity = _identity_from_manifest(manifest)
+    evolution_path = manifest_path_obj.parent / "evolution.yaml"
+    evolution = (evolution_identity(evolution_path)
+                 if evolution_path.is_file() else None)
     runtime_spec = embedder_spec or _embedder_spec(expected_identity)
     root = pathlib.Path(artifact_root).resolve()
 
@@ -232,6 +259,8 @@ def build_release(manifest_path: str = "manifest.yaml",
         "address_book": address_record,
         "tools": {"release.py": release_tool, **index_tools},
     }
+    if evolution is not None:
+        record["evolution"] = evolution
     record["release_id"] = compute_release_id(record)
     return _publish_release(root, record)
 

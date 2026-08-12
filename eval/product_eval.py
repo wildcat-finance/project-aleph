@@ -471,6 +471,7 @@ def evaluate(engine: AnswerEngine, retriever: Retriever, questions_path: str,
                 for case in cases if not all(case["checks"].values())]
     return {
         "candidate_release_id": retriever.main.record["release_id"],
+        "evolution": retriever.main.record.get("evolution"),
         "prerelease_release_id": (retriever.prerelease.record["release_id"]
                                   if retriever.prerelease else None),
         "golden": {"total": len(cases), "known_gaps": sum(
@@ -547,6 +548,7 @@ def build_record(report: dict, manifest: pathlib.Path, release: pathlib.Path,
         "evaluation_id": "",
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "candidate_release_id": report["candidate_release_id"],
+        "evolution": report.get("evolution"),
         "prerelease_release_id": report["prerelease_release_id"],
         "inputs": {
             "paths": {

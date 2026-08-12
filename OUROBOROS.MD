@@ -432,6 +432,19 @@ never model-owned.
 
 ## Direct a review wave
 
+A review wave is the bounded Telegram probe/review/finalise slice below. The
+Ouroboros cycle is larger: it ends only after all resulting candidates have been
+dispositioned, reviewed changes have passed evaluation and activation, Aleph's
+complete report has been applied by Null, and `candidate_pile=0` is verified.
+
+Refer to every active runtime as **evolution N/generation M**. Generation is
+local to its evolution and starts at 1. Declare a new evolution only when the
+loop's interpretation contract changes—for example a new feedback tag,
+candidate kind, route, outcome taxonomy, evaluation meaning, chunking policy or
+embedding identity. Keep the separate `activation_sequence` globally monotonic
+for compare-and-swap, rollback and forensic ordering. Never present that
+internal sequence as the generation.
+
 The Null-side document contains the command syntax. From Aleph's perspective,
 the safe order is:
 
@@ -493,7 +506,8 @@ After reviewed source inputs exist:
 4. inspect and approve the corpus diff;
 5. run retrieval and the complete product evaluation;
 6. create immutable candidate, evaluation, release, and activation artifacts;
-7. activate with compare-and-swap against the recorded prior generation;
+7. activate with compare-and-swap against the recorded prior release; record
+   the resulting evolution/generation pair and activation sequence;
 8. run startup, monitor, Telegram, Gateway, live, and history canaries;
 9. retain the prior release for pointer-only rollback; and
 10. publish the new answer-free coverage silhouette for Null.

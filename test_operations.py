@@ -87,6 +87,7 @@ def approved_fixture(tmp: pathlib.Path):
     record = {
         "evaluation_id": "", "created": "2026-08-10T00:00:00+00:00",
         "candidate_release_id": report["candidate_release_id"],
+        "evolution": report["evolution"],
         "prerelease_release_id": report["prerelease_release_id"],
         "inputs": inputs, "tools": product_eval._tool_hashes(),
         "report": report,
@@ -137,6 +138,10 @@ def run(tmp: pathlib.Path) -> None:
           and activation_record["reason"] == "initial production release"
           and activation_record["evaluation_id"] == first["evaluation"]["evaluation_id"]
           and activation_record["previous_release_id"] is None)
+    check("activation assigns generation within evolution and global ordering",
+          first_pointer["evolution"] == 2
+          and first_pointer["generation"] == 1
+          and first_pointer["activation_sequence"] == 1)
     check("hardened operator umask still publishes runtime-readable metadata",
           stat.S_IMODE(pointer_path.parent.stat().st_mode) == 0o755
           and stat.S_IMODE(pointer_path.stat().st_mode) == 0o444
@@ -161,7 +166,9 @@ def run(tmp: pathlib.Path) -> None:
     check("rollback restores the previous retained release by pointer",
           rolled_back["release_id"] == first["release_id"]
           and rollback_pointer["generation"] == 3
-          and second_pointer["generation"] == 2)
+          and second_pointer["generation"] == 2
+          and rollback_pointer["evolution"] == 2
+          and rollback_pointer["activation_sequence"] == 3)
     rollback_record = json.loads(
         (root / rollback_pointer["activation_path"]).read_text())
     check("rollback remains attributable and preserves the bad candidate",
@@ -206,7 +213,8 @@ def run(tmp: pathlib.Path) -> None:
 
     print("\nO3 — audit records preserve provenance and discard content")
     logger = audit.AuditLogger(
-        str(tmp / "audit"), first, hmac_key="k" * 32, retention_days=30)
+        str(tmp / "audit"), first, activation=store.load_pointer(),
+        hmac_key="k" * 32, retention_days=30)
     answer = engine.answer("What does exactIdentifier(uint256) do?")
     path = logger.write(logger.answer_record(
         "What does exactIdentifier(uint256) do?", answer))
@@ -214,6 +222,8 @@ def run(tmp: pathlib.Path) -> None:
     row = json.loads(contents)
     check("audit names release, corpus, model, route and citations",
           row["active_release_id"] == first["release_id"]
+          and row["aleph_identity"] == {"evolution": 2, "generation": 3}
+          and row["activation_sequence"] == 3
           and row["corpus_build_id"] == first["corpus"]["build_id"]
           and row["embedding"] == first["embedding"]
           and row["route"]["mode"] == "corpus" and row["citations"])

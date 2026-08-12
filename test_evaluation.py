@@ -85,6 +85,7 @@ def run(tmp: pathlib.Path) -> None:
     record = {
         "evaluation_id": "", "created": "2026-08-10T00:00:00+00:00",
         "candidate_release_id": report["candidate_release_id"],
+        "evolution": report["evolution"],
         "prerelease_release_id": report["prerelease_release_id"],
         "inputs": {
             "paths": {

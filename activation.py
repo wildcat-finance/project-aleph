@@ -26,6 +26,13 @@ class ActivationError(Exception):
     """A release cannot safely become or remain active."""
 
 
+_LEGACY_EVOLUTION = {
+    "number": 1,
+    "contract": "legacy-regression-dispositions-v1",
+    "sha256": "0" * 64,
+}
+
+
 def _canonical(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
@@ -83,6 +90,14 @@ def verify_promotable(path: pathlib.Path, root: pathlib.Path,
                               + (f": {detail}" if detail else ""))
     if record.get("kind") != "main":
         raise ActivationError("a prerelease cannot become the active main release")
+    evolution = record.get("evolution") or _LEGACY_EVOLUTION
+    if (not isinstance(evolution, dict)
+            or set(evolution) != {"number", "contract", "sha256"}
+            or isinstance(evolution.get("number"), bool)
+            or not isinstance(evolution.get("number"), int)
+            or evolution["number"] < 1):
+        raise ActivationError("release evolution identity is absent or invalid")
+    record["evolution"] = evolution
     evaluation_info = record.get("evaluation") or {}
     evaluation_path = (root / evaluation_info.get("path", "")).resolve()
     try:
@@ -153,7 +168,10 @@ class ActivationStore:
         if (activation.get("activation_id") != pointer.get("activation_id")
                 or compute_activation_id(activation) != activation.get("activation_id")
                 or activation.get("release_id") != pointer.get("release_id")
-                or activation.get("generation") != pointer.get("generation")):
+                or activation.get("evolution") != pointer.get("evolution")
+                or activation.get("generation") != pointer.get("generation")
+                or activation.get("activation_sequence")
+                != pointer.get("activation_sequence")):
             raise ActivationError("active pointer and activation record disagree")
         return pointer
 
@@ -183,11 +201,21 @@ class ActivationStore:
                 raise ActivationError(f"release {release_id} is already active")
             release_path = self._release_path(release_id)
             record = verify_promotable(release_path, self.root, self.manifest)
-            generation = (int(current["generation"]) + 1) if current else 1
+            activation_sequence = (
+                int(current.get("activation_sequence", current.get("generation", 0))) + 1
+                if current else 1)
+            evolution = int(record["evolution"]["number"])
+            current_evolution = int(current.get("evolution", 1)) if current else 0
+            if kind != "rollback" and evolution < current_evolution:
+                raise ActivationError(
+                    "activation cannot move to an earlier Ouroboros evolution")
+            generation = self._next_generation(evolution)
             activation = {
                 "activation_id": "",
                 "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "generation": generation, "kind": kind,
+                "schema_version": 2,
+                "evolution": evolution, "generation": generation,
+                "activation_sequence": activation_sequence, "kind": kind,
                 "release_id": release_id,
                 "release_sha256": _sha256(release_path),
                 "evaluation_id": record["evaluation"]["evaluation_id"],
@@ -197,15 +225,26 @@ class ActivationStore:
             activation["activation_id"] = compute_activation_id(activation)
             activation_path = self._publish_activation(activation)
             pointer = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "activation_id": activation["activation_id"],
                 "activation_path": str(activation_path.relative_to(self.root)),
                 "activation_sha256": _sha256(activation_path),
-                "release_id": release_id, "generation": generation,
+                "release_id": release_id,
+                "evolution": evolution, "generation": generation,
+                "activation_sequence": activation_sequence,
                 "updated": activation["created"],
             }
             self._write_pointer(pointer)
             return pointer
+
+    def _next_generation(self, evolution: int) -> int:
+        generations = []
+        for path in (self.root / "activations").glob("*/activation.json"):
+            record = _json(path, "activation")
+            record_evolution = int(record.get("evolution", 1))
+            if record_evolution == evolution:
+                generations.append(int(record["generation"]))
+        return max(generations, default=0) + 1
 
     def rollback(self, actor: str, reason: str,
                  to_release_id: str | None = None) -> dict:

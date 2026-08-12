@@ -39,6 +39,7 @@ def fixture(root: pathlib.Path) -> dict[str, pathlib.Path]:
     chunks = artifacts / "corpus" / build_id / "chunks.jsonl"
     evaluation_path = artifacts / "evaluations" / evaluation_id / "evaluation.json"
     release_path = artifacts / "releases" / release_id / "release.json"
+    pointer_path = root / "active-release.json"
     for path in (chunks, evaluation_path, release_path):
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +94,9 @@ def fixture(root: pathlib.Path) -> dict[str, pathlib.Path]:
     evaluation_path.write_text(json.dumps(evaluation, sort_keys=True))
     release = {
         "release_id": release_id, "promotable": True,
+        "evolution": {"number": 2,
+                      "contract": "mixed-candidate-dispositions-v2",
+                      "sha256": "a" * 64},
         "manifest": {"sha256": sha(manifest)},
         "corpus": {"build_id": build_id, "path": f"corpus/{build_id}",
                    "chunks_sha256": sha(chunks)},
@@ -101,15 +105,20 @@ def fixture(root: pathlib.Path) -> dict[str, pathlib.Path]:
                        "sha256": sha(evaluation_path)},
     }
     release_path.write_text(json.dumps(release, sort_keys=True))
+    pointer_path.write_text(json.dumps({
+        "schema_version": 2, "release_id": release_id,
+        "evolution": 2, "generation": 1,
+    }, sort_keys=True))
     return {"artifacts": artifacts, "release": release_path,
-            "manifest": manifest, "questions": questions, "topics": topics}
+            "manifest": manifest, "questions": questions, "topics": topics,
+            "pointer": pointer_path}
 
 
 def build(paths: dict[str, pathlib.Path],
           topics: pathlib.Path | None = None) -> dict:
     return coverage.build(
         paths["release"], paths["manifest"], paths["questions"],
-        topics or paths["topics"])
+        topics or paths["topics"], paths["pointer"])
 
 
 def run(tmp: pathlib.Path) -> None:

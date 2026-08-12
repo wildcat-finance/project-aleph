@@ -32,7 +32,9 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
         manifest, str(release_path), embedder, str(prerelease_path))
     live_client = GatewayClient(manifest)
     engine = AnswerEngine(retriever, live_client)
-    logger = AuditLogger(audit_dir, active, retention_days=retention_days)
+    logger = AuditLogger(
+        audit_dir, active, activation=active_pointer,
+        retention_days=retention_days)
     logger.purge_expired()
     audited = AuditedEngine(engine, logger)
     api = TelegramHTTP()
@@ -41,7 +43,12 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
         peer_bot_ids=peer_bot_ids(),
         rich_messages=rich_messages_enabled(),
         ping_status={
+            "identity": (f"evolution {active_pointer.get('evolution', 1)}/"
+                         f"generation {active_pointer.get('generation')}"),
+            "evolution": active_pointer.get("evolution", 1),
             "generation": active_pointer.get("generation"),
+            "activation_sequence": active_pointer.get(
+                "activation_sequence", active_pointer.get("generation")),
             "activation_id": active_pointer.get("activation_id"),
             "release_id": active.get("release_id"),
             "corpus_build_id": (active.get("corpus") or {}).get("build_id"),

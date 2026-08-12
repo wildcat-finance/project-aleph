@@ -813,7 +813,8 @@ class TelegramAdapter:
             f"Alive: {_uptime(self.monotonic_clock() - self.started_monotonic)}",
         ]
         fields = (
-            ("Generation", "generation"),
+            ("Identity", "identity"),
+            ("Activation sequence", "activation_sequence"),
             ("Activation", "activation_id"),
             ("Release", "release_id"),
             ("Corpus", "corpus_build_id"),

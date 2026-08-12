@@ -52,6 +52,11 @@ def make_fixture(tmp: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         "sources:\n  - id: docs\n    tier: B\n    repo: x/docs\n"
         f"    ref: {{kind: commit, commit: {commit}, require_signature: false}}\n"
         "    include: ['**/*.md']\n")
+    (tmp / "evolution.yaml").write_text(
+        "schema_version: 1\n"
+        "evolution: 2\n"
+        "contract: mixed-candidate-dispositions-v2\n"
+        "reason: Fixture evolution identity.\n")
     return repo, manifest
 
 
@@ -69,6 +74,10 @@ def run(tmp: pathlib.Path) -> None:
     check("the manifest embedding identity is enforced and recorded",
           first["embedding"]["backend"] == "stub"
           and first["embedding"]["dimensions"] == 64)
+    check("the reviewed evolution contract is release identity",
+          first["evolution"]["number"] == 2
+          and first["evolution"]["contract"]
+          == "mixed-candidate-dispositions-v2")
     check("unknown downstream gates keep the release non-promotable",
           first["promotable"] is False
           and first["gates"]["address_assertions_hold"] is None)

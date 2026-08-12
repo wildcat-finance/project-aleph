@@ -171,7 +171,7 @@ def run(root: pathlib.Path) -> None:
     })
     corpus_dispositions.write_text(yaml.safe_dump(reviewed, sort_keys=False))
     corpus_report = null_import.disposition_report(
-        str(corpus_directory), str(corpus_dispositions), str(corpus_golden))
+        str(corpus_directory), str(corpus_dispositions), str(corpus_golden), 2, 1)
     corpus_case = next(case for case in corpus_report["cases"]
                        if case["kind"] == "corpus_proposal")
     check("version 3 emits a complete mixed-candidate report",

@@ -1,4 +1,8 @@
 {
+  "aleph_identity": {
+    "evolution": 2,
+    "generation": 1
+  },
   "candidate_count": 48,
   "cases": [
     {

@@ -19,6 +19,7 @@ class AuditError(Exception):
 
 class AuditLogger:
     def __init__(self, directory: str, active_release: dict,
+                 activation: dict | None = None,
                  hmac_key: str | bytes | None = None,
                  retention_days: int = 30, clock=None):
         key = hmac_key if hmac_key is not None else os.environ.get(
@@ -34,6 +35,14 @@ class AuditLogger:
         self.retention_days = retention_days
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.release_id = active_release["release_id"]
+        evolution = active_release.get("evolution") or {"number": 1}
+        activation = activation or {}
+        self.aleph_identity = {
+            "evolution": int(activation.get("evolution", evolution["number"])),
+            "generation": activation.get("generation"),
+        }
+        self.activation_sequence = activation.get(
+            "activation_sequence", activation.get("generation"))
         self.corpus_build_id = active_release["corpus"]["build_id"]
         self.embedding = active_release["embedding"]
         self.lock = threading.Lock()
@@ -53,6 +62,8 @@ class AuditLogger:
                 "characters": len(question),
             },
             "active_release_id": self.release_id,
+            "aleph_identity": self.aleph_identity,
+            "activation_sequence": self.activation_sequence,
             "corpus_build_id": self.corpus_build_id,
             "embedding": self.embedding,
             "status": answer.status,
@@ -89,6 +100,8 @@ class AuditLogger:
             "question": {"hmac_sha256": self._fingerprint(question),
                          "characters": len(question)},
             "active_release_id": self.release_id,
+            "aleph_identity": self.aleph_identity,
+            "activation_sequence": self.activation_sequence,
             "corpus_build_id": self.corpus_build_id,
             "embedding": self.embedding,
             "status": "internal_error",

@@ -4,7 +4,8 @@ Project Aleph is Wildcat Protocol's evidence-backed Telegram interface. It
 answers protocol questions from an immutable, versioned corpus and reads current
 mainnet state through narrow, typed Data Gateway operations.
 
-Aleph is running in the reference production deployment. Its published
+Aleph is running in the reference production deployment. Its runtime identity
+is always written as **evolution N/generation M**. Its published
 documentation is pinned at `wildcat-docs@aleph-v0.5`; its live-data boundary is
 pinned to `mainnet/v2.0.30`; and its release index uses the manifest-locked
 `bge-m3` embedding identity. Every release must pass the 165-case product
@@ -81,7 +82,7 @@ handoff, and emergency revocation without distributing production credentials.
 
 ```mermaid
 flowchart LR
-    A["Active Aleph release"] --> S["Answer-free coverage silhouette"]
+    A["Active evolution N/generation M"] --> S["Answer-free coverage silhouette"]
     S --> B["Null sends a boundary probe"]
     B --> C["Aleph outcome in Telegram"]
     C --> D["Human review"]
@@ -94,7 +95,7 @@ flowchart LR
 The human boundary is the point of the loop:
 
 1. Aleph publishes a content-addressed coverage silhouette for the active
-   evaluated release: topic, route, capability, question-shape, and declared-gap
+   evolution/generation pair: topic, route, capability, question-shape, and declared-gap
    counts, with no chunks, questions, answers, citations, or identities.
 2. Null combines that shape with its checked-in curriculum to generate an
    ordinary, awkward, ambiguous, adversarial, or nonsensical boundary question
@@ -110,7 +111,8 @@ The human boundary is the point of the loop:
    disposition for every candidate. Accepted regressions enter the golden
    product evaluation, duplicates bind to existing cases, and accepted factual
    proposals bind to reviewed source/release evidence rather than becoming truth
-   by assertion. Capability gaps retain a linked issue.
+   by assertion. Capability gaps retain a linked issue. Every newly generated
+   probe and retained candidate carries the Aleph evolution/generation it tested.
 8. Ten human-approved factual proposals trigger an Aleph corpus-release review.
    Ten is a batching line, not an automatic promotion threshold; consequential
    corrections can be reviewed sooner.
@@ -127,11 +129,21 @@ that acknowledgement from immutable export bytes.
 A **review wave** is one bounded probe/review/finalise batch. An **Ouroboros
 cycle** is the full path from an active Aleph release through one or more waves,
 candidate disposition, implementation, evaluation, activation and a zeroed Null
-candidate pile. A **generation** is a globally monotonic activation event. An
-**evolution** is an explicit versioned change to the loop's interpretation
-contract—feedback tags, candidate kinds, routes, outcome taxonomy, evaluation
-semantics, chunking or embedding identity. Evolution never resets the global
-generation counter; `mixed-candidate-dispositions-v2` is the first named one.
+candidate pile. A **generation** is an activation within one evolution and starts
+at 1 when that evolution begins. An **evolution** changes the loop's
+interpretation contract—feedback tags, candidate kinds, routes, outcome
+taxonomy, evaluation semantics, chunking policy, or embedding identity. A
+separate monotonically increasing `activation_sequence` orders every activation
+and rollback across evolutions; it is operational provenance, not the public
+identity. The current mixed-candidate contract is evolution 2,
+`mixed-candidate-dispositions-v2`.
+
+`evolution.yaml` is the reviewed contract declaration. Release construction
+hashes it into the immutable release; evaluation and promotion require the same
+identity; activation assigns the next generation in that evolution. Coverage,
+answer audits, Null runs, probes, candidates, reports, `/ping`, and monitors then
+carry the active pair. Existing immutable records without these fields remain
+legacy evolution 1 and are never rewritten.
 
 Null is never an oracle, an autonomous corpus editor, or a trusted source merely
 because it produced an interesting question. Conversely, Aleph does not train
@@ -213,11 +225,13 @@ renders the result with its block and gateway release.
 the exact candidate and a fixed relative-path inventory of production tool
 hashes. Promotion requires every manifest gate to be true. Activation, startup,
 monitoring, and rollback recheck those running bytes. Activation is a later
-attributable operation, and rollback creates a new pointer generation without
-rebuilding or deleting artifacts.
+attributable operation. Rollback activates a retained release as the next
+generation in that release's evolution and advances the global activation
+sequence, without rebuilding or deleting artifacts.
 
 **Auditing avoids raw question retention.** Production audit records contain
-release identity, route, citations, live block, refusal reason, and an HMAC
+the evolution/generation pair, activation sequence, release identity, route,
+citations, live block, refusal reason, and an HMAC
 question fingerprint—not the raw question, answer, or wallet address.
 
 ## Build and verify a release

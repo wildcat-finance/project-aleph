@@ -83,6 +83,9 @@ def approve(release_path: str, evaluation_path: str,
     if candidate.get("required_gates") != expected_required:
         raise PromotionError("candidate required gates differ from manifest policy")
     report = evaluation.get("report") or {}
+    if (evaluation.get("evolution") != candidate.get("evolution")
+            or report.get("evolution") != candidate.get("evolution")):
+        raise PromotionError("evaluation and release evolution identities differ")
     if report.get("candidate_release_id") != candidate_id:
         raise PromotionError("evaluation report names a different candidate")
     if report.get("passed") is not True or not report.get("gates") \

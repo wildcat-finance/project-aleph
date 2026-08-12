@@ -75,6 +75,9 @@ def write_release(root: pathlib.Path, manifest: pathlib.Path,
     index_dir = index_root / build_id
     release_record = {
         "release_id": "", "kind": kind,
+        "evolution": {"number": 2,
+                      "contract": "mixed-candidate-dispositions-v2",
+                      "sha256": "e" * 64},
         "manifest": {"path": str(manifest), "sha256": sha(manifest)},
         "corpus": {"build_id": build_id,
                    "path": str(corpus.relative_to(root)),

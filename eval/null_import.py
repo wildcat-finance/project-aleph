@@ -25,6 +25,7 @@ _CANDIDATE_KEYS = {
     "kind", "provenance", "question", "question_id", "rationale",
     "record_type", "schema_version",
 }
+_CANDIDATE_IDENTITY_KEYS = _CANDIDATE_KEYS | {"aleph_identity"}
 _NULL_OUTCOMES = {"answered", "pointed", "refused", "abstained", "failed"}
 _ALEPH_ROUTES = {
     "clarify", "corpus", "corpus+live", "correct", "easter_egg", "live",
@@ -71,7 +72,9 @@ def _expect_keys(value: dict, expected: set[str], label: str) -> None:
 
 
 def _validate_candidate(item: dict, kind: str) -> None:
-    _expect_keys(item, _CANDIDATE_KEYS, "candidate")
+    if not isinstance(item, dict) or frozenset(item) not in {
+            frozenset(_CANDIDATE_KEYS), frozenset(_CANDIDATE_IDENTITY_KEYS)}:
+        raise NullImportError("candidate fields differ from a supported schema")
     if item["schema_version"] != 1 or item["record_type"] != "export_candidate":
         raise NullImportError("candidate schema or record type is unsupported")
     if item["kind"] != kind:
@@ -89,6 +92,15 @@ def _validate_candidate(item: dict, kind: str) -> None:
         raise NullImportError("candidate rationale is empty")
     if not isinstance(item["evidence_targets"], list):
         raise NullImportError("candidate evidence_targets must be a list")
+    identity = item.get("aleph_identity")
+    if identity is not None and (
+            not isinstance(identity, dict)
+            or set(identity) != {"evolution", "generation"}
+            or any(isinstance(identity.get(key), bool)
+                   or not isinstance(identity.get(key), int)
+                   or identity[key] < 1
+                   for key in ("evolution", "generation"))):
+        raise NullImportError("candidate Aleph identity is invalid")
 
 
 def load_export(export_dir: str) -> tuple[dict, list[dict]]:
@@ -168,7 +180,9 @@ def _golden_questions(path: str) -> dict[str, dict]:
 
 
 def disposition_report(export_dir: str, dispositions_path: str,
-                       golden_path: str) -> dict:
+                       golden_path: str,
+                       aleph_evolution: int | None = None,
+                       aleph_generation: int | None = None) -> dict:
     manifest, candidates = load_export(export_dir)
     document = _yaml(pathlib.Path(dispositions_path).resolve())
     if not isinstance(document, dict) or set(document) != {"meta", "dispositions"}:
@@ -309,9 +323,17 @@ def disposition_report(export_dir: str, dispositions_path: str,
             case["issue"] = case.pop("reference")
             case.pop("kind")
         return report
+    if (isinstance(aleph_evolution, bool)
+            or not isinstance(aleph_evolution, int) or aleph_evolution < 1
+            or isinstance(aleph_generation, bool)
+            or not isinstance(aleph_generation, int) or aleph_generation < 1):
+        raise NullImportError(
+            "mixed-candidate reports require an Aleph evolution/generation")
     return {
         **report,
         "evolution": _REPORT_EVOLUTION,
+        "aleph_identity": {"evolution": aleph_evolution,
+                           "generation": aleph_generation},
         "schema_version": 2,
     }
 
@@ -323,10 +345,13 @@ def main() -> int:
     parser.add_argument("--dispositions", required=True)
     parser.add_argument("--golden", default="eval/golden-v1.yaml")
     parser.add_argument("--json", dest="json_path")
+    parser.add_argument("--aleph-evolution", type=int)
+    parser.add_argument("--aleph-generation", type=int)
     args = parser.parse_args()
     try:
         report = disposition_report(
-            args.export, args.dispositions, args.golden)
+            args.export, args.dispositions, args.golden,
+            args.aleph_evolution, args.aleph_generation)
     except (NullImportError, OSError) as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
