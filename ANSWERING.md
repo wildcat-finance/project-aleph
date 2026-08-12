@@ -87,10 +87,11 @@ language writer needs a separately pinned semantic verifier before promotion;
 pairing a true quote with an unsupported paraphrase cannot pass by attribution
 alone.
 
-### Local inference: shadow writer
+### Mephistopheles: local inference shadow writer
 
-Aleph can run one identity-pinned Ollama writer beside `ExtractiveWriter` after
-policy routing and retrieval. In the implemented `shadow` mode, Ollama receives
+Aleph's optional local inference daemon is named **Mephistopheles**. It runs one
+identity-pinned Ollama writer beside `ExtractiveWriter` after policy routing and
+retrieval. In the implemented `shadow` mode, Ollama receives
 only the evidence query, selected route, and at most five bounded, quotable
 evidence passages. It never receives Telegram identity, tokens, audit records,
 activation metadata, expected outcomes, or numeric live payloads.

@@ -28,9 +28,10 @@ published Wildcat documentation.
 
 ## Current implementation boundary
 
-Aleph's optional local writer and Null's optional local paraphraser now support
-disabled and shadow modes. Both preserve their deterministic outputs and
-discard generated candidates; neither makes local-model text user-facing. The
+Aleph's optional local inference daemon, **Mephistopheles**, and Null's optional
+local paraphraser now support disabled and shadow modes. Both preserve their
+deterministic outputs and discard generated candidates; neither makes
+local-model text user-facing. The
 organisation-authenticated shared tunnel remains an operating prerequisite,
 not a claim that either adapter is deployed or enabled. Before using the
 acquisition commands, verify a reviewed infrastructure issue has installed the Tailscale

@@ -849,7 +849,7 @@ class TelegramAdapter:
             alias = str(local_writer.get("alias") or "none")
             model_id = str(local_writer.get("id") or "none")
             counts = local_writer.get("counts")
-            line = f"Local writer: {mode}; alias={alias}; id={model_id}"
+            line = f"Mephistopheles: {mode}; alias={alias}; id={model_id}"
             if isinstance(counts, Mapping):
                 line += (f"; shadow total={counts.get('total', 0)}, "
                          f"valid={counts.get('valid', 0)}, "
