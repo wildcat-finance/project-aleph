@@ -220,7 +220,7 @@ def run(tmp: pathlib.Path) -> None:
           and "Identity: evolution 2/generation 7" in ping_api.sent[-1]["text"]
           and f"Release: {'a' * 20}" in ping_api.sent[-1]["text"]
           and "Gateway: aleph-v0.4" in ping_api.sent[-1]["text"]
-          and "Local writer: shadow" in ping_api.sent[-1]["text"]
+          and "Mephistopheles: shadow" in ping_api.sent[-1]["text"]
           and "valid=2" in ping_api.sent[-1]["text"])
 
     ignored_ping_api = FakeAPI([update(

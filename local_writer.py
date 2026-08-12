@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed Ollama shadow writing for evidence-backed Aleph answers."""
+"""Mephistopheles: fail-closed local inference for Aleph answers."""
 
 from __future__ import annotations
 
