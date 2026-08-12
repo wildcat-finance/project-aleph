@@ -31,14 +31,14 @@ For locally resumed or daemon-directed operation, use
 controller preserves this runbook's ordering and stop conditions across chat or
 process restarts. It does not replace any human review, release approval, or
 production authority defined below. Aleph's local inference participant is
-**Mephistopheles**; its output remains advisory or shadow-only at the controller
-boundary.
+**Mephistopheles** and Null's is **Proteus**; their output remains advisory or
+shadow-only at the controller boundary.
 
 ## Current implementation boundary
 
 Aleph's optional local inference daemon, **Mephistopheles**, and Null's optional
-local paraphraser now support disabled and shadow modes. Both preserve their
-deterministic outputs and discard generated candidates; neither makes
+local paraphraser, **Proteus**, support disabled and shadow modes. Both preserve
+their deterministic outputs and discard generated candidates; neither makes
 local-model text user-facing. The
 organisation-authenticated shared tunnel remains an operating prerequisite,
 not a claim that either adapter is deployed or enabled. Before using the
