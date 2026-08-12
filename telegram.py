@@ -499,6 +499,8 @@ class TelegramAdapter:
                  peer_bot_ids: tuple[int, ...] = (),
                  rich_messages: bool = False,
                  ping_status: Mapping[str, object] | None = None,
+                 ping_status_provider: (
+                     Callable[[], Mapping[str, object]] | None) = None,
                  monotonic_clock=time.monotonic):
         if not 1 <= max_workers <= 32:
             raise TelegramError("max_workers must be between 1 and 32")
@@ -516,6 +518,7 @@ class TelegramAdapter:
         self.peer_bot_ids = frozenset(peer_bot_ids)
         self.rich_messages = bool(rich_messages)
         self.ping_status = dict(ping_status or {})
+        self.ping_status_provider = ping_status_provider
         self.monotonic_clock = monotonic_clock
         self.started_monotonic = monotonic_clock()
         self.identity: BotIdentity | None = None
@@ -808,6 +811,8 @@ class TelegramAdapter:
     def _ping(self) -> str:
         """Return bounded public process and immutable artifact identity."""
         status = self.ping_status
+        dynamic = (dict(self.ping_status_provider())
+                   if self.ping_status_provider is not None else {})
         lines = [
             "Pong!",
             f"Alive: {_uptime(self.monotonic_clock() - self.started_monotonic)}",
@@ -838,6 +843,20 @@ class TelegramAdapter:
             present += 1
         if not present:
             lines.append("Runtime pins: unavailable")
+        local_writer = dynamic.get("local_writer")
+        if isinstance(local_writer, Mapping):
+            mode = str(local_writer.get("mode", "disabled"))
+            alias = str(local_writer.get("alias") or "none")
+            model_id = str(local_writer.get("id") or "none")
+            counts = local_writer.get("counts")
+            line = f"Local writer: {mode}; alias={alias}; id={model_id}"
+            if isinstance(counts, Mapping):
+                line += (f"; shadow total={counts.get('total', 0)}, "
+                         f"valid={counts.get('valid', 0)}, "
+                         f"rejected={counts.get('rejected', 0)}, "
+                         f"fallback={counts.get('fallback', 0)}")
+            if len(line) <= 1000 and "\n" not in line:
+                lines.append(line)
         return "\n".join(lines)
 
     @staticmethod

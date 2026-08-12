@@ -263,6 +263,7 @@ python3 test_release.py
 python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
+python3 test_local_writer.py
 python3 test_evaluation.py
 python3 test_coverage.py
 python3 test_telegram.py

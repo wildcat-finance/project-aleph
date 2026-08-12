@@ -23,6 +23,7 @@ jobs:
       - name: Run executable gates
         run: |
           python test_agent.py
+          python test_local_writer.py
           python test_live.py
           python test_retrieval.py
           python test_release.py
@@ -42,6 +43,6 @@ jobs:
       - name: Compile Python sources
         run: >-
           python -m compileall -q
-          activation.py agent.py audit.py gateway_smoke.py live.py monitor.py
+          activation.py agent.py audit.py gateway_smoke.py live.py local_writer.py monitor.py
           promotion.py release.py retrieval.py sdk-watch.py serve.py telegram.py
           embed eval ingest
