@@ -18,7 +18,7 @@ import urllib.request
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
 
 
 class TelegramError(Exception):
@@ -41,6 +41,17 @@ _RICH_HEADINGS = frozenset({
 _SOURCE_CITATION = re.compile(
     r"^\[(?P<number>[1-9][0-9]*)\]\s+"
     r"(?P<label>.+?):\s+(?P<url>https://\S+)$")
+
+
+def _uptime(seconds: float) -> str:
+    """Render monotonic process age without implying wall-clock precision."""
+    total = max(0, int(seconds))
+    days, remainder = divmod(total, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, secs = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours:02d}h {minutes:02d}m {secs:02d}s"
+    return f"{hours:02d}h {minutes:02d}m {secs:02d}s"
 
 
 def peer_bot_ids(value: str | None = None) -> tuple[int, ...]:
@@ -486,7 +497,9 @@ class TelegramAdapter:
                  peer_bot_limit: int = 10,
                  peer_bot_window_seconds: int = 60,
                  peer_bot_ids: tuple[int, ...] = (),
-                 rich_messages: bool = False):
+                 rich_messages: bool = False,
+                 ping_status: Mapping[str, object] | None = None,
+                 monotonic_clock=time.monotonic):
         if not 1 <= max_workers <= 32:
             raise TelegramError("max_workers must be between 1 and 32")
         if any(isinstance(peer_id, bool) or not isinstance(peer_id, int)
@@ -502,6 +515,9 @@ class TelegramAdapter:
             peer_bot_limit, peer_bot_window_seconds)
         self.peer_bot_ids = frozenset(peer_bot_ids)
         self.rich_messages = bool(rich_messages)
+        self.ping_status = dict(ping_status or {})
+        self.monotonic_clock = monotonic_clock
+        self.started_monotonic = monotonic_clock()
         self.identity: BotIdentity | None = None
         self.pending: dict[tuple[int, int], PendingHandoff] = {}
 
@@ -539,6 +555,8 @@ class TelegramAdapter:
             self.api.call("setMyCommands", {"commands": [
                 {"command": "ask",
                  "description": "Ask a Wildcat Protocol question"},
+                {"command": "ping",
+                 "description": "Check Aleph runtime and pins"},
                 {"command": "help",
                  "description": "How Aleph answers and cites sources"},
                 {"command": "privacy",
@@ -673,7 +691,7 @@ class TelegramAdapter:
             name = name.lower()
             if name == "ask":
                 return (body or "").strip() or "\0usage"
-            if name in ("start", "help", "privacy", "handoff",
+            if name in ("start", "help", "privacy", "ping", "handoff",
                         "confirm_handoff", "cancel_handoff"):
                 suffix = (body or "").strip()
                 return "\0" + name + ((" " + suffix) if suffix else "")
@@ -725,13 +743,16 @@ class TelegramAdapter:
                     "sources — tap a citation to open the exact document. Live "
                     "values are read from Ethereum and labelled with their "
                     "block.\n\n"
-                    "If something needs a human — a stuck transaction, a UI "
+                    "Use /ping to check process uptime and the active release "
+                    "pins. If something needs a human — a stuck transaction, a UI "
                     "failure — Aleph prepares a handoff and sends nothing until "
                     "you issue /confirm_handoff.")
         if name == "privacy":
             return ("Aleph processes only messages Telegram delivers to this bot. "
                     "Group privacy mode must remain enabled. Handoffs are never "
                     "sent without /confirm_handoff.")
+        if name == "ping":
+            return self._ping()
         if name == "usage":
             return ("Usage: /ask <Wildcat Protocol question>\n"
                     "Example: /ask How do withdrawal cycles work?")
@@ -783,6 +804,40 @@ class TelegramAdapter:
             del self.pending[key]
             return f"Handoff sent. Reference: {reference}"
         raise TelegramError(f"unsupported adapter command {name!r}")
+
+    def _ping(self) -> str:
+        """Return bounded public process and immutable artifact identity."""
+        status = self.ping_status
+        lines = [
+            "Pong!",
+            f"Alive: {_uptime(self.monotonic_clock() - self.started_monotonic)}",
+        ]
+        fields = (
+            ("Generation", "generation"),
+            ("Activation", "activation_id"),
+            ("Release", "release_id"),
+            ("Corpus", "corpus_build_id"),
+            ("Index", "index_namespace"),
+            ("Evaluation", "evaluation_id"),
+            ("Prerelease", "prerelease_release_id"),
+            ("Gateway", "gateway_release"),
+            ("Embedding", "embedding"),
+            ("Manifest", "manifest_sha256"),
+            ("Sources", "source_pins"),
+        )
+        present = 0
+        for label, key in fields:
+            value = status.get(key)
+            if value is None or value == "":
+                continue
+            text = str(value)
+            if len(text) > 1000 or "\n" in text:
+                continue
+            lines.append(f"{label}: {text}")
+            present += 1
+        if not present:
+            lines.append("Runtime pins: unavailable")
+        return "\n".join(lines)
 
     @staticmethod
     def _handoff_fields(body: str) -> dict[str, str]:
