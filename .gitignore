@@ -27,3 +27,4 @@ artifacts/
 .aleph-work/
 state/
 var/
+.ouroboros/

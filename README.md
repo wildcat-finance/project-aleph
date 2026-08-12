@@ -79,6 +79,11 @@ controlled feedback loop without turning synthetic text into protocol truth.
 that loop. It defines the one-operator lease, organisation-authenticated local
 model tunnel, controlled review wave, corpus/evaluation path, release gates,
 handoff, and emergency revocation without distributing production credentials.
+[`ops/LOCAL-OUROBOROS.md`](ops/LOCAL-OUROBOROS.md) adds the resumable local
+control plane used by either an interactive Claude/plugin session or a
+deterministic daemon. It records exact state and attributable receipts while
+leaving Telegram, review, GitHub, release and production authority outside the
+controller.
 
 ```mermaid
 flowchart LR
@@ -264,6 +269,7 @@ python3 test_retrieval.py
 python3 test_live.py
 python3 test_agent.py
 python3 test_local_writer.py
+python3 test_ouroboros.py
 python3 test_evaluation.py
 python3 test_coverage.py
 python3 test_telegram.py
