@@ -34,9 +34,10 @@ DECISIONS = {"regression", "rejection_test", "corpus_gap", "routing_change",
 HEX_12 = re.compile(r"[0-9a-f]{12}")
 HEX_20 = re.compile(r"[0-9a-f]{20}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+MAX_JSON_BYTES = 2_000_000
 RESULT_FIELDS = {
     "preflight": ("aleph_monitor_ok", "null_monitor_ok", "null_paused",
-                  "model_mode", "model_identity_ok"),
+                  "mephistopheles"),
     "wave": ("requested", "delivered", "correlated", "null_paused",
              "boundary_id"),
     "review": ("expected", "recorded", "finalized", "malformed",
@@ -46,9 +47,9 @@ RESULT_FIELDS = {
     "implementation": ("issue_urls", "pull_requests", "reviewed_source_ids",
                        "source_revision"),
     "evaluation": ("passed", "candidate_release_id", "evaluation_id",
-                   "prior_release_retained"),
+                   "source_revision", "prior_release_retained"),
     "activation": ("approved_by", "reason", "expected_active",
-                   "activated_release_id"),
+                   "activated_release_id", "evaluation_id"),
     "verification": ("aleph_monitor_ok", "null_monitor_ok", "canary_ok",
                      "report_applied", "candidate_pile", "null_paused"),
 }
@@ -72,7 +73,10 @@ def _now() -> str:
 
 def _object(path: str | pathlib.Path, label: str) -> dict:
     try:
-        value = json.loads(pathlib.Path(path).read_text())
+        source = pathlib.Path(path)
+        if source.stat().st_size > MAX_JSON_BYTES:
+            raise OuroborosError(f"{label} exceeds {MAX_JSON_BYTES} bytes")
+        value = json.loads(source.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise OuroborosError(f"cannot load {label}: {error}") from error
     if not isinstance(value, dict):
@@ -139,7 +143,8 @@ def validate_identity(value: object, *, require_synchronized: bool = False) -> d
     return json.loads(json.dumps(value, sort_keys=True))
 
 
-def _action(phase: str, cycle_id: str, sequence: int, identity: dict) -> dict:
+def _action(phase: str, cycle_id: str, sequence: int, identity: dict,
+            constraints: dict | None = None) -> dict:
     instructions = {
         "preflight": "Run both monitors; verify the model/tunnel identity if used; leave Null paused.",
         "wave": "Select a bounded coverage-driven wave, run it once, correlate every reply, and pause Null.",
@@ -156,6 +161,7 @@ def _action(phase: str, cycle_id: str, sequence: int, identity: dict) -> dict:
         "instruction": instructions[phase],
         "required_result_fields": list(RESULT_FIELDS[phase]),
         "execution_authority": "external_attributable_receipt_only",
+        "constraints": constraints or {},
     }
     value["action_id"] = _hash(value)[:20]
     return value
@@ -167,17 +173,28 @@ def _validate_result(phase: str, result: object) -> tuple[str, bool]:
     branch = False
     if phase == "preflight":
         _keys(result, {"aleph_monitor_ok", "null_monitor_ok", "null_paused",
-                       "model_mode", "model_identity_ok"}, "preflight result")
+                       "mephistopheles"}, "preflight result")
         if (result["aleph_monitor_ok"] is not True
                 or result["null_monitor_ok"] is not True
                 or result["null_paused"] is not True):
             raise OuroborosError("preflight monitors must pass and Null must be paused")
-        if result["model_mode"] not in {"disabled", "shadow"}:
-            raise OuroborosError("model_mode must be disabled or shadow")
-        if not isinstance(result["model_identity_ok"], bool):
-            raise OuroborosError("model_identity_ok must be boolean")
-        if result["model_mode"] == "shadow" and not result["model_identity_ok"]:
-            raise OuroborosError("shadow mode requires a verified pinned model")
+        model = result["mephistopheles"]
+        if not isinstance(model, dict):
+            raise OuroborosError("Mephistopheles assertion must be an object")
+        _keys(model, {"mode", "alias", "id", "identity_ok"},
+              "Mephistopheles assertion")
+        if model["mode"] not in {"disabled", "shadow"}:
+            raise OuroborosError("Mephistopheles mode must be disabled or shadow")
+        if not isinstance(model["identity_ok"], bool):
+            raise OuroborosError("Mephistopheles identity result must be boolean")
+        if model["mode"] == "disabled":
+            if model["alias"] is not None or model["id"] is not None:
+                raise OuroborosError("disabled Mephistopheles must not carry a model pin")
+        elif (not isinstance(model["alias"], str) or not model["alias"].strip()
+              or not isinstance(model["id"], str)
+              or not re.fullmatch(r"[0-9a-f]{12,64}", model["id"])
+              or not model["identity_ok"]):
+            raise OuroborosError("shadow Mephistopheles requires a verified alias and pin")
     elif phase == "wave":
         _keys(result, {"requested", "delivered", "correlated", "null_paused",
                        "boundary_id"}, "wave result")
@@ -220,14 +237,18 @@ def _validate_result(phase: str, result: object) -> tuple[str, bool]:
             raise OuroborosError("implementation source revision is required")
     elif phase == "evaluation":
         _keys(result, {"passed", "candidate_release_id", "evaluation_id",
-                       "prior_release_retained"}, "evaluation result")
+                       "source_revision", "prior_release_retained"},
+              "evaluation result")
         if (result["passed"] is not True or result["prior_release_retained"] is not True
                 or not HEX_20.fullmatch(result["candidate_release_id"])
-                or not HEX_20.fullmatch(result["evaluation_id"])):
+                or not HEX_20.fullmatch(result["evaluation_id"])
+                or not isinstance(result["source_revision"], str)
+                or not result["source_revision"].strip()):
             raise OuroborosError("evaluation must pass with pinned IDs and retained rollback")
     elif phase == "activation":
         _keys(result, {"approved_by", "reason", "expected_active",
-                       "activated_release_id"}, "activation result")
+                       "activated_release_id", "evaluation_id"},
+              "activation result")
         if not all(isinstance(result[key], str) and result[key].strip()
                    for key in result):
             raise OuroborosError("activation requires attributable approval and exact IDs")
@@ -264,6 +285,18 @@ def validate_receipt(receipt: object, action: dict, current_identity: dict) -> d
     if before != current_identity:
         raise OuroborosError("receipt was produced from a stale cycle identity")
     phase, branch = _validate_result(action["phase"], receipt["result"])
+    constraints = action.get("constraints")
+    if not isinstance(constraints, dict):
+        raise OuroborosError("pending action constraints are invalid")
+    if phase == "evaluation" and constraints.get("source_revision") != receipt[
+            "result"]["source_revision"]:
+        raise OuroborosError("evaluation source revision differs from implementation")
+    if phase == "activation" and (
+            constraints.get("candidate_release_id")
+            != receipt["result"]["activated_release_id"]
+            or constraints.get("evaluation_id")
+            != receipt["result"]["evaluation_id"]):
+        raise OuroborosError("activation differs from the evaluated candidate")
     if phase not in {"activation", "verification"} and after != before:
         raise OuroborosError(f"{phase} is not allowed to change runtime identity")
     if phase == "activation":
@@ -306,7 +339,9 @@ class CycleStore:
     @contextmanager
     def lock(self, *, blocking: bool = False):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.root, 0o700)
         with open(self.lock_path, "a+", encoding="utf-8") as handle:
+            os.chmod(self.lock_path, 0o600)
             operation = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
             try:
                 fcntl.flock(handle, operation)
@@ -346,6 +381,9 @@ class CycleStore:
     @staticmethod
     def receipt_record(value: dict, previous_hash: str | None) -> dict:
         record = {"previous_receipt_sha256": previous_hash,
+                  "validation": {"status": "accepted",
+                                 "controller": CONTROLLER_VERSION,
+                                 "schema_version": SCHEMA_VERSION},
                   "receipt": json.loads(json.dumps(value, sort_keys=True))}
         record["receipt_sha256"] = _hash(record)
         return record
@@ -406,6 +444,8 @@ def require_holder(state: dict, actor: str) -> None:
 def update_lease(store: CycleStore, command: str, actor: str,
                  reason: str | None = None) -> dict:
     state = store.load()
+    if not isinstance(actor, str) or not actor.strip() or "\n" in actor:
+        raise OuroborosError("lease actor must be an attributable single-line identity")
     lease = state.get("lease")
     if not isinstance(lease, dict):
         raise OuroborosError("cycle lease is absent")
@@ -468,8 +508,16 @@ def record(store: CycleStore, receipt_path: str, controller_actor: str,
     phase = _next_phase(state["phase"], branch)
     identity = receipt["after"]
     sequence = state["sequence"] + 1
+    constraints = {}
+    if phase == "evaluation":
+        constraints = {"source_revision": receipt["result"]["source_revision"]}
+    elif phase == "activation":
+        constraints = {
+            "candidate_release_id": receipt["result"]["candidate_release_id"],
+            "evaluation_id": receipt["result"]["evaluation_id"],
+        }
     action = None if phase == "complete" else _action(
-        phase, state["cycle_id"], sequence, identity)
+        phase, state["cycle_id"], sequence, identity, constraints)
     updated = {
         **state, "updated_at": _now(), "phase": phase, "sequence": sequence,
         "identity": identity, "pending_action": action,
@@ -525,6 +573,63 @@ def validate_proposal(kind: str, value: object) -> dict:
     return json.loads(json.dumps(value, sort_keys=True))
 
 
+def identity_snapshot(aleph_report: object, null_snapshot: object,
+                      aleph_source_revision: str) -> dict:
+    """Bind scrubbed Aleph monitor and Null snapshot outputs for cycle init."""
+    if not isinstance(aleph_report, dict) or aleph_report.get("ok") is not True:
+        raise OuroborosError("Aleph monitor report is not healthy")
+    checks = aleph_report.get("checks")
+    active = checks.get("active_release") if isinstance(checks, dict) else None
+    if not isinstance(active, dict) or active.get("ok") is not True:
+        raise OuroborosError("Aleph active-release monitor check is absent")
+    release_id = active.get("release_id")
+    if (not HEX_20.fullmatch(str(release_id))
+            or any(active.get(key) is None for key in (
+                "evolution", "generation", "activation_sequence"))):
+        raise OuroborosError("Aleph monitor identity is invalid")
+    for name, check in checks.items():
+        if not isinstance(check, dict) or check.get("ok") is not True:
+            raise OuroborosError(f"Aleph monitor check {name} did not pass")
+    if not isinstance(aleph_source_revision, str) or not aleph_source_revision.strip():
+        raise OuroborosError("Aleph source revision is required")
+    if not isinstance(null_snapshot, dict):
+        raise OuroborosError("Null snapshot must be an object")
+    required = {"schema_version", "source_revision", "run_id", "mode",
+                "paused", "queue_count", "candidate_pile",
+                "candidate_resolved", "coverage_release_id", "evolution",
+                "generation", "snapshot_sha256"}
+    _keys(null_snapshot, required, "Null snapshot")
+    if null_snapshot["schema_version"] != 1:
+        raise OuroborosError("Null snapshot schema is unsupported")
+    expected_hash = null_snapshot["snapshot_sha256"]
+    basis = {key: value for key, value in null_snapshot.items()
+             if key != "snapshot_sha256"}
+    # Null hashes its canonical object with one trailing newline.
+    observed_hash = hashlib.sha256(_canonical(basis) + b"\n").hexdigest()
+    if not SHA256.fullmatch(str(expected_hash)) or expected_hash != observed_hash:
+        raise OuroborosError("Null snapshot hash differs")
+    if ((release_id, active["evolution"], active["generation"])
+            != (null_snapshot["coverage_release_id"],
+                null_snapshot["evolution"], null_snapshot["generation"])):
+        raise OuroborosError("Aleph monitor and Null coverage identity disagree")
+    identity = {
+        "aleph": {"source_revision": aleph_source_revision.strip(),
+                  "release_id": release_id, "evolution": active["evolution"],
+                  "generation": active["generation"],
+                  "activation_sequence": active["activation_sequence"]},
+        "null": {"source_revision": null_snapshot["source_revision"],
+                 "run_id": null_snapshot["run_id"],
+                 "mode": null_snapshot["mode"],
+                 "paused": null_snapshot["paused"],
+                 "candidate_pile": null_snapshot["candidate_pile"],
+                 "queue_count": null_snapshot["queue_count"],
+                 "coverage_release_id": null_snapshot["coverage_release_id"],
+                 "evolution": null_snapshot["evolution"],
+                 "generation": null_snapshot["generation"]},
+    }
+    return validate_identity(identity, require_synchronized=True)
+
+
 def proposal(store: CycleStore, kind: str, path: str, actor: str,
              *, persist: bool = True) -> dict:
     state = store.load()
@@ -533,6 +638,9 @@ def proposal(store: CycleStore, kind: str, path: str, actor: str,
     record = {"schema_version": SCHEMA_VERSION, "cycle_id": state["cycle_id"],
               "phase": state["phase"], "kind": kind, "proposed_by": actor,
               "created_at": _now(), "advisory_only": True,
+              "validation": {"status": "accepted",
+                             "controller": CONTROLLER_VERSION,
+                             "schema_version": SCHEMA_VERSION},
               "proposal_sha256": _hash(value), "proposal": value}
     if not persist:
         return {key: record[key] for key in record if key != "proposal"}
@@ -598,6 +706,10 @@ def main() -> int:
     commands.add_parser("resume")
     commands.add_parser("receipt-template")
     commands.add_parser("handoff")
+    snapshot = commands.add_parser("snapshot")
+    snapshot.add_argument("--aleph-monitor", required=True)
+    snapshot.add_argument("--null-snapshot", required=True)
+    snapshot.add_argument("--aleph-source-revision", required=True)
     receive = commands.add_parser("record")
     receive.add_argument("--receipt", required=True)
     receive.add_argument("--controller-actor", required=True)
@@ -627,6 +739,11 @@ def main() -> int:
                 result = receipt_template(store.load())
             elif args.command == "handoff":
                 result = handoff(store.load())
+            elif args.command == "snapshot":
+                result = identity_snapshot(
+                    _object(args.aleph_monitor, "Aleph monitor report"),
+                    _object(args.null_snapshot, "Null snapshot"),
+                    args.aleph_source_revision)
             elif args.command == "record":
                 result = record(store, args.receipt, args.controller_actor,
                                 persist=not args.dry_run)

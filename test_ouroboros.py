@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
+import subprocess
+import sys
 import tempfile
 
 import ouroboros
@@ -82,8 +84,9 @@ def run(tmp: pathlib.Path) -> None:
     print("\nC2 — receipts fail closed and advance idempotently")
     action = state["pending_action"]
     preflight = {"aleph_monitor_ok": True, "null_monitor_ok": True,
-                 "null_paused": True, "model_mode": "shadow",
-                 "model_identity_ok": True}
+                 "null_paused": True, "mephistopheles": {
+                     "mode": "shadow", "alias": "gpt-oss:120b",
+                     "id": "a951a23b46a1", "identity_ok": True}}
     stale = identity()
     stale["aleph"]["generation"] = 1
     check("stale identity is refused", expect_error(lambda: ouroboros.validate_receipt(
@@ -94,6 +97,12 @@ def run(tmp: pathlib.Path) -> None:
         lambda: ouroboros.validate_receipt(
             receipt(action, identity(), preflight, changed), action, identity()),
         "not allowed"))
+    unpinned = copy.deepcopy(preflight)
+    unpinned["mephistopheles"]["identity_ok"] = False
+    check("Mephistopheles shadow mode requires the observed model pin",
+          expect_error(lambda: ouroboros.validate_receipt(
+              receipt(action, identity(), unpinned), action, identity()),
+              "verified alias and pin"))
     state = ouroboros.record(store, str(record_file(
         tmp, receipt(action, identity(), preflight))), "operator@wildcat.finance")
     check("accepted receipt advances exactly once",
@@ -144,7 +153,8 @@ def run(tmp: pathlib.Path) -> None:
         tmp, receipt(state["pending_action"], identity(), implementation))),
         "operator@wildcat.finance")
     evaluation = {"passed": True, "candidate_release_id": "b" * 20,
-                  "evaluation_id": "c" * 20, "prior_release_retained": True}
+                  "evaluation_id": "c" * 20, "source_revision": "new-source",
+                  "prior_release_retained": True}
     state = ouroboros.record(store, str(record_file(
         tmp, receipt(state["pending_action"], identity(), evaluation))),
         "operator@wildcat.finance")
@@ -152,7 +162,8 @@ def run(tmp: pathlib.Path) -> None:
     # Null coverage remains on the release it actually knows until verification.
     activation = {"approved_by": "human@wildcat.finance", "reason": "issue-99",
                   "expected_active": "a" * 20,
-                  "activated_release_id": "b" * 20}
+                  "activated_release_id": "b" * 20,
+                  "evaluation_id": "c" * 20}
     state = ouroboros.record(store, str(record_file(
         tmp, receipt(state["pending_action"], identity(), activation, after))),
         "operator@wildcat.finance")
@@ -197,7 +208,33 @@ def run(tmp: pathlib.Path) -> None:
           template["action_id"] == leased["pending_action"]["action_id"]
           and "receipts" not in view and "proposal" not in json.dumps(view))
 
-    print("\nC5 — proposal boundary and tamper evidence")
+    print("\nC5 — Aleph and Null snapshot identities must agree")
+    aleph = {"ok": True, "checks": {
+        "active_release": {"ok": True, "release_id": "a" * 20,
+                           "evolution": 2, "generation": 2,
+                           "activation_sequence": 11},
+        "model_runtime": {"ok": True}, "gateway": {"ok": True},
+        "telegram": {"ok": True}}}
+    null_basis = {"schema_version": 1, "source_revision": "def456",
+                  "run_id": "run-1", "mode": "coverage", "paused": True,
+                  "queue_count": 0, "candidate_pile": 0,
+                  "candidate_resolved": 5,
+                  "coverage_release_id": "a" * 20,
+                  "evolution": 2, "generation": 2}
+    null = {**null_basis, "snapshot_sha256": __import__("hashlib").sha256(
+        ouroboros._canonical(null_basis) + b"\n").hexdigest()}
+    check("scrubbed reports produce the exact init identity",
+          ouroboros.identity_snapshot(aleph, null, "abc123") == identity())
+    drifted_snapshot = {**null, "generation": 1}
+    drifted_basis = {key: value for key, value in drifted_snapshot.items()
+                     if key != "snapshot_sha256"}
+    drifted_snapshot["snapshot_sha256"] = __import__("hashlib").sha256(
+        ouroboros._canonical(drifted_basis) + b"\n").hexdigest()
+    check("cross-system identity drift blocks initialization", expect_error(
+        lambda: ouroboros.identity_snapshot(aleph, drifted_snapshot, "abc123"),
+        "disagree"))
+
+    print("\nC6 — proposal boundary and tamper evidence")
     good = {"questions": [{"family": "ordinary", "expected": "answered",
                             "question": "How does a withdrawal cycle begin?"}]}
     check("bounded model proposal validates but remains advisory",
@@ -214,9 +251,83 @@ def run(tmp: pathlib.Path) -> None:
     check("receipt tampering prevents resume", expect_error(store.load, "hash chain"))
 
 
+def cli(tmp: pathlib.Path) -> None:
+    print("\nC7 — public CLI dry-run, restart, and no-change cycle")
+    root = tmp / "cli-state"
+    identity_path = tmp / "identity.json"
+    identity_path.write_text(json.dumps(identity()))
+    executable = pathlib.Path(ouroboros.__file__).resolve()
+
+    def command(*args: str, expected: int = 0) -> tuple[int, dict | None]:
+        process = subprocess.run(
+            [sys.executable, str(executable), "--state-dir", str(root), *args],
+            text=True, capture_output=True)
+        if process.returncode != expected:
+            raise AssertionError(
+                f"CLI {args} returned {process.returncode}: {process.stderr}")
+        value = json.loads(process.stdout) if process.stdout.strip() else None
+        return process.returncode, value
+
+    _, initial = command("init", "--actor", "operator@wildcat.finance",
+                         "--identity", str(identity_path))
+    _, restarted = command("status")
+    check("new process resumes the same action",
+          restarted["pending_action"]["action_id"]
+          == initial["pending_action"]["action_id"])
+
+    results = [
+        {"aleph_monitor_ok": True, "null_monitor_ok": True,
+         "null_paused": True, "mephistopheles": {
+             "mode": "disabled", "alias": None, "id": None,
+             "identity_ok": True}},
+        {"requested": 1, "delivered": 1, "correlated": 1,
+         "null_paused": True, "boundary_id": "cli-wave"},
+        {"expected": 1, "recorded": 1, "finalized": 1,
+         "malformed": 0, "all_explained": True,
+         "continue_waves": False},
+        {"pile_before": 0, "pile_after": 0, "report_id": "empty-report",
+         "change_required": False},
+        {"aleph_monitor_ok": True, "null_monitor_ok": True,
+         "canary_ok": True, "report_applied": True,
+         "candidate_pile": 0, "null_paused": True},
+    ]
+    first_receipt = None
+    for index, result in enumerate(results):
+        _, template = command("receipt-template")
+        template.update({"actor": "executor@wildcat.finance",
+                         "completed_at": f"2026-08-12T08:0{index}:00+00:00",
+                         "result": result})
+        path = tmp / f"cli-receipt-{index}.json"
+        path.write_text(json.dumps(template))
+        before = root.joinpath("cycle.json").read_bytes()
+        _, preview = command("--dry-run", "record", "--controller-actor",
+                             "operator@wildcat.finance", "--receipt", str(path))
+        check(f"dry-run {index + 1} previews without persistence",
+              root.joinpath("cycle.json").read_bytes() == before
+              and preview["phase"] != restarted["phase"] if index == 0 else
+              root.joinpath("cycle.json").read_bytes() == before)
+        _, restarted = command("record", "--controller-actor",
+                               "operator@wildcat.finance", "--receipt", str(path))
+        first_receipt = first_receipt or path
+        _, restarted_again = command("status")
+        check(f"restart {index + 1} preserves the advanced phase",
+              restarted_again["phase"] == restarted["phase"])
+    check("no-change CLI cycle skips implementation and completes",
+          restarted["phase"] == restarted["status"] == "complete"
+          and restarted["completed_actions"] == 5)
+    process = subprocess.run(
+        [sys.executable, str(executable), "--state-dir", str(root), "record",
+         "--controller-actor", "operator@wildcat.finance", "--receipt",
+         str(first_receipt)], text=True, capture_output=True)
+    check("completed cycle rejects receipt replay",
+          process.returncode != 0 and "no pending action" in process.stderr)
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as directory:
-        run(pathlib.Path(directory))
+        root = pathlib.Path(directory)
+        run(root)
+        cli(root)
     if FAILURES:
         print(f"\n{len(FAILURES)} failure(s): " + ", ".join(FAILURES))
         return 1

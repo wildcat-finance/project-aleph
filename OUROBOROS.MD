@@ -26,6 +26,14 @@ help select exact evidence or vary a synthetic question only behind explicit
 validators; humans still decide what becomes code, an evaluation case, or
 published Wildcat documentation.
 
+For locally resumed or daemon-directed operation, use
+[`ops/LOCAL-OUROBOROS.md`](ops/LOCAL-OUROBOROS.md). Its receipt-driven
+controller preserves this runbook's ordering and stop conditions across chat or
+process restarts. It does not replace any human review, release approval, or
+production authority defined below. Aleph's local inference participant is
+**Mephistopheles**; its output remains advisory or shadow-only at the controller
+boundary.
+
 ## Current implementation boundary
 
 Aleph's optional local inference daemon, **Mephistopheles**, and Null's optional
