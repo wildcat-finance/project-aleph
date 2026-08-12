@@ -28,11 +28,12 @@ published Wildcat documentation.
 
 ## Current implementation boundary
 
-Aleph currently uses `ExtractiveWriter`; Null currently uses its deterministic
-catalogue. The organisation-authenticated shared tunnel and optional local
-generation adapters described below are the target operating design, not a
-claim that those components are already deployed. Before using the acquisition
-commands, verify a reviewed infrastructure issue has installed the Tailscale
+Aleph's optional local writer and Null's optional local paraphraser now support
+disabled and shadow modes. Both preserve their deterministic outputs and
+discard generated candidates; neither makes local-model text user-facing. The
+organisation-authenticated shared tunnel remains an operating prerequisite,
+not a claim that either adapter is deployed or enabled. Before using the
+acquisition commands, verify a reviewed infrastructure issue has installed the Tailscale
 boundary, the separate SSH unit, model identity monitoring, and deterministic
 fallback tests. If any part is absent, stop and implement it through the normal
 issue/PR/deployment process. Never improvise by exposing Ollama or SSH publicly.

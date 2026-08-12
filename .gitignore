@@ -9,6 +9,7 @@ __pycache__/
 # about who might have seen it.
 .env
 .env.*
+!.env.example
 *.env
 .envrc
 ingest/keys/*.gpg

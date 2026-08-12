@@ -77,6 +77,7 @@ class DraftClaim:
 class Draft:
     claims: tuple[DraftClaim, ...]
     abstain_reason: str | None = None
+    shadow: dict | None = None
 
 
 class EvidenceWriter(Protocol):
@@ -96,6 +97,7 @@ class Answer:
     triage: TriagePayload | None = None
     corpus_release_id: str | None = None
     refusal_reason: str | None = None
+    writer_shadow: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -789,10 +791,12 @@ class AnswerEngine:
                 return self._abstain(route, f"current state unavailable: {error}")
 
         claims: tuple[DraftClaim, ...] = ()
+        writer_shadow = None
         citations: list[Citation] = []
         claim_lines = []
         if evidence:
             draft = self.writer.write(evidence_query, evidence, route)
+            writer_shadow = draft.shadow
             if draft.abstain_reason:
                 return self._abstain(route, draft.abstain_reason)
             if not draft.claims:
@@ -847,7 +851,8 @@ class AnswerEngine:
             route=route, citations=tuple(citations), claims=claims,
             live=live_rendered,
             corpus_release_id=(retrieval_response.release_id
-                               if retrieval_response else None))
+                               if retrieval_response else None),
+            writer_shadow=writer_shadow)
 
     def _read_live(self, route: Route):
         operation = route.live_operation

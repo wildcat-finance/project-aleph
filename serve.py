@@ -13,6 +13,7 @@ from activation import ActivationError, ActivationStore
 from agent import AnswerEngine
 from audit import AuditError, AuditLogger, AuditedEngine
 from live import GatewayClient, LiveError
+from local_writer import LocalWriterConfig, LocalWriterError, compose_writer
 from retrieval import Retriever, RetrievalError
 from telegram import (OffsetStore, TelegramAdapter, TelegramError, TelegramHTTP,
                       peer_bot_ids, rich_messages_enabled)
@@ -31,7 +32,8 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
     retriever = Retriever(
         manifest, str(release_path), embedder, str(prerelease_path))
     live_client = GatewayClient(manifest)
-    engine = AnswerEngine(retriever, live_client)
+    writer, writer_status = compose_writer(LocalWriterConfig.from_env())
+    engine = AnswerEngine(retriever, live_client, writer=writer)
     logger = AuditLogger(
         audit_dir, active, activation=active_pointer,
         retention_days=retention_days)
@@ -42,6 +44,7 @@ def compose(manifest: str, artifacts: str, pointer: str, prerelease: str,
         audited, api, OffsetStore(offset_file), max_workers=max_workers,
         peer_bot_ids=peer_bot_ids(),
         rich_messages=rich_messages_enabled(),
+        ping_status_provider=writer_status,
         ping_status={
             "identity": (f"evolution {active_pointer.get('evolution', 1)}/"
                          f"generation {active_pointer.get('generation')}"),
@@ -86,8 +89,8 @@ def main() -> int:
             args.manifest, args.artifacts, args.pointer, args.prerelease,
             args.embedder, args.audit_dir, args.audit_retention_days,
             args.telegram_offset, args.max_workers)
-    except (ActivationError, AuditError, LiveError, RetrievalError,
-            TelegramError, OSError) as error:
+    except (ActivationError, AuditError, LocalWriterError, LiveError,
+            RetrievalError, TelegramError, OSError) as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
     stop = threading.Event()

@@ -16,6 +16,7 @@ import activation
 import agent
 import audit
 from eval import product_eval
+import local_writer
 import monitor
 import promotion
 import serve
@@ -345,7 +346,9 @@ def run(tmp: pathlib.Path) -> None:
           and not (tmp / "must-not-create-offset.json").exists(), refused)
     previous = {name: os.environ.get(name) for name in (
         "ALEPH_GATEWAY_TOKEN", "ALEPH_TELEGRAM_TOKEN", "ALEPH_AUDIT_HMAC_KEY",
-        "ALEPH_TELEGRAM_RICH_MESSAGES")}
+        "ALEPH_TELEGRAM_RICH_MESSAGES", "ALEPH_LOCAL_WRITER_MODE",
+        "ALEPH_LOCAL_WRITER_URL", "ALEPH_LOCAL_WRITER_MODEL",
+        "ALEPH_LOCAL_WRITER_MODEL_ID", "ALEPH_LOCAL_WRITER_TIMEOUT")}
     os.environ.update({"ALEPH_GATEWAY_TOKEN": "gateway-fixture",
                        "ALEPH_TELEGRAM_TOKEN": "telegram-fixture",
                        "ALEPH_AUDIT_HMAC_KEY": "a" * 32,
@@ -364,7 +367,28 @@ def run(tmp: pathlib.Path) -> None:
                 os.environ[name] = value
     check("production composition loads only the verified active release",
           isinstance(composed, telegram.TelegramAdapter)
-          and composed.rich_messages is False)
+          and composed.rich_messages is False
+          and isinstance(composed.engine.engine.writer,
+                         agent.ExtractiveWriter)
+          and composed.ping_status_provider()["local_writer"]["mode"]
+              == "disabled")
+    os.environ["ALEPH_LOCAL_WRITER_MODE"] = "shadow"
+    refused = ""
+    try:
+        serve.compose(
+            str(retriever.main.manifest_path), str(root), str(pointer_path),
+            str(retriever.prerelease.release_path), "stub:test",
+            str(tmp / "must-not-create-shadow-audit"), 30,
+            str(tmp / "must-not-create-shadow-offset.json"), 2)
+    except local_writer.LocalWriterError as error:
+        refused = str(error)
+    finally:
+        os.environ.pop("ALEPH_LOCAL_WRITER_MODE", None)
+    check("partial shadow configuration fails before writable service state",
+          "requires URL" in refused
+          and not (tmp / "must-not-create-shadow-audit").exists()
+          and not (tmp / "must-not-create-shadow-offset.json").exists(),
+          refused)
     report = monitor.check(
         str(retriever.main.manifest_path), str(root), str(pointer_path),
         str(retriever.prerelease.release_path), "stub:test",
