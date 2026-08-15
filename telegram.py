@@ -843,20 +843,6 @@ class TelegramAdapter:
             present += 1
         if not present:
             lines.append("Runtime pins: unavailable")
-        local_writer = dynamic.get("local_writer")
-        if isinstance(local_writer, Mapping):
-            mode = str(local_writer.get("mode", "disabled"))
-            alias = str(local_writer.get("alias") or "none")
-            model_id = str(local_writer.get("id") or "none")
-            counts = local_writer.get("counts")
-            line = f"Mephistopheles: {mode}; alias={alias}; id={model_id}"
-            if isinstance(counts, Mapping):
-                line += (f"; shadow total={counts.get('total', 0)}, "
-                         f"valid={counts.get('valid', 0)}, "
-                         f"rejected={counts.get('rejected', 0)}, "
-                         f"fallback={counts.get('fallback', 0)}")
-            if len(line) <= 1000 and "\n" not in line:
-                lines.append(line)
         return "\n".join(lines)
 
     @staticmethod

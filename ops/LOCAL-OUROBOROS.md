@@ -9,8 +9,6 @@ production credentials and never executes those mutations itself.
 The local system has four named parts:
 
 - **Ouroboros** is the complete improvement cycle;
-- **Mephistopheles** is Aleph's optional local inference daemon;
-- **Proteus** is Null's optional local inference paraphraser; and
 - `ouroboros.py` is the deterministic controller shared by interactive and
   unattended executors.
 
@@ -45,7 +43,6 @@ The controller records state assertions, not secrets or conversation content:
 - Null source revision, run, pause/mode, exact unreviewed and candidate counts,
   and coverage identity;
 - action/receipt IDs, actors, timestamps and validation outcomes; and
-- Mephistopheles mode, alias, pinned ID and identity result at preflight.
 
 Never put questions, answers, feedback notes, Telegram identifiers, addresses,
 tokens, environment values, generated prose, or model reasoning in controller
@@ -120,7 +117,7 @@ no longer pending.
 
 | Phase | External executor proves | Blocking rule |
 |---|---|---|
-| `preflight` | both monitors, Null paused, Mephistopheles status and pin | disabled has no model pin; shadow requires an observed matching pin |
+| `preflight` | both monitors, Null paused | records the active release and embedding identity |
 | `wave` | requested, delivered and correlated counts plus boundary | all counts match and Null is paused again |
 | `review` | feedback and finalisation counts | no malformed or unexplained result; reviewer decides another wave |
 | `candidate_drain` | complete export/disposition report and zero pile | no unresolved candidate remains |
@@ -150,7 +147,6 @@ this CLI:
 
 The session must not summarize away codes, counts, IDs, approval names, or stop
 conditions. A later session resumes from state instead of relying on chat
-history. The plugin may choose local Mephistopheles for Aleph work or Proteus
 for Null work once per operator preference, or use hosted inference. All paths
 produce the same advisory schema and none changes execution authority.
 
@@ -177,7 +173,6 @@ unless a separate policy explicitly grants that exact action. Never implement
 
 ## Advisory local-model proposals
 
-Mephistopheles, Proteus, or another local model can propose three bounded objects:
 
 ```bash
 python3 ouroboros.py --state-dir /secure/ouroboros propose \

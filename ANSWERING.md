@@ -87,37 +87,6 @@ language writer needs a separately pinned semantic verifier before promotion;
 pairing a true quote with an unsupported paraphrase cannot pass by attribution
 alone.
 
-### Mephistopheles: local inference shadow writer
-
-Aleph's optional local inference daemon is named **Mephistopheles**. It runs one
-identity-pinned Ollama writer beside `ExtractiveWriter` after policy routing and
-retrieval. In the implemented `shadow` mode, Ollama receives
-only the evidence query, selected route, and at most five bounded, quotable
-evidence passages. It never receives Telegram identity, tokens, audit records,
-activation metadata, expected outcomes, or numeric live payloads.
-
-The candidate response is a strict list of proposed claims, supplied evidence
-IDs, and exact supporting substrings. Aleph validates the structure and support,
-records only scrubbed counts and versioned diagnostics, and then discards the
-candidate and its separate reasoning trace. The existing extractive claims,
-citations, live rendering, and Telegram answer remain authoritative and
-byte-for-byte unchanged. A structurally supported paraphrase is explicitly
-recorded as semantically `unverified`; it cannot be promoted until a separately
-pinned semantic verifier and blocking evaluation contract exist.
-
-```text
-ALEPH_LOCAL_WRITER_MODE=shadow
-ALEPH_LOCAL_WRITER_URL=http://127.0.0.1:11435
-ALEPH_LOCAL_WRITER_MODEL=gpt-oss:120b
-ALEPH_LOCAL_WRITER_MODEL_ID=a951a23b46a1
-ALEPH_LOCAL_WRITER_TIMEOUT=20
-```
-
-Only explicit loopback endpoints are accepted. Production port `11435` is the
-exclusive Ouroboros reverse tunnel, never a public Ollama listener. Disabled is
-the default and makes no generation request. User-facing local prose remains
-unimplemented.
-
 ## Evaluation boundary
 
 The blocking evaluator runs all 165 golden questions, not a sample. Fixture

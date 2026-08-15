@@ -90,7 +90,6 @@ class AuditLogger:
             } if answer.live else None),
             "refusal_reason": answer.refusal_reason,
             "triage_kind": answer.triage.kind if answer.triage else None,
-            "writer_shadow": answer.writer_shadow,
         }
 
     def error_record(self, question: str) -> dict:

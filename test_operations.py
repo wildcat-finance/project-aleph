@@ -16,7 +16,6 @@ import activation
 import agent
 import audit
 from eval import product_eval
-import local_writer
 import monitor
 import promotion
 import serve
@@ -369,26 +368,11 @@ def run(tmp: pathlib.Path) -> None:
           isinstance(composed, telegram.TelegramAdapter)
           and composed.rich_messages is False
           and isinstance(composed.engine.engine.writer,
-                         agent.ExtractiveWriter)
-          and composed.ping_status_provider()["local_writer"]["mode"]
-              == "disabled")
-    os.environ["ALEPH_LOCAL_WRITER_MODE"] = "shadow"
-    refused = ""
-    try:
-        serve.compose(
-            str(retriever.main.manifest_path), str(root), str(pointer_path),
-            str(retriever.prerelease.release_path), "stub:test",
-            str(tmp / "must-not-create-shadow-audit"), 30,
-            str(tmp / "must-not-create-shadow-offset.json"), 2)
-    except local_writer.LocalWriterError as error:
-        refused = str(error)
-    finally:
-        os.environ.pop("ALEPH_LOCAL_WRITER_MODE", None)
-    check("partial shadow configuration fails before writable service state",
-          "requires URL" in refused
-          and not (tmp / "must-not-create-shadow-audit").exists()
-          and not (tmp / "must-not-create-shadow-offset.json").exists(),
-          refused)
+                         agent.ExtractiveWriter))
+    check("answers are extractive by construction; there is no other writer",
+          not hasattr(serve, "compose_writer")
+          and not (pathlib.Path(__file__).resolve().parent
+                   / "local_writer.py").exists())
     report = monitor.check(
         str(retriever.main.manifest_path), str(root), str(pointer_path),
         str(retriever.prerelease.release_path), "stub:test",
