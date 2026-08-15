@@ -84,9 +84,7 @@ def run(tmp: pathlib.Path) -> None:
     print("\nC2 — receipts fail closed and advance idempotently")
     action = state["pending_action"]
     preflight = {"aleph_monitor_ok": True, "null_monitor_ok": True,
-                 "null_paused": True, "mephistopheles": {
-                     "mode": "shadow", "alias": "gpt-oss:120b",
-                     "id": "a951a23b46a1", "identity_ok": True}}
+                 "null_paused": True}
     stale = identity()
     stale["aleph"]["generation"] = 1
     check("stale identity is refused", expect_error(lambda: ouroboros.validate_receipt(
@@ -97,12 +95,12 @@ def run(tmp: pathlib.Path) -> None:
         lambda: ouroboros.validate_receipt(
             receipt(action, identity(), preflight, changed), action, identity()),
         "not allowed"))
-    unpinned = copy.deepcopy(preflight)
-    unpinned["mephistopheles"]["identity_ok"] = False
-    check("Mephistopheles shadow mode requires the observed model pin",
+    extra = copy.deepcopy(preflight)
+    extra["mephistopheles"] = {"mode": "shadow"}
+    check("a preflight carrying a local-inference assertion is refused",
           expect_error(lambda: ouroboros.validate_receipt(
-              receipt(action, identity(), unpinned), action, identity()),
-              "verified alias and pin"))
+              receipt(action, identity(), extra), action, identity()),
+              "fields differ"))
     state = ouroboros.record(store, str(record_file(
         tmp, receipt(action, identity(), preflight))), "operator@wildcat.finance")
     check("accepted receipt advances exactly once",
@@ -277,9 +275,7 @@ def cli(tmp: pathlib.Path) -> None:
 
     results = [
         {"aleph_monitor_ok": True, "null_monitor_ok": True,
-         "null_paused": True, "mephistopheles": {
-             "mode": "disabled", "alias": None, "id": None,
-             "identity_ok": True}},
+         "null_paused": True},
         {"requested": 1, "delivered": 1, "correlated": 1,
          "null_paused": True, "boundary_id": "cli-wave"},
         {"expected": 1, "recorded": 1, "finalized": 1,

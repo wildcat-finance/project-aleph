@@ -209,19 +209,14 @@ def run(tmp: pathlib.Path) -> None:
             "embedding": "bge-m3/790764642607",
             "manifest_sha256": "d" * 64,
             "source_pins": "wildcat-docs@fe0e50c079b2",
-        }, ping_status_provider=lambda: {"local_writer": {
-            "mode": "shadow", "alias": "gpt-oss:120b",
-            "id": "a951a23b46a1", "counts": {
-                "total": 3, "valid": 2, "rejected": 1, "fallback": 0}}},
-        monotonic_clock=lambda: next(ping_times))
+        }, monotonic_clock=lambda: next(ping_times))
     check("ping replies Pong with uptime, generation and current pins",
           ping_service.run_once() == 1
           and ping_api.sent[-1]["text"].startswith("Pong!\nAlive: 00h 00m 03s")
           and "Identity: evolution 2/generation 7" in ping_api.sent[-1]["text"]
           and f"Release: {'a' * 20}" in ping_api.sent[-1]["text"]
           and "Gateway: aleph-v0.4" in ping_api.sent[-1]["text"]
-          and "Mephistopheles: shadow" in ping_api.sent[-1]["text"]
-          and "valid=2" in ping_api.sent[-1]["text"])
+          and "Mephistopheles" not in ping_api.sent[-1]["text"])
 
     ignored_ping_api = FakeAPI([update(
         13, "/ping@AnotherBot", chat_type="supergroup", chat_id=-100)])

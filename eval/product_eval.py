@@ -44,7 +44,6 @@ RUNTIME_TOOL_PATHS = (
     "agent.py",
     "audit.py",
     "live.py",
-    "local_writer.py",
     "monitor.py",
     "release.py",
     "retrieval.py",

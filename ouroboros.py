@@ -36,8 +36,7 @@ HEX_20 = re.compile(r"[0-9a-f]{20}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 MAX_JSON_BYTES = 2_000_000
 RESULT_FIELDS = {
-    "preflight": ("aleph_monitor_ok", "null_monitor_ok", "null_paused",
-                  "mephistopheles"),
+    "preflight": ("aleph_monitor_ok", "null_monitor_ok", "null_paused"),
     "wave": ("requested", "delivered", "correlated", "null_paused",
              "boundary_id"),
     "review": ("expected", "recorded", "finalized", "malformed",
@@ -172,29 +171,12 @@ def _validate_result(phase: str, result: object) -> tuple[str, bool]:
         raise OuroborosError("receipt result must be an object")
     branch = False
     if phase == "preflight":
-        _keys(result, {"aleph_monitor_ok", "null_monitor_ok", "null_paused",
-                       "mephistopheles"}, "preflight result")
+        _keys(result, {"aleph_monitor_ok", "null_monitor_ok", "null_paused"},
+              "preflight result")
         if (result["aleph_monitor_ok"] is not True
                 or result["null_monitor_ok"] is not True
                 or result["null_paused"] is not True):
             raise OuroborosError("preflight monitors must pass and Null must be paused")
-        model = result["mephistopheles"]
-        if not isinstance(model, dict):
-            raise OuroborosError("Mephistopheles assertion must be an object")
-        _keys(model, {"mode", "alias", "id", "identity_ok"},
-              "Mephistopheles assertion")
-        if model["mode"] not in {"disabled", "shadow"}:
-            raise OuroborosError("Mephistopheles mode must be disabled or shadow")
-        if not isinstance(model["identity_ok"], bool):
-            raise OuroborosError("Mephistopheles identity result must be boolean")
-        if model["mode"] == "disabled":
-            if model["alias"] is not None or model["id"] is not None:
-                raise OuroborosError("disabled Mephistopheles must not carry a model pin")
-        elif (not isinstance(model["alias"], str) or not model["alias"].strip()
-              or not isinstance(model["id"], str)
-              or not re.fullmatch(r"[0-9a-f]{12,64}", model["id"])
-              or not model["identity_ok"]):
-            raise OuroborosError("shadow Mephistopheles requires a verified alias and pin")
     elif phase == "wave":
         _keys(result, {"requested", "delivered", "correlated", "null_paused",
                        "boundary_id"}, "wave result")
